@@ -7,6 +7,7 @@ import connectDB from './config/db.js';
 import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
+import authRoutes from './routes/authRoutes.js';
 import { errorHandler } from './middleware/errorMiddleware.js';
 
 // Load environmental variables
@@ -40,6 +41,7 @@ app.get('/', (req, res) => {
 
 // Map API Routes
 app.use('/api/otp', otpRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/admin/applications', adminApplicationRoutes);
 

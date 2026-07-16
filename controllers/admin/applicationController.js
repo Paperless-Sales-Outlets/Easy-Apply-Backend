@@ -59,7 +59,6 @@ export const getAdminApplications = async (req, res, next) => {
     const [applications, totalCount] = await Promise.all([
       Application
         .find(filter)
-        .populate('userId', 'name email phone NIC role')
         .sort({ [sortField]: sortDir })
         .skip(skip)
         .limit(pageSize)
