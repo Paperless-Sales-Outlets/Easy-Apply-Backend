@@ -11,7 +11,12 @@ const applicationSchema = new mongoose.Schema(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      required: false, // Optional for passwordless flow
+    },
+    phone: {
+      type: String,
+      required: [true, 'Verified phone number is required'],
+      trim: true,
     },
     serviceType: {
       type: String,

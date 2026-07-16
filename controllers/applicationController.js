@@ -4,19 +4,28 @@ import Application from '../models/Application.js';
 // @route   POST /api/applications
 // @access  Private (Customer / Staff / Admin)
 export const createApplication = async (req, res, next) => {
-  const { serviceType, formData } = req.body;
+  const { serviceType, formData, phone } = req.body;
 
   try {
-    // Extract NIC from formData (checking common keys) or fallback to user's NIC
-    const nic = formData?.nic || formData?.NIC || req.user.NIC;
+    // Extract NIC from formData (checking common keys) or fallback to req.user's NIC if authenticated
+    const nic = formData?.nic || formData?.NIC || req.user?.NIC;
 
     if (!nic) {
       res.status(400);
       return next(new Error('Identification (NIC / Passport / BR Number) is required'));
     }
 
+    // Extract phone from top-level body, formData, or req.user phone
+    const verifiedPhone = phone || formData?.phone || formData?.mobileNumber || req.user?.phone;
+
+    if (!verifiedPhone) {
+      res.status(400);
+      return next(new Error('Verified phone number is required'));
+    }
+
     const application = await Application.create({
-      userId: req.user._id,
+      userId: req.user?._id || null, // Optional if authenticated
+      phone: verifiedPhone,
       serviceType,
       formData,
       nic,

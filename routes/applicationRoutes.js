@@ -18,8 +18,8 @@ const router = express.Router();
 // Public route for checking status
 router.get('/check-status', validatePublicStatusCheck, checkApplicationStatus);
 
-// Protected routes (require user log in)
-router.post('/', protect, validateApplicationSubmission, createApplication);
+// Public endpoint for submitting applications (phone-verified in wizard)
+router.post('/', validateApplicationSubmission, createApplication);
 router.get('/my', protect, getMyApplications);
 router.get('/:id', protect, getApplicationById);
 
