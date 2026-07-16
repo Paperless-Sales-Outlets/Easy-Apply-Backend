@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import connectDB from './config/db.js';
 import applicationRoutes from './routes/applicationRoutes.js';
+import otpRoutes from './routes/otpRoutes.js';
 import { errorHandler } from './middleware/errorMiddleware.js';
 
 // Load environmental variables
@@ -37,6 +38,7 @@ app.get('/', (req, res) => {
 });
 
 // Map API Routes
+app.use('/api/otp', otpRoutes);
 app.use('/api/applications', applicationRoutes);
 
 // Global Error Handler Middleware
