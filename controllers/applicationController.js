@@ -2,21 +2,21 @@ import Application from '../models/Application.js';
 
 // @desc    Submit a new service application
 // @route   POST /api/applications
-// @access  Private (Customer / Staff / Admin)
+// @access  Public
 export const createApplication = async (req, res, next) => {
   const { serviceType, formData, phone } = req.body;
 
   try {
-    // Extract NIC from formData (checking common keys) or fallback to req.user's NIC if authenticated
-    const nic = formData?.nic || formData?.NIC || req.user?.NIC;
+    // Extract NIC from formData (checking common keys)
+    const nic = formData?.nic || formData?.NIC;
 
     if (!nic) {
       res.status(400);
       return next(new Error('Identification (NIC / Passport / BR Number) is required'));
     }
 
-    // Extract phone from top-level body, formData, or req.user phone
-    const verifiedPhone = phone || formData?.phone || formData?.mobileNumber || req.user?.phone;
+    // Extract phone from top-level body, formData, or mobileNumber
+    const verifiedPhone = phone || formData?.phone || formData?.mobileNumber;
 
     if (!verifiedPhone) {
       res.status(400);
@@ -24,7 +24,6 @@ export const createApplication = async (req, res, next) => {
     }
 
     const application = await Application.create({
-      userId: req.user?._id || null, // Optional if authenticated
       phone: verifiedPhone,
       serviceType,
       formData,
@@ -48,87 +47,11 @@ export const createApplication = async (req, res, next) => {
   }
 };
 
-// @desc    Get logged in user's applications
-// @route   GET /api/applications/my
-// @access  Private (Customer / Staff / Admin)
-export const getMyApplications = async (req, res, next) => {
-  try {
-    const applications = await Application.find({ userId: req.user._id })
-      .sort({ createdAt: -1 });
-
-    res.status(200).json({
-      success: true,
-      count: applications.length,
-      applications,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Get detailed view of a single application
-// @route   GET /api/applications/:id
-// @access  Private (Customer / Staff / Admin)
-export const getApplicationById = async (req, res, next) => {
-  try {
-    const application = await Application.findById(req.params.id);
-
-    if (!application) {
-      res.status(404);
-      return next(new Error('Application not found'));
-    }
-
-    // Access Control: Customers can only view their own applications.
-    // Staff/Admin roles can view any application.
-    if (
-      req.user.role === 'Customer' &&
-      application.userId.toString() !== req.user._id.toString()
-    ) {
-      res.status(403);
-      return next(new Error('Not authorized to access this application'));
-    }
-
-    res.status(200).json({
-      success: true,
-      application,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Update application status
-// @route   PATCH /api/applications/:id/status
-// @access  Private (Staff / Admin only)
-export const updateApplicationStatus = async (req, res, next) => {
-  const { status } = req.body;
-
-  try {
-    const application = await Application.findById(req.params.id);
-
-    if (!application) {
-      res.status(404);
-      return next(new Error('Application not found'));
-    }
-
-    application.status = status;
-    await application.save();
-
-    res.status(200).json({
-      success: true,
-      message: `Application status updated to ${status}`,
-      application,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Public status check using reference number and NIC
+// @desc    Public status check using reference number
 // @route   GET /api/applications/check-status
 // @access  Public
 export const checkApplicationStatus = async (req, res, next) => {
-  const { ref, nic } = req.query;
+  const { ref } = req.query;
 
   try {
     // Perform search solely by reference number
