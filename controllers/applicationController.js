@@ -131,15 +131,14 @@ export const checkApplicationStatus = async (req, res, next) => {
   const { ref, nic } = req.query;
 
   try {
-    // Perform case-insensitive search for reference number and NIC match
+    // Perform search solely by reference number
     const application = await Application.findOne({
       referenceNumber: ref,
-      nic: { $regex: new RegExp(`^${nic}$`, 'i') },
     });
 
     if (!application) {
       res.status(404);
-      return next(new Error('No application found with these details. Please check the reference number and NIC.'));
+      return next(new Error('No application found with this reference number. Please check and try again.'));
     }
 
     res.status(200).json({
