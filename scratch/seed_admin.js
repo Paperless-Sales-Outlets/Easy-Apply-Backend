@@ -21,19 +21,19 @@ const seedAdmin = async () => {
     if (exists) {
       console.log(`\nAdmin account already exists:`);
       console.log(`Email:    ${email}`);
-      console.log(`Password: adminpassword`);
+      console.log(`Password: admin123`);
     } else {
       await User.create({
         name: 'EasyApply Admin',
         email,
         phone: '0112345678',
         NIC: '990000000V',
-        password: 'adminpassword',
+        password: 'admin123',
         role: 'Admin',
       });
       console.log(`\nAdmin account created successfully!`);
       console.log(`Email:    ${email}`);
-      console.log(`Password: adminpassword`);
+      console.log(`Password: admin123`);
     }
   } catch (error) {
     console.error('Error seeding admin user:', error.message);
