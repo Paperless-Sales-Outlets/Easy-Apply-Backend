@@ -8,10 +8,10 @@ const applicationSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
+    phone: {
+      type: String,
+      required: [true, 'Verified phone number is required'],
+      trim: true,
     },
     serviceType: {
       type: String,

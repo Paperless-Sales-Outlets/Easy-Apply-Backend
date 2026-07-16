@@ -54,9 +54,5 @@ export const validatePublicStatusCheck = [
     .trim()
     .notEmpty()
     .withMessage('Application reference number (ref) is required'),
-  query('nic')
-    .trim()
-    .notEmpty()
-    .withMessage('NIC / Passport / BR Number (nic) is required'),
   validateRequest,
 ];
