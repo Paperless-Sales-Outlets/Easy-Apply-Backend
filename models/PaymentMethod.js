@@ -2,11 +2,11 @@ import mongoose from 'mongoose';
 
 const paymentMethodSchema = new mongoose.Schema(
   {
-    // Link this card to the logged-in user
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: [true, 'User reference is required'],
+    // Link this card to the verified phone number (no login required)
+    phone: {
+      type: String,
+      required: [true, 'Phone number is required'],
+      trim: true,
     },
 
     // Token returned by the payment gateway (e.g. Stripe source/card token)
@@ -58,9 +58,26 @@ const paymentMethodSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    // Track billing status
+    lastChargeStatus: {
+      type: String,
+      enum: ['none', 'success', 'failed', 'retry-pending'],
+      default: 'none',
+    },
+
+    lastChargeAt: {
+      type: Date,
+      default: null,
+    },
+
+    retryCount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
-    timestamps: true, // Adds createdAt and updatedAt automatically
+    timestamps: true,
   }
 );
 

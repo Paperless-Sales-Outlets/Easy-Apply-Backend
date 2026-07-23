@@ -8,6 +8,7 @@ import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
+import paymentRoutes from './routes/paymentRoutes.js';
 import { errorHandler } from './middleware/errorMiddleware.js';
 
 // Load environmental variables
@@ -44,6 +45,7 @@ app.use('/api/otp', otpRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/admin/applications', adminApplicationRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Global Error Handler Middleware
 app.use(errorHandler);
