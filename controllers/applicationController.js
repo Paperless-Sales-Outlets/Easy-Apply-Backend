@@ -1,5 +1,5 @@
 import Application from '../models/Application.js';
-
+import Connection from '../models/Connection.js';
 // @desc    Submit a new service application
 // @route   POST /api/applications
 // @access  Public
@@ -71,6 +71,29 @@ export const checkApplicationStatus = async (req, res, next) => {
       serviceType: application.serviceType,
       createdAt: application.createdAt,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Mock endpoint to lookup connection by phone number
+// @route   GET /api/applications/lookup-connection
+// @access  Public
+export const lookupConnection = async (req, res, next) => {
+  const { phone } = req.query;
+
+  try {
+    const connection = await Connection.findOne({ telephone: phone });
+
+    if (connection) {
+      return res.status(200).json({
+        success: true,
+        data: connection
+      });
+    }
+
+    res.status(404);
+    return next(new Error('Connection not found for this telephone number.'));
   } catch (error) {
     next(error);
   }
