@@ -23,6 +23,12 @@ export const createApplication = async (req, res, next) => {
       return next(new Error('Verified phone number is required'));
     }
 
+    // Validate existing customer number if isExistingCustomer is 'yes'
+    if (formData?.isExistingCustomer === 'yes' && !formData?.existingNumber?.trim()) {
+      res.status(400);
+      return next(new Error('Existing Telephone / Account number is required for existing SLTMobitel customers.'));
+    }
+
     const application = await Application.create({
       phone: verifiedPhone,
       serviceType,
