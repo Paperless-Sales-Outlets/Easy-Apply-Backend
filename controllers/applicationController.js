@@ -5,6 +5,7 @@ import Connection from '../models/Connection.js';
 // @access  Public
 export const createApplication = async (req, res, next) => {
   const { serviceType, formData, phone } = req.body;
+  const files = req.files;
 
   try {
     // Extract NIC from formData (checking common keys)
@@ -13,6 +14,16 @@ export const createApplication = async (req, res, next) => {
     if (!nic) {
       res.status(400);
       return next(new Error('Identification (NIC / Passport / BR Number) is required'));
+    }
+
+    // Process files and add them to formData
+    if (files && files.length > 0) {
+      formData.documents = files.map(f => ({
+        originalname: f.originalname,
+        filename: f.filename,
+        path: f.path,
+        mimetype: f.mimetype
+      }));
     }
 
     // Extract phone from top-level body, formData, or mobileNumber

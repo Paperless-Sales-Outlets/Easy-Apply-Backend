@@ -1,4 +1,5 @@
 import express from 'express';
+import multer from 'multer';
 import {
   createApplication,
   checkApplicationStatus,
@@ -7,9 +8,12 @@ import {
 import {
   validateApplicationSubmission,
   validatePublicStatusCheck,
+  parseMultipartFormData,
 } from '../middleware/validationMiddleware.js';
 
 const router = express.Router();
+
+const upload = multer({ dest: 'uploads/' });
 
 // Public route for checking status
 router.get('/check-status', validatePublicStatusCheck, checkApplicationStatus);
@@ -18,6 +22,6 @@ router.get('/check-status', validatePublicStatusCheck, checkApplicationStatus);
 router.get('/lookup-connection', lookupConnection);
 
 // Public endpoint for submitting applications (phone-verified in wizard)
-router.post('/', validateApplicationSubmission, createApplication);
+router.post('/', upload.array('documents'), parseMultipartFormData, validateApplicationSubmission, createApplication);
 
 export default router;

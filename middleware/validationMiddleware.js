@@ -11,6 +11,18 @@ export const validateRequest = (req, res, next) => {
   next();
 };
 
+export const parseMultipartFormData = (req, res, next) => {
+  if (req.body.formData && typeof req.body.formData === 'string') {
+    try {
+      req.body.formData = JSON.parse(req.body.formData);
+    } catch (e) {
+      res.status(400);
+      return next(new Error('Invalid JSON format in formData'));
+    }
+  }
+  next();
+};
+
 // Validation rules for submitting an application
 export const validateApplicationSubmission = [
   body('serviceType')
