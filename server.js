@@ -25,6 +25,7 @@ app.use(cors());
 
 // Request Parsing
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Development Logger
 if (process.env.NODE_ENV === 'development') {
@@ -45,7 +46,9 @@ app.use('/api/otp', otpRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/admin/applications', adminApplicationRoutes);
+app.use('/api/payment', paymentRoutes);
 app.use('/api/payments', paymentRoutes);
+
 
 // Global Error Handler Middleware
 app.use(errorHandler);

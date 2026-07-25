@@ -6,11 +6,18 @@ import {
   deletePaymentMethod,
   chargePayment,
   webhookBillGenerated,
+  createPayHerePayment,
+  handlePayHereNotify,
 } from '../controllers/paymentController.js';
+import { validatePaymentCreate } from '../middleware/validationMiddleware.js';
 
 const router = express.Router();
 
-// Create a secure payment session
+// PayHere Sandbox Payment API Endpoints
+router.post('/create', validatePaymentCreate, createPayHerePayment);
+router.post('/notify', handlePayHereNotify);
+
+// Create a secure payment session (setup intent)
 router.post('/setup-intent', setupIntent);
 
 // Store tokenized card reference only
@@ -29,3 +36,4 @@ router.post('/charge', chargePayment);
 router.post('/webhook/bill-generated', webhookBillGenerated);
 
 export default router;
+
