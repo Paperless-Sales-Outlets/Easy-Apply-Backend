@@ -56,6 +56,18 @@ const connectionSchema = new mongoose.Schema(
       type: String,
       enum: ['active', 'disconnected', 'suspended'],
       default: 'active'
+    },
+    disconnectedFrom: {
+      type: String,
+      trim: true
+    },
+    disconnectedTo: {
+      type: String,
+      trim: true
+    },
+    outstandingBalance: {
+      type: Number,
+      default: 0
     }
   },
   {
