@@ -46,6 +46,36 @@ export const validateApplicationSubmission = [
     .withMessage('Form data is required')
     .isObject()
     .withMessage('Form data must be an object'),
+  body('phone')
+    .optional()
+    .matches(/^07\d{8}$/)
+    .withMessage('Verified mobile must be 10 digits starting with 07'),
+  body('formData.telephone')
+    .optional()
+    .matches(/^01\d{8}$/)
+    .withMessage('Fixed telephone must be 10 digits starting with 01'),
+  body().custom((value, { req }) => {
+    if (req.body.serviceType === 'reconnection') {
+      const data = req.body.formData || {};
+      const hasFacility = data.facility_broadband || data.facility_peoTv || data.facility_sltPlus || data.facility_cli || data.facility_idd || data.facility_email || data.facility_dialUp || data.facility_other;
+      
+      if (!hasFacility) {
+        throw new Error('At least one facility must be selected for reconnection');
+      }
+
+      if (data.facility_email && !data.emailUsername) {
+        throw new Error('Email Username is required when Email facility is selected');
+      }
+
+      if (data.facility_dialUp && !data.dialUpUsername) {
+        throw new Error('Dial-up Username is required when Dial-up facility is selected');
+      }
+
+      // Add Payment receipt validation (if a user theoretically indicated 'already settled')
+      // Note: we can check req.files here
+    }
+    return true;
+  }),
   validateRequest,
 ];
 
