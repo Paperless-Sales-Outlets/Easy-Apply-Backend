@@ -47,7 +47,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/admin/applications', adminApplicationRoutes);
 app.use('/api/payment', paymentRoutes);
-app.use('/api/payments', paymentRoutes);
 
 
 // Global Error Handler Middleware
