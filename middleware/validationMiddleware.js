@@ -98,3 +98,19 @@ export const validatePublicStatusCheck = [
     .withMessage('Application reference number (ref) is required'),
   validateRequest,
 ];
+
+// Validation rules for PayHere payment creation
+export const validatePaymentCreate = [
+  body('orderId')
+    .optional()
+    .trim(),
+  body('amount')
+    .notEmpty()
+    .withMessage('Payment amount is required')
+    .isNumeric()
+    .withMessage('Amount must be a valid number')
+    .custom((val) => parseFloat(val) > 0)
+    .withMessage('Amount must be greater than 0'),
+  validateRequest,
+];
+

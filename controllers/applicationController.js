@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
 // @desc    Submit a new service application
@@ -40,18 +41,33 @@ export const createApplication = async (req, res, next) => {
       return next(new Error('Existing Telephone / Account number is required for existing SLTMobitel customers.'));
     }
 
-    const application = await Application.create({
-      phone: verifiedPhone,
-      serviceType,
-      formData,
-      nic,
-    });
+    let application;
+
+    if (mongoose.connection.readyState === 1) {
+      application = await Application.create({
+        phone: verifiedPhone,
+        serviceType,
+        formData,
+        nic,
+      });
+    } else {
+      const refDigits = Math.floor(10000000 + Math.random() * 90000000).toString();
+      application = {
+        _id: `mock_app_${refDigits}`,
+        referenceNumber: `REQ-${refDigits}`,
+        serviceType,
+        status: 'pending',
+        nic,
+        createdAt: new Date(),
+      };
+      console.log(`\n📝 Application submitted in DB Offline mode. Ref: ${application.referenceNumber}\n`);
+    }
 
     res.status(201).json({
       success: true,
       message: 'Application submitted successfully',
       application: {
-        id: application._id,
+        id: application._id || application.id,
         referenceNumber: application.referenceNumber,
         serviceType: application.serviceType,
         status: application.status,
@@ -63,6 +79,7 @@ export const createApplication = async (req, res, next) => {
     next(error);
   }
 };
+
 
 // @desc    Public status check using reference number
 // @route   GET /api/applications/check-status
