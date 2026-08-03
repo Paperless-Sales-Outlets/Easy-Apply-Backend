@@ -32,8 +32,32 @@ export const validateApplicationSubmission = [
   body('formData')
     .notEmpty()
     .withMessage('Form data is required')
-    .isObject()
-    .withMessage('Form data must be an object'),
+    .custom((value, { req }) => {
+      // If req.body.formData arrives as a string (from multipart form-data), parse it
+      let parsedData = value;
+      if (typeof value === 'string') {
+        try {
+          parsedData = JSON.parse(value);
+          req.body.formData = parsedData;
+        } catch (e) {
+          throw new Error('Invalid JSON structure in formData');
+        }
+      }
+
+      if (typeof parsedData !== 'object' || parsedData === null) {
+        throw new Error('Form data must be an object');
+      }
+
+      // BRD 5.1.6 Validation: Validate at least one broadband package is selected for new connection
+      if (req.body.serviceType === 'new-connection') {
+        const broadbandPkg = parsedData.broadbandPackage || parsedData.otherBroadbandPackage;
+        if (!broadbandPkg) {
+          throw new Error('Selection of at least one Broadband Package is mandatory per BRD 5.1.6.');
+        }
+      }
+
+      return true;
+    }),
   validateRequest,
 ];
 

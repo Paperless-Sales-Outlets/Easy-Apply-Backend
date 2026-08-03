@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import path from 'path';
+import fs from 'fs';
 import connectDB from './config/db.js';
 import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
@@ -20,11 +22,19 @@ connectDB();
 const app = express();
 
 // Security Middlewares
-app.use(helmet());
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors());
 
-// Request Parsing
-app.use(express.json());
+// Body Request Parsing with increased payload limit for signatures & documents
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ limit: '20mb', extended: true }));
+
+// Serve static uploads directory
+const uploadsPath = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsPath)) {
+  fs.mkdirSync(uploadsPath, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsPath));
 
 // Development Logger
 if (process.env.NODE_ENV === 'development') {
