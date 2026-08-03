@@ -9,7 +9,11 @@ import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import productRoutes from './routes/productRoutes.js';
+import cartRoutes from './routes/cartRoutes.js';
 import { errorHandler } from './middleware/errorMiddleware.js';
+import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
+import { notFound } from './middleware/errorHandler.js';
 
 // Load environmental variables
 dotenv.config();
@@ -26,6 +30,9 @@ app.use(cors());
 // Request Parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Custom Logging Middleware
+app.use(requestLogger);
 
 // Development Logger
 if (process.env.NODE_ENV === 'development') {
@@ -47,7 +54,14 @@ app.use('/api/auth', authRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/admin/applications', adminApplicationRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/cart', cartRoutes);
 
+// 404 Handler
+app.use(notFound);
+
+// Error Logger Middleware
+app.use(errorLogger);
 
 // Global Error Handler Middleware
 app.use(errorHandler);
