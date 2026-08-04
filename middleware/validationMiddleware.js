@@ -137,6 +137,12 @@ export const validateApplicationSubmission = [
   // Mobile number validation
   body('phone')
     .optional()
+    .customSanitizer(value => {
+      if (typeof value === 'string' && value.match(/^7\d{8}$/)) {
+        return '0' + value;
+      }
+      return value;
+    })
     .matches(/^07\d{8}$/)
     .withMessage(
       'Verified mobile must be 10 digits starting with 07'
