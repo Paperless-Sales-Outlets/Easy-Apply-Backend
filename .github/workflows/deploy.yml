@@ -1,0 +1,61 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+      - main-backup
+  workflow_dispatch: # Allows manual triggering from the Actions tab
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          envs: BACKEND_ENV
+          script: |
+            # 1. Determine folder, port, and PM2 process name based on branch
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              TARGET_DIR="$HOME/paperless_project/Easy-Apply-Backend"
+              PORT="5002"
+              PM2_NAME="easy-apply-backend"
+            else
+              TARGET_DIR="$HOME/paperless_project_backup/Easy-Apply-Backend"
+              PORT="5003"
+              PM2_NAME="easy-apply-backend-backup"
+            fi
+
+            echo "Starting deployment for branch: ${{ github.ref_name }} to directory: $TARGET_DIR on port: $PORT"
+
+            # 2. Navigate to project folder
+            cd "$TARGET_DIR" || { echo "Directory $TARGET_DIR not found"; exit 1; }
+
+            # 3. Pull latest code from GitHub
+            git checkout ${{ github.ref_name }}
+            git pull origin ${{ github.ref_name }}
+
+            # 4. Dynamically generate the .env file on the server
+            echo "PORT=$PORT" > .env
+            echo "NODE_ENV=production" >> .env
+            printf '%s\n' "$BACKEND_ENV" >> .env
+
+            # 5. Install production dependencies
+            npm install --omit=dev
+
+            # 6. Restart or start the PM2 service
+            pm2 restart $PM2_NAME || pm2 start server.js --name "$PM2_NAME"
+            
+            # 7. Save PM2 configuration to survive reboots
+            pm2 save
