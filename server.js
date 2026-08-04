@@ -13,22 +13,26 @@ import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import productRoutes from './routes/productRoutes.js';
+import cartRoutes from './routes/cartRoutes.js';
 
 import { errorHandler } from './middleware/errorMiddleware.js';
+import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
+import { notFound } from './middleware/errorHandler.js';
 
 
 // Load environmental variables
 dotenv.config();
 
 
-// Connect to MongoDB
+// Connect Database
 connectDB();
 
 
 const app = express();
 
 
-// Security Middlewares
+// Security Middleware
 app.use(
   helmet({
     crossOriginResourcePolicy: {
@@ -37,20 +41,18 @@ app.use(
   })
 );
 
+
 app.use(cors());
 
 
 
 // Request Parsing
-// Increased limit for:
-// - Digital signatures
-// - Uploaded document metadata
-// - Large multipart payloads
 app.use(
   express.json({
     limit: '20mb',
   })
 );
+
 
 app.use(
   express.urlencoded({
@@ -61,7 +63,7 @@ app.use(
 
 
 
-// Serve uploaded documents
+// Upload Directory
 const uploadsPath = path.join(
   process.cwd(),
   'uploads'
@@ -69,9 +71,12 @@ const uploadsPath = path.join(
 
 
 if (!fs.existsSync(uploadsPath)) {
-  fs.mkdirSync(uploadsPath, {
-    recursive: true,
-  });
+  fs.mkdirSync(
+    uploadsPath,
+    {
+      recursive: true,
+    }
+  );
 }
 
 
@@ -82,7 +87,10 @@ app.use(
 
 
 
-// Development Logger
+// Logging Middleware
+app.use(requestLogger);
+
+
 if (process.env.NODE_ENV === 'development') {
   app.use(
     morgan('dev')
@@ -91,7 +99,7 @@ if (process.env.NODE_ENV === 'development') {
 
 
 
-// Health Check Route
+// Health Check
 app.get('/', (req, res) => {
 
   res.status(200).json({
@@ -107,25 +115,30 @@ app.get('/', (req, res) => {
 
 
 // API Routes
+
 app.use(
   '/api/otp',
   otpRoutes
 );
+
 
 app.use(
   '/api/auth',
   authRoutes
 );
 
+
 app.use(
   '/api/applications',
   applicationRoutes
 );
 
+
 app.use(
   '/api/admin/applications',
   adminApplicationRoutes
 );
+
 
 app.use(
   '/api/payment',
@@ -133,17 +146,40 @@ app.use(
 );
 
 
-
-// Global Error Handler
+// Payment Gateway Routes
 app.use(
-  errorHandler
+  '/api/products',
+  productRoutes
+);
+
+
+app.use(
+  '/api/cart',
+  cartRoutes
 );
 
 
 
+// 404 Handler
+app.use(notFound);
+
+
+
+// Error Logging
+app.use(errorLogger);
+
+
+
+// Global Error Handler
+app.use(errorHandler);
+
+
+
+
+// Server Start
+
 const PORT =
   process.env.PORT || 5000;
-
 
 
 const server = app.listen(
@@ -159,10 +195,12 @@ const server = app.listen(
 
 
 
-// Handle unhandled promise rejections
+
+// Handle Unhandled Promise Rejections
+
 process.on(
   'unhandledRejection',
-  (err, promise) => {
+  (err) => {
 
     console.log(
       `Unhandled Rejection Error: ${err.message}`
