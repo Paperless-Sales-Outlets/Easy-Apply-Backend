@@ -68,6 +68,11 @@ const connectionSchema = new mongoose.Schema(
     outstandingBalance: {
       type: Number,
       default: 0
+    },
+    broadbandUsername: {
+      type: String,
+      trim: true,
+      lowercase: true
     }
   },
   {
