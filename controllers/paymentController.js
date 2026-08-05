@@ -298,8 +298,8 @@ export const createPayHerePayment = async (req, res, next) => {
       return next(new Error('Valid payment amount is required'));
     }
 
-    const merchantId = process.env.PAYHERE_MERCHANT_ID;
-    const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET;
+    const merchantId = (process.env.PAYHERE_MERCHANT_ID || '').trim();
+    const merchantSecret = (process.env.PAYHERE_MERCHANT_SECRET || '').trim();
 
     if (!merchantId || !merchantSecret) {
       res.status(500);
@@ -389,7 +389,7 @@ export const handlePayHereNotify = async (req, res, next) => {
     const notifyData = req.body;
     console.log('\n🔔 PayHere IPN Webhook Received:', notifyData);
 
-    const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET;
+    const merchantSecret = (process.env.PAYHERE_MERCHANT_SECRET || '').trim();
     if (!merchantSecret) {
       console.error('❌ PAYHERE_MERCHANT_SECRET is missing');
       res.status(500);
