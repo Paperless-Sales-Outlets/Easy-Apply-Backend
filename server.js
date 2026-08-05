@@ -3,66 +3,213 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import path from 'path';
+import fs from 'fs';
+
 import connectDB from './config/db.js';
+
 import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import productRoutes from './routes/productRoutes.js';
+import cartRoutes from './routes/cartRoutes.js';
+
 import { errorHandler } from './middleware/errorMiddleware.js';
+import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
+import { notFound } from './middleware/errorHandler.js';
+
 
 // Load environmental variables
 dotenv.config();
 
-// Connect to MongoDB
+
+// Connect Database
 connectDB();
+
 
 const app = express();
 
-// Security Middlewares
-app.use(helmet());
+
+// Security Middleware
+app.use(
+  helmet({
+    crossOriginResourcePolicy: {
+      policy: 'cross-origin',
+    },
+  })
+);
+
+
 app.use(cors());
 
-// Request Parsing
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// Development Logger
-if (process.env.NODE_ENV === 'development') {
-  app.use(morgan('dev'));
+
+// Request Parsing
+app.use(
+  express.json({
+    limit: '20mb',
+  })
+);
+
+
+app.use(
+  express.urlencoded({
+    limit: '20mb',
+    extended: true,
+  })
+);
+
+
+
+// Upload Directory
+const uploadsPath = path.join(
+  process.cwd(),
+  'uploads'
+);
+
+
+if (!fs.existsSync(uploadsPath)) {
+  fs.mkdirSync(
+    uploadsPath,
+    {
+      recursive: true,
+    }
+  );
 }
 
-// Health Check Route
+
+app.use(
+  '/uploads',
+  express.static(uploadsPath)
+);
+
+
+
+// Logging Middleware
+app.use(requestLogger);
+
+
+if (process.env.NODE_ENV === 'development') {
+  app.use(
+    morgan('dev')
+  );
+}
+
+
+
+// Health Check
 app.get('/', (req, res) => {
+
   res.status(200).json({
+
     success: true,
     message: 'SLTMobitel EasyApply API is active',
     version: '1.0.0',
+
   });
+
 });
 
-// Map API Routes
-app.use('/api/otp', otpRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/applications', applicationRoutes);
-app.use('/api/admin/applications', adminApplicationRoutes);
-app.use('/api/payment', paymentRoutes);
 
 
-// Global Error Handler Middleware
+// API Routes
+
+app.use(
+  '/api/otp',
+  otpRoutes
+);
+
+
+app.use(
+  '/api/auth',
+  authRoutes
+);
+
+
+app.use(
+  '/api/applications',
+  applicationRoutes
+);
+
+
+app.use(
+  '/api/admin/applications',
+  adminApplicationRoutes
+);
+
+
+app.use(
+  '/api/payment',
+  paymentRoutes
+);
+
+
+// Payment Gateway Routes
+app.use(
+  '/api/products',
+  productRoutes
+);
+
+
+app.use(
+  '/api/cart',
+  cartRoutes
+);
+
+
+
+// 404 Handler
+app.use(notFound);
+
+
+
+// Error Logging
+app.use(errorLogger);
+
+
+
+// Global Error Handler
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 5000;
 
-const server = app.listen(PORT, () => {
-  console.log(
-    `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`
-  );
-});
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err, promise) => {
-  console.log(`Unhandled Rejection Error: ${err.message}`);
-  // Close server & exit process
-  server.close(() => process.exit(1));
-});
+
+// Server Start
+
+const PORT =
+  process.env.PORT || 5000;
+
+
+const server = app.listen(
+  PORT,
+  () => {
+
+    console.log(
+      `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`
+    );
+
+  }
+);
+
+
+
+
+// Handle Unhandled Promise Rejections
+
+process.on(
+  'unhandledRejection',
+  (err) => {
+
+    console.log(
+      `Unhandled Rejection Error: ${err.message}`
+    );
+
+
+    server.close(
+      () => process.exit(1)
+    );
+
+  }
+);

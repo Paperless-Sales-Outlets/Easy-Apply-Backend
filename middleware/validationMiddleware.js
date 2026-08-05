@@ -1,30 +1,51 @@
 import { body, query, validationResult } from 'express-validator';
 
-// Middleware to evaluate the validation result
+
+// Middleware to evaluate validation result
 export const validateRequest = (req, res, next) => {
   const errors = validationResult(req);
+
   if (!errors.isEmpty()) {
     const errorMsg = errors.array().map((err) => err.msg).join(', ');
     res.status(400);
     return next(new Error(errorMsg));
   }
+
   next();
 };
 
+
+// Middleware to parse multipart formData JSON
 export const parseMultipartFormData = (req, res, next) => {
-  if (req.body.formData && typeof req.body.formData === 'string') {
+
+  if (
+    req.body.formData &&
+    typeof req.body.formData === 'string'
+  ) {
+
     try {
       req.body.formData = JSON.parse(req.body.formData);
+
     } catch (e) {
+
       res.status(400);
-      return next(new Error('Invalid JSON format in formData'));
+      return next(
+        new Error('Invalid JSON format in formData')
+      );
+
     }
+
   }
+
   next();
+
 };
+
+
 
 // Validation rules for submitting an application
 export const validateApplicationSubmission = [
+
   body('serviceType')
     .trim()
     .notEmpty()
@@ -41,76 +62,252 @@ export const validateApplicationSubmission = [
       'customer-request-acceptance',
     ])
     .withMessage('Invalid service type'),
+
+
+
   body('formData')
     .notEmpty()
     .withMessage('Form data is required')
-    .isObject()
-    .withMessage('Form data must be an object'),
+
+    .custom((value, { req }) => {
+
+      let parsedData = value;
+
+
+      // Parse multipart JSON
+      if (typeof value === 'string') {
+
+        try {
+
+          parsedData = JSON.parse(value);
+          req.body.formData = parsedData;
+
+        } catch (e) {
+
+          throw new Error(
+            'Invalid JSON structure in formData'
+          );
+
+        }
+
+      }
+
+
+      if (
+        typeof parsedData !== 'object' ||
+        parsedData === null
+      ) {
+
+        throw new Error(
+          'Form data must be an object'
+        );
+
+      }
+
+
+
+      // BRD 5.1.6
+      // Broadband package mandatory for new connection
+      if (
+        req.body.serviceType === 'new-connection'
+      ) {
+
+        const broadbandPkg =
+          parsedData.broadbandPackage ||
+          parsedData.otherBroadbandPackage;
+
+
+        if (!broadbandPkg) {
+
+          throw new Error(
+            'Selection of at least one Broadband Package is mandatory per BRD 5.1.6.'
+          );
+
+        }
+
+      }
+
+
+      return true;
+
+    }),
+
+
+
+  // Mobile number validation
   body('phone')
     .optional()
+    .customSanitizer(value => {
+      if (typeof value === 'string' && value.match(/^7\d{8}$/)) {
+        return '0' + value;
+      }
+      return value;
+    })
     .matches(/^07\d{8}$/)
-    .withMessage('Verified mobile must be 10 digits starting with 07'),
+    .withMessage(
+      'Verified mobile must be 10 digits starting with 07'
+    ),
+
+
+
+  // Fixed telephone validation
   body('formData.telephone')
     .optional()
     .matches(/^01\d{8}$/)
-    .withMessage('Fixed telephone must be 10 digits starting with 01'),
+    .withMessage(
+      'Fixed telephone must be 10 digits starting with 01'
+    ),
+
+
+
+
+  // Service-specific validations
   body().custom((value, { req }) => {
-    if (req.body.serviceType === 'reconnection') {
-      const data = req.body.formData || {};
-      const hasFacility = data.facility_broadband || data.facility_peoTv || data.facility_sltPlus || data.facility_cli || data.facility_idd || data.facility_email || data.facility_dialUp || data.facility_other;
-      
+
+
+    if (
+      req.body.serviceType === 'reconnection'
+    ) {
+
+
+      const data =
+        req.body.formData || {};
+
+
+
+      const hasFacility =
+        data.facility_broadband ||
+        data.facility_peoTv ||
+        data.facility_sltPlus ||
+        data.facility_cli ||
+        data.facility_idd ||
+        data.facility_email ||
+        data.facility_dialUp ||
+        data.facility_other;
+
+
+
       if (!hasFacility) {
-        throw new Error('At least one facility must be selected for reconnection');
+
+        throw new Error(
+          'At least one facility must be selected for reconnection'
+        );
+
       }
 
-      if (data.facility_email && !data.emailUsername) {
-        throw new Error('Email Username is required when Email facility is selected');
+
+
+
+      if (
+        data.facility_email &&
+        !data.emailUsername
+      ) {
+
+        throw new Error(
+          'Email Username is required when Email facility is selected'
+        );
+
       }
 
-      if (data.facility_dialUp && !data.dialUpUsername) {
-        throw new Error('Dial-up Username is required when Dial-up facility is selected');
+
+
+
+      if (
+        data.facility_dialUp &&
+        !data.dialUpUsername
+      ) {
+
+        throw new Error(
+          'Dial-up Username is required when Dial-up facility is selected'
+        );
+
       }
 
-      // Add Payment receipt validation (if a user theoretically indicated 'already settled')
-      // Note: we can check req.files here
+
+
+      // Payment receipt validation can be added here
+      // using req.files if required
+
     }
+
+
     return true;
+
   }),
+
+
+
   validateRequest,
+
 ];
+
+
+
 
 // Validation rules for updating status
 export const validateStatusUpdate = [
+
   body('status')
     .trim()
     .notEmpty()
     .withMessage('Status is required')
-    .isIn(['pending', 'approved', 'rejected', 'flagged'])
-    .withMessage('Invalid status value. Must be one of: pending, approved, rejected, flagged'),
+    .isIn([
+      'pending',
+      'approved',
+      'rejected',
+      'flagged'
+    ])
+    .withMessage(
+      'Invalid status value. Must be one of: pending, approved, rejected, flagged'
+    ),
+
   validateRequest,
+
 ];
 
-// Validation rules for checking public status
+
+
+
+// Validation rules for public status check
 export const validatePublicStatusCheck = [
+
   query('ref')
     .trim()
     .notEmpty()
-    .withMessage('Application reference number (ref) is required'),
+    .withMessage(
+      'Application reference number (ref) is required'
+    ),
+
   validateRequest,
+
 ];
+
+
+
 
 // Validation rules for PayHere payment creation
 export const validatePaymentCreate = [
+
   body('orderId')
     .optional()
     .trim(),
+
+
   body('amount')
     .notEmpty()
-    .withMessage('Payment amount is required')
+    .withMessage(
+      'Payment amount is required'
+    )
     .isNumeric()
-    .withMessage('Amount must be a valid number')
+    .withMessage(
+      'Amount must be a valid number'
+    )
     .custom((val) => parseFloat(val) > 0)
-    .withMessage('Amount must be greater than 0'),
-  validateRequest,
-];
+    .withMessage(
+      'Amount must be greater than 0'
+    ),
 
+
+  validateRequest,
+
+];
