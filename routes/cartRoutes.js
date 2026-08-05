@@ -6,18 +6,21 @@ import {
   validateRemoveFromCart,
   handleValidationErrors,
 } from '../validators/cartValidators.js';
-import { protect } from '../middleware/authMiddleware.js';
+import { sessionMiddleware } from '../middleware/sessionMiddleware.js';
 
 const router = express.Router();
+
+// All cart routes use sessionMiddleware (no login required)
+// The frontend sends x-session-id header; server echoes it back.
 
 /**
  * @route   POST /api/cart/add
  * @desc    Add an item to the cart
- * @access  Private
+ * @access  Public (session-based)
  */
 router.post(
   '/add',
-  protect,
+  sessionMiddleware,
   validateAddToCart,
   handleValidationErrors,
   cartController.addToCart
@@ -26,11 +29,11 @@ router.post(
 /**
  * @route   PUT /api/cart/update
  * @desc    Update item quantity in cart
- * @access  Private
+ * @access  Public (session-based)
  */
 router.put(
   '/update',
-  protect,
+  sessionMiddleware,
   validateUpdateCart,
   handleValidationErrors,
   cartController.updateCart
@@ -39,11 +42,11 @@ router.put(
 /**
  * @route   DELETE /api/cart/remove/:id
  * @desc    Remove an item from cart
- * @access  Private
+ * @access  Public (session-based)
  */
 router.delete(
   '/remove/:id',
-  protect,
+  sessionMiddleware,
   validateRemoveFromCart,
   handleValidationErrors,
   cartController.removeFromCart
@@ -52,22 +55,22 @@ router.delete(
 /**
  * @route   GET /api/cart
  * @desc    Get cart details
- * @access  Private
+ * @access  Public (session-based)
  */
-router.get('/', protect, cartController.getCart);
+router.get('/', sessionMiddleware, cartController.getCart);
 
 /**
  * @route   DELETE /api/cart/clear
  * @desc    Clear the cart
- * @access  Private
+ * @access  Public (session-based)
  */
-router.delete('/clear', protect, cartController.clearCart);
+router.delete('/clear', sessionMiddleware, cartController.clearCart);
 
 /**
  * @route   GET /api/cart/validate
  * @desc    Validate cart for checkout
- * @access  Private
+ * @access  Public (session-based)
  */
-router.get('/validate', protect, cartController.validateCart);
+router.get('/validate', sessionMiddleware, cartController.validateCart);
 
 export default router;

@@ -1,4 +1,4 @@
-import { body, param, query } from 'express-validator';
+import { body, param, query, validationResult } from 'express-validator';
 
 // Validation rules for adding item to cart
 export const validateAddToCart = [
@@ -91,13 +91,13 @@ export const validateGetProduct = [
 
 // Validation error handler middleware
 export const handleValidationErrors = (req, res, next) => {
-  const errors = req.validationErrors();
-  if (errors) {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
     return res.status(400).json({
       success: false,
       message: 'Validation failed',
-      errors: errors.map((err) => ({
-        field: err.param,
+      errors: errors.array().map((err) => ({
+        field: err.path || err.param,
         message: err.msg,
       })),
     });

@@ -30,7 +30,8 @@ export const getCart = async (userId) => {
   const cart = await Cart.findOne({ userId }).lean();
 
   if (!cart) {
-    throw new Error('Cart not found');
+    // Return a virtual empty cart — don't throw for unauthenticated/new sessions
+    return { userId, items: [], totalAmount: 0 };
   }
 
   return cart;

@@ -14,7 +14,7 @@ import { successResponse } from '../utils/responseHandler.js';
 export const addToCart = async (req, res, next) => {
   try {
     const { productId, quantity } = req.body;
-    const userId = req.user._id.toString();
+    const userId = req.sessionId;
 
     const cart = await cartService.addItemToCart(userId, productId, quantity);
 
@@ -32,7 +32,7 @@ export const addToCart = async (req, res, next) => {
 export const updateCart = async (req, res, next) => {
   try {
     const { productId, quantity } = req.body;
-    const userId = req.user._id.toString();
+    const userId = req.sessionId;
 
     const cart = await cartService.updateCartItemQuantity(userId, productId, quantity);
 
@@ -50,7 +50,7 @@ export const updateCart = async (req, res, next) => {
 export const removeFromCart = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const userId = req.user._id.toString();
+    const userId = req.sessionId;
 
     const cart = await cartService.removeItemFromCart(userId, id);
 
@@ -67,7 +67,7 @@ export const removeFromCart = async (req, res, next) => {
  */
 export const getCart = async (req, res, next) => {
   try {
-    const userId = req.user._id.toString();
+    const userId = req.sessionId;
 
     const cart = await cartService.getCart(userId);
 
@@ -84,7 +84,7 @@ export const getCart = async (req, res, next) => {
  */
 export const clearCart = async (req, res, next) => {
   try {
-    const userId = req.user._id.toString();
+    const userId = req.sessionId;
 
     const cart = await cartService.clearCart(userId);
 
@@ -101,7 +101,7 @@ export const clearCart = async (req, res, next) => {
  */
 export const validateCart = async (req, res, next) => {
   try {
-    const userId = req.user._id.toString();
+    const userId = req.sessionId;
 
     const cart = await cartService.validateCartForCheckout(userId);
 
