@@ -29,7 +29,8 @@ const seedDB = async () => {
       status: 'disconnected',
       disconnectedFrom: '2023-01-15',
       disconnectedTo: '2023-10-15',
-      outstandingBalance: 2500.50
+      outstandingBalance: 2500.50,
+      broadbandUsername: 'lio.perera@sltbb'
     };
 
     // Check if it exists and delete it to prevent duplicates
