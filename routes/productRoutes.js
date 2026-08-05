@@ -1,10 +1,5 @@
 import express from 'express';
 import * as productController from '../controllers/productController.js';
-import {
-  validateGetProducts,
-  validateGetProduct,
-  handleValidationErrors,
-} from '../validators/cartValidators.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -14,34 +9,35 @@ const router = express.Router();
  * @desc    Get all products with pagination, sorting, and filtering
  * @access  Public
  */
-router.get(
-  '/',
-  validateGetProducts,
-  handleValidationErrors,
-  productController.getAllProducts
-);
+router.get('/', productController.getAllProducts);
 
 /**
- * @route   GET /api/products/:id
- * @desc    Get a single product by ID
+ * @route   GET /api/products/search
+ * @desc    Search products by category, speed, price, keyword
  * @access  Public
  */
-router.get(
-  '/:id',
-  validateGetProduct,
-  handleValidationErrors,
-  productController.getProductById
-);
+router.get('/search', productController.searchProducts);
+
+/**
+ * @route   GET /api/products/category/:category
+ * @desc    Get products by category
+ * @access  Public
+ */
+router.get('/category/:category', productController.getProductsByCategory);
 
 /**
  * @route   GET /api/products/code/:code
  * @desc    Get a single product by product code
  * @access  Public
  */
-router.get(
-  '/code/:code',
-  productController.getProductByCode
-);
+router.get('/code/:code', productController.getProductByCode);
+
+/**
+ * @route   GET /api/products/:id
+ * @desc    Get a single product by ID
+ * @access  Public
+ */
+router.get('/:id', productController.getProductById);
 
 /**
  * @route   POST /api/products
@@ -80,3 +76,4 @@ router.delete(
 );
 
 export default router;
+
