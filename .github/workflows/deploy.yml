@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - main-backup
+  workflow_dispatch: # Allows manual triggering from the Actions tab
 
 jobs:
   deploy:
@@ -16,11 +17,14 @@ jobs:
 
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
+          envs: BACKEND_ENV
           script: |
             # 1. Determine folder, port, and PM2 process name based on branch
             if [ "${{ github.ref_name }}" = "main" ]; then
@@ -45,7 +49,7 @@ jobs:
             # 4. Dynamically generate the .env file on the server
             echo "PORT=$PORT" > .env
             echo "NODE_ENV=production" >> .env
-            echo "${{ secrets.BACKEND_ENV }}" >> .env
+            printf '%s\n' "$BACKEND_ENV" >> .env
 
             # 5. Install production dependencies
             npm install --omit=dev
