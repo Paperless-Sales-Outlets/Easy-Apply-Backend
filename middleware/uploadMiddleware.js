@@ -49,15 +49,8 @@ const upload = multer({
   },
 });
 
-// Multipart fields definitions for EasyApply document slots
-export const uploadApplicationDocuments = upload.fields([
-  { name: 'nicFront', maxCount: 1 },
-  { name: 'nicBack', maxCount: 1 },
-  { name: 'passportDoc', maxCount: 1 },
-  { name: 'brcDoc', maxCount: 1 },
-  { name: 'vatDoc', maxCount: 1 },
-  { name: 'taxExemptionDoc', maxCount: 1 },
-]);
+// Use upload.any() to accept all files and prevent unexpected field errors
+export const uploadApplicationDocuments = upload.any();
 
 // Wrapper middleware to gracefully handle Multer upload errors
 export const handleFileUploads = (req, res, next) => {
@@ -68,12 +61,13 @@ export const handleFileUploads = (req, res, next) => {
 
   uploadApplicationDocuments(req, res, (err) => {
     if (err instanceof multer.MulterError) {
+      console.error("Multer Error:", err);
       if (err.code === 'LIMIT_FILE_SIZE') {
         res.status(400);
         return next(new Error('File size exceeds the 5MB limit.'));
       }
       res.status(400);
-      return next(new Error(`File upload error: ${err.message}`));
+      return next(new Error(`File upload error: ${err.message} (Field: ${err.field})`));
     } else if (err) {
       res.status(400);
       return next(new Error(err.message));

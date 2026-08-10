@@ -322,11 +322,32 @@ export const lookupConnection = async (req, res, next) => {
 
 
   try {
+    // DEMO TEST ACCOUNTS
+    // Always return dummy payload for these numbers so the UI can be tested easily
+    if (phone === '0112345678' || phone === '1234567890') {
+      return res.status(200).json({
+        success: true,
+        data: {
+          telephone: '0112345678',
+          accountNo: '1234567890',
+          customerName: 'Amarasiri Gunesekera',
+          nic: '197523405678',
+          contactNo: '0773456789',
+          addressLine1: 'No 45, Temple Road',
+          addressLine2: 'Nugegoda',
+          disconnectedFrom: new Date('2023-11-15'),
+          disconnectedTo: new Date('2024-02-10'),
+          outstandingBalance: 4250.00
+        },
+      });
+    }
 
     const connection = await Connection.findOne({
-      telephone: phone,
+      $or: [
+        { telephone: phone },
+        { accountNo: phone }
+      ]
     });
-
 
     if (connection) {
 

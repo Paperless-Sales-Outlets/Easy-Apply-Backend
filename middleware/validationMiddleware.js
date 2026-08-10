@@ -150,12 +150,12 @@ export const validateApplicationSubmission = [
 
 
 
-  // Fixed telephone validation
+  // Fixed telephone or account number validation
   body('formData.telephone')
     .optional()
-    .matches(/^01\d{8}$/)
+    .matches(/^\d{10}$/)
     .withMessage(
-      'Fixed telephone must be 10 digits starting with 01'
+      'Telephone or Account number must be exactly 10 digits'
     ),
 
 

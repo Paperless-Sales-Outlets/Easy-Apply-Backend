@@ -8,6 +8,12 @@ const connectionSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
+    accountNo: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
     fullName: {
       type: String,
       required: true,
