@@ -1,5 +1,5 @@
 import * as productService from '../services/productService.js';
-import { successResponse, errorResponse, paginatedResponse } from '../utils/responseHandler.js';
+import { successResponse, paginatedResponse } from '../utils/responseHandler.js';
 
 /**
  * Product Controller
@@ -20,7 +20,9 @@ export const getAllProducts = async (req, res, next) => {
       status: req.query.status,
       sortBy: req.query.sortBy,
       sortOrder: req.query.sortOrder,
-      search: req.query.search,
+      search: req.query.search || req.query.keyword,
+      speed: req.query.speed,
+      maxPrice: req.query.maxPrice || req.query.price,
     };
 
     const { products, pagination } = await productService.getAllProducts(options);
@@ -31,6 +33,42 @@ export const getAllProducts = async (req, res, next) => {
       products,
       pagination
     );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Get products by category
+ * @route   GET /api/products/category/:category
+ * @access  Public
+ */
+export const getProductsByCategory = async (req, res, next) => {
+  try {
+    const { category } = req.params;
+    const products = await productService.getProductsByCategory(category);
+    return successResponse(res, `Products in ${category} retrieved successfully`, products);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Search products by criteria
+ * @route   GET /api/products/search
+ * @access  Public
+ */
+export const searchProducts = async (req, res, next) => {
+  try {
+    const params = {
+      category: req.query.category,
+      speed: req.query.speed,
+      price: req.query.price,
+      maxPrice: req.query.maxPrice,
+      keyword: req.query.keyword || req.query.search,
+    };
+    const products = await productService.searchProducts(params);
+    return successResponse(res, 'Search results retrieved successfully', products);
   } catch (error) {
     next(error);
   }
@@ -124,9 +162,12 @@ export const deleteProduct = async (req, res, next) => {
 
 export default {
   getAllProducts,
+  getProductsByCategory,
+  searchProducts,
   getProductById,
   getProductByCode,
   createProduct,
   updateProduct,
   deleteProduct,
 };
+

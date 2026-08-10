@@ -1,4 +1,5 @@
 import Product from '../models/Product.js';
+import mongoose from 'mongoose';
 
 /**
  * Product Service Layer
@@ -11,44 +12,43 @@ import Product from '../models/Product.js';
 export const getAllProducts = async (options = {}) => {
   const {
     page = 1,
-    limit = 10,
+    limit = 50,
     category,
     status = 'active',
     sortBy = 'createdAt',
     sortOrder = 'desc',
     search,
+    speed,
+    maxPrice,
   } = options;
 
-  // Build query
   const query = {};
 
-  // Filter by category
-  if (category) {
-    query.category = category;
-  }
-
-  // Filter by status
-  if (status) {
+  if (status && status !== 'all') {
     query.status = status;
   }
 
-  // Search functionality
+  if (category && category !== 'All Products') {
+    query.category = { $regex: new RegExp(`^${category.replace('-', ' ')}`, 'i') };
+  }
+
   if (search) {
     query.$or = [
-      { productName: { $regex: search, $options: 'i' } },
+      { name: { $regex: search, $options: 'i' } },
       { description: { $regex: search, $options: 'i' } },
-      { productCode: { $regex: search, $options: 'i' } },
+      { category: { $regex: search, $options: 'i' } },
+      { speed: { $regex: search, $options: 'i' } },
     ];
   }
 
-  // Calculate skip value for pagination
-  const skip = (page - 1) * limit;
+  if (maxPrice) {
+    query.monthlyPrice = { $lte: Number(maxPrice) };
+  }
 
-  // Build sort object
+  const skip = (page - 1) * limit;
   const sort = {};
   sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
 
-  // Execute query with pagination and sorting
   const [products, total] = await Promise.all([
     Product.find(query)
       .sort(sort)
@@ -69,15 +69,64 @@ export const getAllProducts = async (options = {}) => {
 };
 
 /**
+ * Get products by category
+ */
+export const getProductsByCategory = async (category) => {
+  const query = { status: 'active' };
+  if (category && category !== 'All Products') {
+    const formattedCategory = category.replace('-', ' ');
+    query.category = { $regex: new RegExp(`^${formattedCategory}`, 'i') };
+  }
+  const products = await Product.find(query).lean();
+  return products;
+};
+
+/**
+ * Search products supporting category, speed, price, and keyword
+ */
+export const searchProducts = async (params = {}) => {
+  const { category, speed, price, keyword, maxPrice } = params;
+  const query = { status: 'active' };
+
+  if (category && category !== 'All Products') {
+    query.category = { $regex: new RegExp(`^${category.replace('-', ' ')}`, 'i') };
+  }
+
+  if (keyword) {
+    query.$or = [
+      { name: { $regex: keyword, $options: 'i' } },
+      { description: { $regex: keyword, $options: 'i' } },
+      { speed: { $regex: keyword, $options: 'i' } },
+    ];
+  }
+
+  if (speed) {
+    query.speed = { $regex: speed, $options: 'i' };
+  }
+
+  const targetPrice = price || maxPrice;
+  if (targetPrice) {
+    query.monthlyPrice = { $lte: Number(targetPrice) };
+  }
+
+  const products = await Product.find(query).lean();
+  return products;
+};
+
+/**
  * Get a single product by ID
  */
-export const getProductById = async (productId) => {
-  const product = await Product.findOne({ productId }).lean();
-
+export const getProductById = async (id) => {
+  let product = null;
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    product = await Product.findById(id).lean();
+  }
+  if (!product) {
+    product = await Product.findOne({ productId: id }).lean();
+  }
   if (!product) {
     throw new Error('Product not found');
   }
-
   return product;
 };
 
@@ -98,7 +147,13 @@ export const getProductByCode = async (productCode) => {
  * Check if product exists and has sufficient stock
  */
 export const checkProductAvailability = async (productId, quantity) => {
-  const product = await Product.findOne({ productId });
+  let product = null;
+  if (mongoose.Types.ObjectId.isValid(productId)) {
+    product = await Product.findById(productId);
+  }
+  if (!product) {
+    product = await Product.findOne({ productId });
+  }
 
   if (!product) {
     throw new Error('Product not found');
@@ -108,38 +163,6 @@ export const checkProductAvailability = async (productId, quantity) => {
     throw new Error('Product is not available');
   }
 
-  if (product.availableQuantity < quantity) {
-    throw new Error(`Insufficient stock. Only ${product.availableQuantity} available`);
-  }
-
-  return product;
-};
-
-/**
- * Decrease product stock
- */
-export const decreaseProductStock = async (productId, quantity) => {
-  const product = await Product.findOne({ productId });
-
-  if (!product) {
-    throw new Error('Product not found');
-  }
-
-  await product.decreaseStock(quantity);
-  return product;
-};
-
-/**
- * Increase product stock
- */
-export const increaseProductStock = async (productId, quantity) => {
-  const product = await Product.findOne({ productId });
-
-  if (!product) {
-    throw new Error('Product not found');
-  }
-
-  await product.increaseStock(quantity);
   return product;
 };
 
@@ -155,8 +178,8 @@ export const createProduct = async (productData) => {
  * Update a product (Admin)
  */
 export const updateProduct = async (productId, updateData) => {
-  const product = await Product.findOneAndUpdate(
-    { productId },
+  const product = await Product.findByIdAndUpdate(
+    productId,
     updateData,
     { new: true, runValidators: true }
   );
@@ -172,7 +195,7 @@ export const updateProduct = async (productId, updateData) => {
  * Delete a product (Admin)
  */
 export const deleteProduct = async (productId) => {
-  const product = await Product.findOneAndDelete({ productId });
+  const product = await Product.findByIdAndDelete(productId);
 
   if (!product) {
     throw new Error('Product not found');
@@ -183,12 +206,13 @@ export const deleteProduct = async (productId) => {
 
 export default {
   getAllProducts,
+  getProductsByCategory,
+  searchProducts,
   getProductById,
   getProductByCode,
   checkProductAvailability,
-  decreaseProductStock,
-  increaseProductStock,
   createProduct,
   updateProduct,
   deleteProduct,
 };
+

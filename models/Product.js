@@ -4,91 +4,108 @@ const productSchema = new mongoose.Schema(
   {
     productId: {
       type: String,
-      required: true,
-      unique: true,
       trim: true,
+      unique: true,
+      sparse: true,
     },
     productCode: {
       type: String,
-      required: true,
-      unique: true,
       trim: true,
-      uppercase: true,
     },
-    productName: {
+    name: {
       type: String,
-      required: true,
+      required: [true, 'Product name is required'],
       trim: true,
+    },
+    category: {
+      type: String,
+      required: [true, 'Product category is required'],
+      trim: true,
+    },
+    serviceType: {
+      type: String,
+      trim: true,
+      default: 'Broadband',
+    },
+    speed: {
+      type: String,
+      trim: true,
+    },
+    monthlyPrice: {
+      type: Number,
+      required: [true, 'Monthly price is required'],
+      min: [0, 'Monthly price cannot be negative'],
+    },
+    installationFee: {
+      type: Number,
+      default: 0,
+      min: [0, 'Installation fee cannot be negative'],
     },
     description: {
       type: String,
       trim: true,
     },
-    category: {
-      type: String,
-      required: true,
-      trim: true,
-      enum: ['broadband', 'voice', 'peo-tv', 'accessories', 'devices', 'packages'],
+    features: {
+      type: [String],
+      default: [],
     },
     image: {
       type: String,
       trim: true,
     },
-    price: {
-      type: Number,
-      required: true,
-      min: [0, 'Price cannot be negative'],
-    },
     availableQuantity: {
       type: Number,
-      required: true,
+      default: 999,
       min: [0, 'Available quantity cannot be negative'],
-      default: 0,
     },
     status: {
       type: String,
-      required: true,
       enum: ['active', 'inactive', 'out-of-stock'],
       default: 'active',
+    },
+    popular: {
+      type: Boolean,
+      default: false,
     },
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
 
-// Index for faster queries
-productSchema.index({ productId: 1 });
-productSchema.index({ productCode: 1 });
+// Indexes
 productSchema.index({ category: 1 });
 productSchema.index({ status: 1 });
+productSchema.index({ popular: 1 });
+productSchema.index({ name: 'text', description: 'text' });
 
-// Virtual for checking if product is in stock
+// Virtuals for backward compatibility
+productSchema.virtual('productName').get(function () {
+  return this.name;
+});
+
+productSchema.virtual('price').get(function () {
+  return this.monthlyPrice;
+});
+
 productSchema.virtual('inStock').get(function () {
   return this.availableQuantity > 0 && this.status === 'active';
 });
 
-// Method to decrease stock
-productSchema.methods.decreaseStock = async function (quantity) {
-  if (this.availableQuantity < quantity) {
-    throw new Error('Insufficient stock');
+// Pre-save hook to ensure productId is set
+productSchema.pre('save', function (next) {
+  if (!this.productId) {
+    this.productId = this._id.toString();
   }
-  this.availableQuantity -= quantity;
-  if (this.availableQuantity === 0) {
-    this.status = 'out-of-stock';
+  if (!this.productCode) {
+    this.productCode = `PRD-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
   }
-  await this.save();
-};
-
-// Method to increase stock
-productSchema.methods.increaseStock = async function (quantity) {
-  this.availableQuantity += quantity;
-  if (this.status === 'out-of-stock' && this.availableQuantity > 0) {
-    this.status = 'active';
-  }
-  await this.save();
-};
+  next();
+});
 
 const Product = mongoose.model('Product', productSchema);
 
 export default Product;
+

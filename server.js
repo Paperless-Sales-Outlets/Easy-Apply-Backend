@@ -15,6 +15,7 @@ import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
+import customerRoutes from './routes/customerRoutes.js';
 
 import { errorHandler } from './middleware/errorMiddleware.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -156,6 +157,12 @@ app.use(
 app.use(
   '/api/cart',
   cartRoutes
+);
+
+
+app.use(
+  '/api/customers',
+  customerRoutes
 );
 
 
