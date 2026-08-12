@@ -4,6 +4,7 @@ import {
   createApplication,
   checkApplicationStatus,
   lookupConnection,
+  lookupPackage,
 } from '../controllers/applicationController.js';
 
 import {
@@ -30,6 +31,13 @@ router.get(
 router.get(
   '/lookup-connection',
   lookupConnection
+);
+
+
+// Public route for looking up customer current package (BRD 5.6)
+router.get(
+  '/lookup-package',
+  lookupPackage
 );
 
 
