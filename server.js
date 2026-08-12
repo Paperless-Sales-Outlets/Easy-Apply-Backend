@@ -43,7 +43,17 @@ app.use(
 );
 
 
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || origin === process.env.FRONTEND_URL) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  optionsSuccessStatus: 204
+}));
 
 
 
@@ -166,6 +176,11 @@ app.use(
 );
 
 
+
+// Handle OPTIONS requests before 404 handler
+app.options('*', (req, res) => {
+  res.status(204).end();
+});
 
 // 404 Handler
 app.use(notFound);
