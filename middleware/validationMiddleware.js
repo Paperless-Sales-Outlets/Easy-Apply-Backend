@@ -223,6 +223,15 @@ export const validateApplicationSubmission = [
 
       }
 
+      if (
+        data.facility_other &&
+        !data.otherServiceText
+      ) {
+        throw new Error(
+          'Please specify the other service you want to reconnect'
+        );
+      }
+
 
 
       // Payment receipt validation can be added here
