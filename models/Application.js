@@ -26,6 +26,7 @@ const applicationSchema = new mongoose.Schema(
         'service-vacation',
         'refund-request',
         'customer-request-acceptance',
+        'internet-services',
       ],
     },
     status: {
