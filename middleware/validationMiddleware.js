@@ -60,6 +60,7 @@ export const validateApplicationSubmission = [
       'service-vacation',
       'refund-request',
       'customer-request-acceptance',
+      'internet-services',
     ])
     .withMessage('Invalid service type'),
 
