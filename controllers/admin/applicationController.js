@@ -110,6 +110,13 @@ export const updateApplicationStatus = async (req, res, next) => {
     const { id } = req.params;
     const { status, notes } = req.body;
 
+    // Guard: status must be present (validation middleware should catch this first,
+    // but this prevents a 500 from Mongoose if it slips through)
+    if (!status) {
+      res.status(400);
+      return next(new Error('Status is required'));
+    }
+
     const updates = { status };
     if (notes !== undefined) updates.notes = notes;
     if (req.user && req.user._id) {
