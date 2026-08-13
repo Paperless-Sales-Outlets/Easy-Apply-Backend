@@ -43,7 +43,11 @@ export const errorLogger = (err, req, res, next) => {
   const { method, originalUrl, ip } = req;
   const timestamp = new Date().toISOString();
 
-  console.error(`[${timestamp}] ERROR - ${method} ${originalUrl} - IP: ${ip}`);
+  // Use the error's own statusCode first (set by AppError / res.status()),
+  // so we log the correct 4xx/5xx even before errorHandler runs.
+  const statusCode = err.statusCode || (res.statusCode !== 200 ? res.statusCode : 500);
+
+  console.error(`[${timestamp}] ERROR - ${method} ${originalUrl} - IP: ${ip} - Status: ${statusCode}`);
   console.error('Error Message:', err.message);
   console.error('Error Stack:', err.stack);
 
