@@ -12,33 +12,52 @@ const seedDB = async () => {
     });
     console.log('MongoDB Connected');
 
-    // Create a dummy record based on Sri Lanka
-    const dummyConnection = {
-      telephone: '0112345678',
-      fullName: 'Lionel Perera',
-      nic: '198512345678',
-      contactNo: '0771234567',
-      addressLine1: 'No 45, Lotus Road',
-      addressLine2: 'Colombo 01',
-      location: {
-        lat: 6.9319,
-        lng: 79.8478
+    // Create 3 dummy records based on Sri Lanka
+    const dummyConnections = [
+      {
+        telephone: '0112345678',
+        accountNo: '1111111111',
+        fullName: 'Lionel Perera',
+        nic: '198512345678',
+        contactNo: '771234567',
+        addressLine1: 'No 45, Lotus Road',
+        addressLine2: 'Colombo 01',
+        customerType: 'home',
+        status: 'disconnected',
+        outstandingBalance: 2500.50,
       },
-      customerType: 'home',
-      email: 'lio.perera@example.lk',
-      status: 'disconnected',
-      disconnectedFrom: '2023-01-15',
-      disconnectedTo: '2023-10-15',
-      outstandingBalance: 2500.50,
-      broadbandUsername: 'lio.perera@sltbb'
-    };
+      {
+        telephone: '0112345679',
+        accountNo: '2222222222',
+        fullName: 'Lionel Perera',
+        nic: '198512345678',
+        contactNo: '771234567',
+        addressLine1: 'Level 5, World Trade Center',
+        addressLine2: 'Colombo 01',
+        customerType: 'office',
+        status: 'disconnected',
+        outstandingBalance: 15000.00,
+      },
+      {
+        telephone: '0112345680',
+        accountNo: '3333333333',
+        fullName: 'Lionel Perera',
+        nic: '198512345678',
+        contactNo: '771234567',
+        addressLine1: 'No 12, Galle Road',
+        addressLine2: 'Mount Lavinia',
+        customerType: 'home',
+        status: 'disconnected',
+        outstandingBalance: 0.00,
+      }
+    ];
 
-    // Check if it exists and delete it to prevent duplicates
-    await Connection.deleteOne({ telephone: dummyConnection.telephone });
+    // Check if they exist and delete them to prevent duplicates
+    await Connection.deleteMany({ contactNo: '771234567' });
 
-    // Insert the new record
-    await Connection.create(dummyConnection);
-    console.log('Dummy Connection record inserted successfully!');
+    // Insert the new records
+    await Connection.insertMany(dummyConnections);
+    console.log('Dummy Connection records inserted successfully!');
 
     process.exit();
   } catch (error) {

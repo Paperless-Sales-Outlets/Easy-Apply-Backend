@@ -337,7 +337,7 @@ export const lookupConnection = async (req, res, next) => {
     if (phone === '0112345678' || phone === '1234567890') {
       return res.status(200).json({
         success: true,
-        data: {
+        data: [{
           telephone: '0112345678',
           accountNo: '1234567890',
           customerName: 'Amarasiri Gunesekera',
@@ -348,24 +348,23 @@ export const lookupConnection = async (req, res, next) => {
           disconnectedFrom: new Date('2023-11-15'),
           disconnectedTo: new Date('2024-02-10'),
           outstandingBalance: 4250.00
-        },
+        }],
       });
     }
 
-    const connection = await Connection.findOne({
+    const connections = await Connection.find({
       $or: [
         { telephone: phone },
-        { accountNo: phone }
+        { accountNo: phone },
+        { contactNo: phone }
       ]
     });
 
-    if (connection) {
-
+    if (connections && connections.length > 0) {
       return res.status(200).json({
         success: true,
-        data: connection,
+        data: connections,
       });
-
     }
 
 
