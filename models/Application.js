@@ -46,6 +46,21 @@ const applicationSchema = new mongoose.Schema(
       payherePaymentId: { type: String, trim: true },
       paidAt: { type: Date },
     },
+    notes: {
+      type: String,
+      trim: true,
+      default: '',
+      maxlength: [2000, 'Notes must be at most 2000 characters'],
+    },
+    actionedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    actionedAt: {
+      type: Date,
+      default: null,
+    },
     nic: {
       type: String,
       required: true,

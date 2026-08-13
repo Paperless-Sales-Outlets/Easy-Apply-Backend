@@ -10,6 +10,10 @@ import connectDB from './config/db.js';
 
 import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
+import adminFormsRoutes from './routes/admin/formsRoutes.js';
+import adminDashboardRoutes from './routes/admin/dashboardRoutes.js';
+import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
+import adminKycRoutes from './routes/admin/kycRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
@@ -148,6 +152,27 @@ app.use(
 app.use(
   '/api/admin/applications',
   adminApplicationRoutes
+);
+
+app.use(
+  '/api/admin/forms',
+  adminFormsRoutes
+);
+
+app.use(
+  '/api/admin/dashboard',
+  adminDashboardRoutes
+);
+
+app.use(
+  '/api/admin/dashboard-stats',
+  adminDashboardStatsRoutes
+);
+
+
+app.use(
+  '/api/admin/kyc',
+  adminKycRoutes
 );
 
 

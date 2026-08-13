@@ -250,6 +250,7 @@ export const validateStatusUpdate = [
 
   body('status')
     .trim()
+    .toLowerCase()
     .notEmpty()
     .withMessage('Status is required')
     .isIn([
@@ -311,4 +312,98 @@ export const validatePaymentCreate = [
 
   validateRequest,
 
+];
+
+
+// Validation rules for admin form creation
+export const validateAdminFormCreate = [
+  body('formType')
+    .trim()
+    .notEmpty()
+    .withMessage('Form type is required'),
+
+  body('data')
+    .notEmpty()
+    .withMessage('Form data is required')
+    .custom((value, { req }) => {
+      if (typeof value === 'string') {
+        try {
+          req.body.data = JSON.parse(value);
+        } catch (e) {
+          throw new Error('Invalid JSON in data');
+        }
+      }
+      if (typeof req.body.data !== 'object' || req.body.data === null) {
+        throw new Error('Form data must be an object');
+      }
+      return true;
+    }),
+
+  validateRequest,
+];
+
+
+// Validation for updating a form
+export const validateAdminFormUpdate = [
+  body('status')
+    .optional()
+    .trim()
+    .toLowerCase()
+    .isIn(['pending', 'approved', 'rejected', 'flagged'])
+    .withMessage('Invalid status value'),
+  validateRequest,
+];
+
+
+// Validation for reviewing a KYC case (approve / reject / flag / reopen)
+export const validateKycReview = [
+  body('status')
+    .trim()
+    .toLowerCase()
+    .notEmpty()
+    .withMessage('Review status is required')
+    .isIn(['pending', 'approved', 'rejected', 'flagged'])
+    .withMessage('Invalid review status. Must be one of: pending, approved, rejected, flagged'),
+  body('notes')
+    .optional()
+    .trim()
+    .isLength({ max: 2000 })
+    .withMessage('Notes must be at most 2000 characters'),
+  validateRequest,
+];
+
+
+// Validation for updating an application's status (approve / reject / flag / etc.)
+export const validateUpdateApplicationStatus = [
+  body('status')
+    .trim()
+    .toLowerCase()
+    .isIn(['pending', 'pending payment', 'approved', 'confirmed', 'rejected', 'flagged'])
+    .withMessage('Invalid status value. Must be one of: pending, pending payment, approved, confirmed, rejected, flagged'),
+  body('notes')
+    .optional()
+    .trim()
+    .isLength({ max: 2000 })
+    .withMessage('Notes must be at most 2000 characters'),
+  validateRequest,
+];
+
+
+// Validation for adding a comment to a form
+export const validateAddComment = [
+  body('text')
+    .trim()
+    .notEmpty()
+    .withMessage('Comment text is required')
+    .isLength({ max: 1000 })
+    .withMessage('Comment must be at most 1000 characters'),
+  validateRequest,
+];
+
+
+// Validation for get forms query parameters
+export const validateGetFormsQuery = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 200 }).withMessage('Limit must be between 1 and 200'),
+  validateRequest,
 ];

@@ -279,7 +279,7 @@ export const checkApplicationStatus = async (req, res, next) => {
 
     const application = await Application.findOne({
       referenceNumber: ref,
-    });
+    }).populate('actionedBy', 'name email role');
 
 
     if (!application) {
@@ -298,6 +298,16 @@ export const checkApplicationStatus = async (req, res, next) => {
       referenceNumber: application.referenceNumber,
       status: application.status,
       serviceType: application.serviceType,
+      notes: application.notes || '',
+      actionedBy: application.actionedBy
+        ? {
+            _id: application.actionedBy._id,
+            name: application.actionedBy.name,
+            email: application.actionedBy.email,
+            role: application.actionedBy.role,
+          }
+        : null,
+      actionedAt: application.actionedAt || null,
       createdAt: application.createdAt,
 
     });
