@@ -20,6 +20,7 @@ import customerRoutes from './routes/customerRoutes.js';
 import { errorHandler } from './middleware/errorMiddleware.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
 import { notFound } from './middleware/errorHandler.js';
+import { protect, authorize } from './middleware/authMiddleware.js';
 
 
 // Load environmental variables
@@ -147,6 +148,8 @@ app.use(
 
 app.use(
   '/api/admin/applications',
+  protect,
+  authorize('Admin', 'Staff'),
   adminApplicationRoutes
 );
 
