@@ -4,6 +4,12 @@ import Otp from '../models/Otp.js';
 // In-memory fallback store when MongoDB is offline
 const inMemoryOtpStore = new Map();
 
+// Helper to normalize phone number string
+const normalizePhone = (phone) => {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits.slice(-9); // 9-digit national number e.g. 774053185
+};
+
 // @desc    Generate and send OTP for phone verification
 // @route   POST /api/otp/send
 // @access  Public
@@ -11,30 +17,38 @@ export const sendOtp = async (req, res, next) => {
   const { phone } = req.body;
 
   if (!phone) {
-    res.status(400);
-    return next(new Error('Phone number is required'));
+    return res.status(400).json({
+      success: false,
+      message: 'Phone number is required',
+    });
   }
 
   try {
-    // Generate a 6-digit OTP
+    const cleanPhone = normalizePhone(phone);
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     if (mongoose.connection.readyState === 1) {
-      // Delete any existing OTP for this phone number
-      await Otp.deleteMany({ phone });
+      // Delete any existing OTP for this phone number variations
+      await Otp.deleteMany({
+        $or: [
+          { phone: cleanPhone },
+          { phone: `0${cleanPhone}` },
+          { phone: `94${cleanPhone}` },
+          { phone: String(phone).trim() },
+        ],
+      });
       // Save to database (auto-expires in 5 minutes)
-      await Otp.create({ phone, otp: otpCode });
+      await Otp.create({ phone: cleanPhone, otp: otpCode });
     } else {
-      // In-memory store fallback when DB is offline
-      inMemoryOtpStore.set(String(phone).trim(), otpCode);
+      inMemoryOtpStore.set(cleanPhone, otpCode);
     }
 
-    // Print OTP to server console for demo/testing purposes
-    console.log(`\n📱 OTP for +94${phone}: ${otpCode} ${mongoose.connection.readyState !== 1 ? '(In-Memory Demo Mode)' : ''}\n`);
+    console.log(`\n📱 OTP for +94 ${cleanPhone}: ${otpCode} (Demo Code: 000000)\n`);
 
     res.status(200).json({
       success: true,
-      message: 'OTP sent successfully. Check the server console.',
+      message: `OTP sent successfully. Demo code: ${otpCode} or 000000.`,
+      otp: otpCode,
     });
   } catch (error) {
     next(error);
@@ -48,32 +62,59 @@ export const verifyOtp = async (req, res, next) => {
   const { phone, otp } = req.body;
 
   if (!phone || !otp) {
-    res.status(400);
-    return next(new Error('Phone number and OTP are required'));
+    return res.status(400).json({
+      success: false,
+      message: 'Phone number and OTP are required',
+    });
   }
 
   try {
-    const cleanPhone = String(phone).trim();
+    const cleanPhone = normalizePhone(phone);
     const cleanOtp = String(otp).trim();
 
+    // Accept demo/test bypass codes '000000' or '123456'
+    if (cleanOtp === '000000' || cleanOtp === '123456') {
+      return res.status(200).json({
+        success: true,
+        message: 'Phone number verified successfully',
+      });
+    }
+
     if (mongoose.connection.readyState === 1) {
-      const record = await Otp.findOne({ phone: cleanPhone, otp: cleanOtp });
+      const record = await Otp.findOne({
+        $or: [
+          { phone: cleanPhone, otp: cleanOtp },
+          { phone: `0${cleanPhone}`, otp: cleanOtp },
+          { phone: `94${cleanPhone}`, otp: cleanOtp },
+          { phone: String(phone).trim(), otp: cleanOtp },
+        ],
+      });
 
       if (!record) {
-        res.status(400);
-        return next(new Error('Invalid or expired OTP'));
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired OTP code. Use demo code 000000.',
+        });
       }
 
       // Delete OTP after successful verification
-      await Otp.deleteMany({ phone: cleanPhone });
+      await Otp.deleteMany({
+        $or: [
+          { phone: cleanPhone },
+          { phone: `0${cleanPhone}` },
+          { phone: `94${cleanPhone}` },
+          { phone: String(phone).trim() },
+        ],
+      });
     } else {
-      // Check in-memory store or accept default demo code '123456'
       const storedOtp = inMemoryOtpStore.get(cleanPhone);
-      const isMatch = storedOtp === cleanOtp || cleanOtp === '123456';
+      const isMatch = storedOtp === cleanOtp;
 
       if (!isMatch) {
-        res.status(400);
-        return next(new Error('Invalid or expired OTP'));
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired OTP code. Use demo code 000000.',
+        });
       }
 
       inMemoryOtpStore.delete(cleanPhone);
@@ -87,4 +128,3 @@ export const verifyOtp = async (req, res, next) => {
     next(error);
   }
 };
-

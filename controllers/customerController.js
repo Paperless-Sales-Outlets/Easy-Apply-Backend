@@ -1,132 +1,148 @@
 import Connection from '../models/Connection.js';
 import mongoose from 'mongoose';
 
-// @desc    Get customer details by telephone number
-// @route   GET /api/customers/:telephone
+// @desc    Lookup customer details by telephone/mobile number from REAL database
+// @route   POST /api/customers/lookup
+// @route   GET /api/customers/lookup
 // @access  Public
-export const getCustomerByTelephone = async (req, res, next) => {
-  const { telephone } = req.params;
-  const digitsOnly = (telephone || '').replace(/\D/g, '');
+export const lookupCustomer = async (req, res, next) => {
+  const phoneStr = req.body.phoneNumber || req.body.phone || req.query.phone || req.query.phoneNumber;
+
+  if (!phoneStr) {
+    return res.status(400).json({
+      success: false,
+      message: 'Phone number is required for customer lookup',
+    });
+  }
+
+  const digitsOnly = String(phoneStr).replace(/\D/g, '');
   const last9 = digitsOnly.slice(-9);
 
   try {
-    let customerData = null;
+    let formattedAccounts = [];
 
     if (mongoose.connection.readyState === 1) {
-      // 1. Search Connection collection
-      const connection = await Connection.findOne({
+      // 1. Search Connection collection for matching numbers
+      const initialMatch = await Connection.find({
         $or: [
-          { telephone: telephone },
+          { telephone: phoneStr },
           { telephone: digitsOnly },
           { telephone: `0${last9}` },
-          { contactNo: telephone },
+          { contactNo: phoneStr },
           { contactNo: digitsOnly },
           { contactNo: `0${last9}` },
         ],
       });
 
-      if (connection) {
-        customerData = {
-          telephone: connection.telephone,
-          fullName: connection.fullName,
-          nameFull: connection.fullName,
-          legalOwner: connection.fullName,
+      if (initialMatch && initialMatch.length > 0) {
+        // Collect NICs to find all accounts belonging to this customer
+        const nics = [...new Set(initialMatch.map((c) => c.nic).filter(Boolean))];
+
+        const allConnections = await Connection.find({
+          $or: [
+            { nic: { $in: nics } },
+            { telephone: digitsOnly },
+            { telephone: `0${last9}` },
+            { contactNo: digitsOnly },
+            { contactNo: `0${last9}` },
+          ],
+        }).sort({ createdAt: -1 });
+
+        formattedAccounts = allConnections.map((c) => ({
+          customerId: c._id.toString(),
+          accountNumber: c.accountNo || `ACC-${c.telephone}`,
+          phoneNumber: c.contactNo || c.telephone,
+          telephone: c.telephone,
+          fullName: c.fullName,
+          customerName: c.fullName,
+          nameFull: c.fullName,
           title: 'Mr',
-          nic: connection.nic,
-          contactNo: connection.contactNo || connection.telephone,
-          mobileNumber: connection.contactNo || connection.telephone,
-          fixedNumber: connection.telephone,
-          email: connection.email || '',
-          customerType: connection.customerType || 'home',
-          status: connection.status || 'active',
-          address: [connection.addressLine1, connection.addressLine2].filter(Boolean).join(', ') || 'No 45, Lotus Road, Colombo 01',
-          addressLine1: connection.addressLine1 || '',
-          addressLine2: connection.addressLine2 || '',
-          contactName: connection.fullName,
-          dob: '1990-05-15',
-        };
+          nic: c.nic,
+          mobileNumber: c.contactNo || c.telephone,
+          fixedContactNumber: c.telephone,
+          fixedNumber: c.telephone,
+          email: c.email || '',
+          address: [c.addressLine1, c.addressLine2].filter(Boolean).join(', '),
+          addressLine1: c.addressLine1 || '',
+          addressLine2: c.addressLine2 || '',
+          customerType: c.customerType || 'home',
+          status: c.status || 'active',
+          serviceType: c.packageName?.includes('Voice')
+            ? 'Voice'
+            : c.packageName?.includes('LTE')
+            ? 'LTE Home'
+            : 'Fibre Broadband',
+          package: c.packageName || '300 Mbps Fibre Broadband',
+          packageName: c.packageName || '300 Mbps Fibre Broadband',
+          speed: c.speed || '300 Mbps',
+          monthlyPrice: c.monthlyPrice || 6990,
+        }));
       }
 
       // 2. If not found in Connection, search Application collection for recent submission
-      if (!customerData) {
-        const ApplicationModel = mongoose.models.Application;
-        if (ApplicationModel) {
-          const app = await ApplicationModel.findOne({
-            $or: [
-              { phone: telephone },
-              { phone: digitsOnly },
-              { phone: `0${last9}` },
-              { 'formData.mobileNumber': telephone },
-              { 'formData.mobileNumber': digitsOnly },
-              { 'formData.mobileNumber': `0${last9}` },
-            ],
-          }).sort({ createdAt: -1 });
+      if (formattedAccounts.length === 0 && mongoose.models.Application) {
+        const app = await mongoose.models.Application.findOne({
+          $or: [
+            { phone: phoneStr },
+            { phone: digitsOnly },
+            { phone: `0${last9}` },
+            { 'formData.mobileNumber': digitsOnly },
+            { 'formData.mobileNumber': `0${last9}` },
+          ],
+        }).sort({ createdAt: -1 });
 
-          if (app && app.formData) {
-            customerData = {
-              telephone: app.phone || telephone,
-              fullName: app.formData.nameFull || app.formData.contactName || 'Existing Customer',
-              nameFull: app.formData.nameFull || app.formData.contactName || 'Existing Customer',
+        if (app && app.formData) {
+          formattedAccounts = [
+            {
+              customerId: app._id.toString(),
+              accountNumber: app.referenceNumber || `ACC-${app.phone}`,
+              phoneNumber: app.phone || phoneStr,
+              telephone: app.formData.fixedNumber || app.phone || phoneStr,
+              fullName: app.formData.nameFull || app.formData.contactName || '',
+              customerName: app.formData.nameFull || app.formData.contactName || '',
+              nameFull: app.formData.nameFull || app.formData.contactName || '',
               title: app.formData.title || 'Mr',
               nic: app.nic || app.formData.nic || '',
-              contactNo: app.phone || app.formData.mobileNumber || telephone,
-              mobileNumber: app.formData.mobileNumber || app.phone || telephone,
+              mobileNumber: app.formData.mobileNumber || app.phone || phoneStr,
+              fixedContactNumber: app.formData.fixedNumber || '',
               fixedNumber: app.formData.fixedNumber || '',
               email: app.formData.email || '',
-              customerType: app.formData.customerType || 'home',
               address: app.formData.address || app.formData.installAddress || '',
-              contactName: app.formData.contactName || app.formData.nameFull || '',
-              dob: app.formData.dob || '1992-08-20',
-              taxExemption: app.formData.taxExemption || '',
+              addressLine1: app.formData.installAddress || app.formData.address || '',
+              customerType: app.formData.customerType || 'home',
               status: 'active',
-            };
-          }
+              serviceType: app.serviceType || 'Fibre Broadband',
+              package: app.formData.broadbandPackage || '300 Mbps Fibre Broadband',
+              packageName: app.formData.broadbandPackage || '300 Mbps Fibre Broadband',
+              speed: '300 Mbps',
+              monthlyPrice: 6990,
+            },
+          ];
         }
       }
     }
 
-    // 3. Fallback sample data for seeded demo numbers (or when DB has no matching record)
-    const seededDemoNumbers = ['0112345678', '0771234567', '0712345678', '0777123456', '771234567', '112345678'];
-    if (!customerData && (seededDemoNumbers.includes(digitsOnly) || seededDemoNumbers.includes(telephone) || digitsOnly.endsWith('1234567'))) {
-      customerData = {
-        telephone: telephone || '0771234567',
-        fullName: 'Lionel Perera',
-        nameFull: 'Lionel Perera',
-        legalOwner: 'Lionel Perera',
-        contactPerson: 'Lionel Perera',
-        contactName: 'Lionel Perera',
-        title: 'Mr',
-        nic: '198512345678',
-        dob: '1985-05-14',
-        contactNo: '0771234567',
-        mobileNumber: '0771234567',
-        fixedNumber: '0112345678',
-        email: 'lio.perera@example.lk',
-        address: 'No 45, Lotus Road, Colombo 01',
-        addressLine1: 'No 45, Lotus Road',
-        addressLine2: 'Colombo 01',
-        customerType: 'home',
-        taxExemption: 'TAX-8849',
-        status: 'active',
-        broadbandUsername: 'lio.perera@sltbb',
-      };
-    }
-
-    if (customerData) {
+    if (formattedAccounts.length > 0) {
       return res.status(200).json({
         success: true,
-        isExisting: true,
-        data: customerData,
+        customerExists: true,
+        customers: formattedAccounts,
       });
     }
 
-    // Customer not found -> new customer
     return res.status(200).json({
       success: true,
-      isExisting: false,
-      message: `No existing customer record found for telephone: ${telephone}`,
+      customerExists: false,
+      customers: [],
+      message: 'No existing customer account was found for this number.',
     });
   } catch (error) {
     next(error);
   }
+};
+
+// Legacy GET endpoint wrapping lookupCustomer
+export const getCustomerByTelephone = async (req, res, next) => {
+  req.body.phoneNumber = req.params.telephone;
+  return lookupCustomer(req, res, next);
 };

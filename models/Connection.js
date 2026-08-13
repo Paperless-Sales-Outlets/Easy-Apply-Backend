@@ -79,6 +79,20 @@ const connectionSchema = new mongoose.Schema(
       type: String,
       trim: true,
       lowercase: true
+    },
+    packageName: {
+      type: String,
+      trim: true,
+      default: '300 Mbps Fibre Broadband'
+    },
+    speed: {
+      type: String,
+      trim: true,
+      default: '300 Mbps'
+    },
+    monthlyPrice: {
+      type: Number,
+      default: 6990
     }
   },
   {
