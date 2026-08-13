@@ -59,6 +59,7 @@ export const getAdminApplications = async (req, res, next) => {
     const [applications, totalCount] = await Promise.all([
       Application
         .find(filter)
+        .populate('actionedBy', 'name email')
         .sort({ [sortField]: sortDir })
         .skip(skip)
         .limit(pageSize)
@@ -95,6 +96,41 @@ export const getAdminApplications = async (req, res, next) => {
       },
       applications,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update an application's status (approve / reject / flag / etc.)
+//          Saves staff notes and records which admin/staff actioned the change.
+// @route   PATCH /api/admin/applications/:id/status
+// @access  Private (Admin / Staff only)
+export const updateApplicationStatus = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { status, notes } = req.body;
+
+    const updates = { status };
+    if (notes !== undefined) updates.notes = notes;
+    if (req.user && req.user._id) {
+      updates.actionedBy = req.user._id;
+      updates.actionedAt = new Date();
+    }
+
+    const application = await Application.findByIdAndUpdate(
+      id,
+      { $set: updates },
+      { new: true, runValidators: true }
+    )
+      .populate('actionedBy', 'name email role')
+      .lean();
+
+    if (!application) {
+      res.status(404);
+      return next(new Error('Application not found'));
+    }
+
+    res.status(200).json({ success: true, application });
   } catch (error) {
     next(error);
   }

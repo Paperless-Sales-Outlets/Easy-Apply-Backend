@@ -42,13 +42,16 @@ export const protect = async (req, res, next) => {
 };
 
 // Authorize roles (Role-Based Access Control)
+// Roles are matched case-insensitively so 'Admin' / 'Staff' (User model enum)
+// also satisfy guards written as 'admin' / 'staff'.
 export const authorize = (...roles) => {
+  const normalized = roles.map((role) => String(role).toLowerCase());
   return (req, res, next) => {
     if (!req.user) {
       res.status(401);
       return next(new Error('Authentication required'));
     }
-    if (!roles.includes(req.user.role)) {
+    if (!normalized.includes(String(req.user.role).toLowerCase())) {
       res.status(403);
       return next(
         new Error(
