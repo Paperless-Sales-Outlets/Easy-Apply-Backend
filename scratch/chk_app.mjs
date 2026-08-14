@@ -1,0 +1,10 @@
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+dotenv.config();
+await mongoose.connect(process.env.MONGO_URI);
+const app = await mongoose.connection.collection('applications').findOne({ referenceNumber: 'REQ-37167121' });
+console.log('APP IN .env DB:', app ? app._id.toString() : 'NOT FOUND');
+const dbs = await mongoose.connection.db.admin().listDatabases();
+console.log('DB NAME:', mongoose.connection.name);
+console.log('DATABASES:', JSON.stringify(dbs.databases.map(d => d.name)));
+await mongoose.disconnect();

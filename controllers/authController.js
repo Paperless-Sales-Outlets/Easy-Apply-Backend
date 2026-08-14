@@ -17,7 +17,7 @@ const generateAccessToken = (user) => {
 // Helper to generate refresh token
 const generateRefreshToken = (user) => {
   return jwt.sign(
-    { id: user._id },
+    { id: user._id, jti: crypto.randomUUID() },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d' }
   );

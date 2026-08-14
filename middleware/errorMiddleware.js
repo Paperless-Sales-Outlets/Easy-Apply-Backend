@@ -5,7 +5,7 @@ export const errorHandler = (err, req, res, next) => {
   // Log to console for development
   console.error(err);
 
-  let statusCode = res.statusCode && res.statusCode !== 200 ? res.statusCode : 500;
+  let statusCode = err.statusCode || (res.statusCode && res.statusCode !== 200 ? res.statusCode : 500);
 
   // Mongoose duplicate key (e.g. unique email or NIC check)
   if (err.code === 11000) {

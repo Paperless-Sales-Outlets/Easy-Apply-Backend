@@ -10,6 +10,10 @@ import connectDB from './config/db.js';
 
 import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
+import adminFormsRoutes from './routes/admin/formsRoutes.js';
+import adminDashboardRoutes from './routes/admin/dashboardRoutes.js';
+import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
+import adminKycRoutes from './routes/admin/kycRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
@@ -20,6 +24,7 @@ import customerRoutes from './routes/customerRoutes.js';
 import { errorHandler } from './middleware/errorMiddleware.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
 import { notFound } from './middleware/errorHandler.js';
+import { protect, authorize } from './middleware/authMiddleware.js';
 
 
 // Load environmental variables
@@ -43,7 +48,17 @@ app.use(
 );
 
 
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || origin === process.env.FRONTEND_URL) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  optionsSuccessStatus: 204
+}));
 
 
 
@@ -137,7 +152,30 @@ app.use(
 
 app.use(
   '/api/admin/applications',
+  protect,
+  authorize('Admin', 'Staff'),
   adminApplicationRoutes
+);
+
+app.use(
+  '/api/admin/forms',
+  adminFormsRoutes
+);
+
+app.use(
+  '/api/admin/dashboard',
+  adminDashboardRoutes
+);
+
+app.use(
+  '/api/admin/dashboard-stats',
+  adminDashboardStatsRoutes
+);
+
+
+app.use(
+  '/api/admin/kyc',
+  adminKycRoutes
 );
 
 
@@ -166,6 +204,11 @@ app.use(
 );
 
 
+
+// Handle OPTIONS requests before 404 handler
+app.options('*', (req, res) => {
+  res.status(204).end();
+});
 
 // 404 Handler
 app.use(notFound);
