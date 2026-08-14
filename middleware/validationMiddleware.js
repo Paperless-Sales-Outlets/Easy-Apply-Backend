@@ -135,7 +135,7 @@ export const validateApplicationSubmission = [
 
 
 
-  // Mobile number validation
+  // Verified contact phone number validation (mobile or fixed 10 digits starting with 0)
   body('phone')
     .optional()
     .customSanitizer(value => {
@@ -144,9 +144,9 @@ export const validateApplicationSubmission = [
       }
       return value;
     })
-    .matches(/^07\d{8}$/)
+    .matches(/^0\d{9}$/)
     .withMessage(
-      'Verified mobile must be 10 digits starting with 07'
+      'Verified phone must be 10 digits starting with 0'
     ),
 
 

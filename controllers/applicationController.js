@@ -165,6 +165,31 @@ export const createApplication = async (req, res, next) => {
       }
     }
 
+    // =====================================
+    // Package Migration BRD 5.6 Validations
+    // =====================================
+    if (serviceType === 'package-migration') {
+      const effectiveDate = formData.effectiveDate;
+      if (!effectiveDate) {
+        res.status(400);
+        return next(new Error('Effective Date is required for package migration (BRD 5.6).'));
+      }
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (effectiveDate < todayStr) {
+        res.status(400);
+        return next(new Error('Effective Date must be today or a future date. Past dates are not allowed (BRD 5.6).'));
+      }
+
+      const currentPkg = (formData.currentPackage || formData.existingPackage || '').trim().toLowerCase();
+      const reqPkg = (formData.requiredPackage || formData.requestedPackage || '').trim().toLowerCase();
+
+      if (currentPkg && reqPkg && currentPkg === reqPkg) {
+        res.status(400);
+        return next(new Error('Requested package cannot be the same as your current package (BRD 5.6).'));
+      }
+    }
+
 
     // Merge document references
     formData.documents = {
@@ -383,4 +408,64 @@ export const lookupConnection = async (req, res, next) => {
 
   }
 
+};
+
+
+
+// @desc    Lookup customer current package information by phone number (BRD 5.6)
+// @route   GET /api/applications/lookup-package?phone=
+// @access  Public
+export const lookupPackage = async (req, res, next) => {
+  const { phone } = req.query;
+
+  if (!phone) {
+    res.status(400);
+    return next(new Error('Telephone number (phone) parameter is required.'));
+  }
+
+  const cleanPhone = phone.replace(/\D/g, '');
+
+  try {
+    let connection = null;
+
+    if (mongoose.connection.readyState === 1) {
+      connection = await Connection.findOne({
+        $or: [
+          { telephone: phone },
+          { telephone: cleanPhone },
+          { accountNo: phone },
+          { contactNo: phone },
+        ],
+      });
+    }
+
+    if (connection) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          telephone: connection.telephone,
+          accountNo: connection.accountNo,
+          customerName: connection.fullName,
+          nic: connection.nic,
+          contactNo: connection.contactNo,
+          packageName: connection.packageName,
+          currentPackage: connection.packageName,
+          speed: connection.speed,
+          monthlyPrice: connection.monthlyPrice,
+          activationDate: connection.createdAt
+            ? connection.createdAt.toISOString().split('T')[0]
+            : null,
+          status: connection.status,
+        },
+      });
+    }
+
+    return res.status(200).json({
+      success: false,
+      data: null,
+      message: 'No customer found for this telephone number.',
+    });
+  } catch (error) {
+    next(error);
+  }
 };
