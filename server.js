@@ -50,13 +50,15 @@ app.use(
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || origin === process.env.FRONTEND_URL) {
+    // Allow all origins in development or if FRONTEND_URL is not set
+    if (!origin || !process.env.FRONTEND_URL || origin === process.env.FRONTEND_URL || process.env.NODE_ENV === 'development') {
       callback(null, true);
     } else {
       callback(null, false);
     }
   },
   credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id'],
   optionsSuccessStatus: 204
 }));
 

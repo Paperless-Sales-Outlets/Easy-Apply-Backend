@@ -237,9 +237,34 @@ export const validateApplicationSubmission = [
 
       // Payment receipt validation can be added here
       // using req.files if required
-
     }
 
+    if (req.body.serviceType === 'service-vacation') {
+      const data = req.body.formData || {};
+
+      const hasFacility = data.facility_voice || data.facility_broadband || data.facility_peotv;
+      if (!hasFacility) {
+        throw new Error('At least one facility (Voice, Broadband, or PeoTV) must be selected for service vacation');
+      }
+
+      if (!data.deactivationDate || !data.resumeDate) {
+        throw new Error('Both Deactivation Date and Resume Date are required');
+      }
+
+      const deactivation = new Date(data.deactivationDate);
+      const resume = new Date(data.resumeDate);
+
+      if (resume <= deactivation) {
+        throw new Error('Resume Date must be after Deactivation Date');
+      }
+
+      const diffTime = Math.abs(resume - deactivation);
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+      
+      if (diffDays > 122) {
+        throw new Error('Vacation duration cannot exceed 4 months (122 days)');
+      }
+    }
 
     return true;
 
