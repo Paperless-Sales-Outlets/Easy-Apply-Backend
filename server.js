@@ -230,8 +230,10 @@ app.use(errorHandler);
 
 // Server Start
 
+// 5000 is commonly taken by macOS Control Center/AirPlay Receiver — 5050
+// avoids that clash and matches the frontend's default VITE_API_BASE_URL.
 const PORT =
-  process.env.PORT || 5000;
+  process.env.PORT || 5050;
 
 
 const server = app.listen(
