@@ -6,7 +6,8 @@ import morgan from 'morgan';
 import path from 'path';
 import fs from 'fs';
 
-import connectDB from './config/db.js';
+import connectDB, { isDbConnected } from './config/db.js';
+import mongoose from 'mongoose';
 
 import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
@@ -133,6 +134,18 @@ app.get('/', (req, res) => {
 
 
 // API Routes
+
+app.get('/api/health', (req, res) => {
+  const dbStates = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+
+  res.status(200).json({
+    success: true,
+    dbConnected: isDbConnected(),
+    dbState: dbStates[mongoose.connection.readyState] || 'unknown',
+    dbHost: isDbConnected() ? mongoose.connection.host : null,
+    environment: process.env.NODE_ENV,
+  });
+});
 
 app.use(
   '/api/otp',
