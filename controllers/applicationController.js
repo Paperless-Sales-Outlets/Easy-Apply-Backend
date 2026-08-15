@@ -292,6 +292,48 @@ export const createApplication = async (req, res, next) => {
 
 
 
+// @desc    List applications submitted for a verified phone number
+// @route   GET /api/applications/by-phone?phone=xxx
+// @access  Public
+export const getApplicationsByPhone = async (req, res, next) => {
+
+  const { phone } = req.query;
+
+  if (!phone) {
+    res.status(400);
+    return next(new Error('Phone number is required'));
+  }
+
+  const digitsOnly = String(phone).replace(/\D/g, '');
+  const last9 = digitsOnly.slice(-9);
+
+  try {
+    const applications = await Application.find({
+      $or: [
+        { phone: phone },
+        { phone: digitsOnly },
+        { phone: `0${last9}` },
+        { 'formData.mobileNumber': digitsOnly },
+        { 'formData.mobileNumber': `0${last9}` },
+      ],
+    })
+      .sort({ createdAt: -1 })
+      .select('referenceNumber serviceType status createdAt');
+
+    res.status(200).json({
+      success: true,
+      applications: applications.map((app) => ({
+        referenceNumber: app.referenceNumber,
+        serviceType: app.serviceType,
+        status: app.status,
+        createdAt: app.createdAt,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Public status check using reference number
 // @route   GET /api/applications/check-status
 // @access  Public
@@ -323,6 +365,8 @@ export const checkApplicationStatus = async (req, res, next) => {
       referenceNumber: application.referenceNumber,
       status: application.status,
       serviceType: application.serviceType,
+      customerName: application.formData?.nameFull || application.formData?.contactName || application.formData?.fullName || '',
+      telephone: application.phone || '',
       notes: application.notes || '',
       actionedBy: application.actionedBy
         ? {
@@ -355,33 +399,19 @@ export const lookupConnection = async (req, res, next) => {
 
   const { phone } = req.query;
 
+  const digitsOnly = String(phone || '').replace(/\D/g, '');
+  const last9 = digitsOnly.slice(-9);
 
   try {
-    // DEMO TEST ACCOUNTS
-    // Always return dummy payload for these numbers so the UI can be tested easily
-    if (phone === '0112345678' || phone === '1234567890') {
-      return res.status(200).json({
-        success: true,
-        data: [{
-          telephone: '0112345678',
-          accountNo: '1234567890',
-          customerName: 'Amarasiri Gunesekera',
-          nic: '197523405678',
-          contactNo: '0773456789',
-          addressLine1: 'No 45, Temple Road',
-          addressLine2: 'Nugegoda',
-          disconnectedFrom: new Date('2023-11-15'),
-          disconnectedTo: new Date('2024-02-10'),
-          outstandingBalance: 4250.00
-        }],
-      });
-    }
-
     const connections = await Connection.find({
       $or: [
         { telephone: phone },
+        { telephone: digitsOnly },
+        { telephone: `0${last9}` },
         { accountNo: phone },
-        { contactNo: phone }
+        { contactNo: phone },
+        { contactNo: digitsOnly },
+        { contactNo: `0${last9}` },
       ]
     });
 
@@ -424,6 +454,7 @@ export const lookupPackage = async (req, res, next) => {
   }
 
   const cleanPhone = phone.replace(/\D/g, '');
+  const last9 = cleanPhone.slice(-9);
 
   try {
     let connection = null;
@@ -433,8 +464,11 @@ export const lookupPackage = async (req, res, next) => {
         $or: [
           { telephone: phone },
           { telephone: cleanPhone },
+          { telephone: `0${last9}` },
           { accountNo: phone },
           { contactNo: phone },
+          { contactNo: cleanPhone },
+          { contactNo: `0${last9}` },
         ],
       });
     }

@@ -3,6 +3,7 @@ import express from 'express';
 import {
   createApplication,
   checkApplicationStatus,
+  getApplicationsByPhone,
   lookupConnection,
   lookupPackage,
 } from '../controllers/applicationController.js';
@@ -24,6 +25,13 @@ router.get(
   '/check-status',
   validatePublicStatusCheck,
   checkApplicationStatus
+);
+
+
+// Public route for listing a verified phone number's application history
+router.get(
+  '/by-phone',
+  getApplicationsByPhone
 );
 
 

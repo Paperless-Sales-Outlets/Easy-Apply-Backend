@@ -6,7 +6,8 @@ import morgan from 'morgan';
 import path from 'path';
 import fs from 'fs';
 
-import connectDB from './config/db.js';
+import connectDB, { isDbConnected } from './config/db.js';
+import mongoose from 'mongoose';
 
 import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
@@ -134,6 +135,18 @@ app.get('/', (req, res) => {
 
 // API Routes
 
+app.get('/api/health', (req, res) => {
+  const dbStates = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+
+  res.status(200).json({
+    success: true,
+    dbConnected: isDbConnected(),
+    dbState: dbStates[mongoose.connection.readyState] || 'unknown',
+    dbHost: isDbConnected() ? mongoose.connection.host : null,
+    environment: process.env.NODE_ENV,
+  });
+});
+
 app.use(
   '/api/otp',
   otpRoutes
@@ -230,8 +243,10 @@ app.use(errorHandler);
 
 // Server Start
 
+// 5000 is commonly taken by macOS Control Center/AirPlay Receiver — 5050
+// avoids that clash and matches the frontend's default VITE_API_BASE_URL.
 const PORT =
-  process.env.PORT || 5000;
+  process.env.PORT || 5050;
 
 
 const server = app.listen(

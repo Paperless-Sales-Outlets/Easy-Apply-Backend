@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import Connection from './models/Connection.js';
+import Application from './models/Application.js';
 
 dotenv.config();
 
@@ -17,6 +18,27 @@ const seedDB = async () => {
       // ==============================
       // Active Connections
       // ==============================
+
+      {
+        telephone: '0701234567',
+        accountNo: 'SLT-2024-00847',
+        fullName: 'Janith Perera',
+        nic: '199012345678',
+        contactNo: '0701234567',
+        addressLine1: '42, Galle Road',
+        addressLine2: 'Colombo 03',
+        location: {
+          lat: 6.9271,
+          lng: 79.8612,
+        },
+        customerType: 'home',
+        email: 'janithperera@email.com',
+        status: 'active',
+        packageName: 'Fibre Broadband 100 Mbps',
+        speed: '100 Mbps',
+        monthlyPrice: 4490,
+        outstandingBalance: 0,
+      },
 
       {
         telephone: '0112345678',
@@ -263,6 +285,59 @@ const seedDB = async () => {
     console.log(
       `Successfully seeded ${sampleConnections.length} connection records into MongoDB!`
     );
+
+    // ==============================
+    // Sample Applications (for Application History / status check testing)
+    // ==============================
+    const sampleApplications = [
+      {
+        seedId: 'seed-app-janith-1',
+        phone: '0701234567',
+        nic: '199012345678',
+        serviceType: 'package-migration',
+        status: 'approved',
+        formData: { nameFull: 'Janith Perera', mobileNumber: '0701234567' },
+      },
+      {
+        seedId: 'seed-app-janith-2',
+        phone: '0701234567',
+        nic: '199012345678',
+        serviceType: 'refund-request',
+        status: 'pending',
+        formData: { nameFull: 'Janith Perera', mobileNumber: '0701234567' },
+      },
+      {
+        seedId: 'seed-app-nimal-1',
+        phone: '0774053185',
+        nic: '199105318522',
+        serviceType: 'reconnection',
+        status: 'confirmed',
+        formData: { nameFull: 'Nimal Bandara', mobileNumber: '0774053185' },
+      },
+      {
+        seedId: 'seed-app-kasun-1',
+        phone: '0776768676',
+        nic: '199467686761',
+        serviceType: 'termination',
+        status: 'rejected',
+        formData: { nameFull: 'Kasun Jayawardena', mobileNumber: '0776768676' },
+      },
+    ];
+
+    let createdApplications = 0;
+    for (const app of sampleApplications) {
+      const { seedId, ...appData } = app;
+      const existing = await Application.findOne({ 'formData.seedId': seedId });
+      if (!existing) {
+        await Application.create({
+          ...appData,
+          formData: { ...appData.formData, seedId },
+        });
+        createdApplications += 1;
+      }
+    }
+
+    console.log(`Successfully seeded ${createdApplications} new application records into MongoDB!`);
 
     await mongoose.connection.close();
 
