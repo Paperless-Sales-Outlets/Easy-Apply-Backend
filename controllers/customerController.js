@@ -76,6 +76,9 @@ export const lookupCustomer = async (req, res, next) => {
           packageName: c.packageName || '300 Mbps Fibre Broadband',
           speed: c.speed || '300 Mbps',
           monthlyPrice: c.monthlyPrice || 6990,
+          outstandingBalance: c.outstandingBalance || 0,
+          broadbandUsername: c.broadbandUsername || '',
+          registeredDate: c.createdAt,
         }));
       }
 
@@ -116,6 +119,9 @@ export const lookupCustomer = async (req, res, next) => {
               packageName: app.formData.broadbandPackage || '300 Mbps Fibre Broadband',
               speed: '300 Mbps',
               monthlyPrice: 6990,
+              outstandingBalance: 0,
+              broadbandUsername: '',
+              registeredDate: app.createdAt,
             },
           ];
         }
