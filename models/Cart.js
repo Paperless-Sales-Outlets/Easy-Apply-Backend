@@ -81,11 +81,11 @@ cartSchema.methods.addItem = function (product, quantity) {
   } else {
     // Add new item
     this.items.push({
-      productId: product.productId,
-      productName: product.productName,
+      productId: product.productId || (product._id ? product._id.toString() : ''),
+      productName: product.name || product.productName || (product.get && product.get('productName')) || 'Unknown Product',
       quantity: quantity,
-      price: product.price,
-      subtotal: quantity * product.price,
+      price: product.monthlyPrice || (product.get && product.get('price')) || product.price || 0,
+      subtotal: quantity * (product.monthlyPrice || (product.get && product.get('price')) || product.price || 0),
     });
   }
 
