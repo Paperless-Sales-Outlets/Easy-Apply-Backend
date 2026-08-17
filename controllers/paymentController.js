@@ -1,4 +1,14 @@
+import mongoose from 'mongoose';
 import PaymentMethod from '../models/PaymentMethod.js';
+import Appointment from '../models/Appointment.js';
+import Application from '../models/Application.js';
+
+import {
+  generatePayHereHash,
+  verifyPayHereNotifyHash,
+  formatPayHereAmount,
+} from '../utils/payhere.js';
+
 
 // ─────────────────────────────────────────────
 // @desc    Create a secure payment session (setup intent)
@@ -273,3 +283,185 @@ export const webhookBillGenerated = async (req, res, next) => {
     next(error);
   }
 };
+
+// ─────────────────────────────────────────────
+// @desc    Create PayHere payment session & security hash
+// @route   POST /api/payment/create (or /api/payments/create)
+// @access  Public
+// ─────────────────────────────────────────────
+export const createPayHerePayment = async (req, res, next) => {
+  try {
+    const { orderId, amount, currency = 'LKR', customerDetails, itemTitle } = req.body;
+
+    if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      res.status(400);
+      return next(new Error('Valid payment amount is required'));
+    }
+
+    const merchantId = process.env.PAYHERE_MERCHANT_ID;
+    const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET;
+
+    if (!merchantId || !merchantSecret) {
+      res.status(500);
+      return next(new Error('PayHere merchant credentials are not configured on server'));
+    }
+
+    const finalOrderId = orderId ? String(orderId).trim() : `ORD-${Date.now()}`;
+    const formattedAmount = formatPayHereAmount(amount);
+
+    // Generate PayHere security hash securely on server
+    const hash = generatePayHereHash(
+      merchantId,
+      finalOrderId,
+      formattedAmount,
+      currency,
+      merchantSecret
+    );
+
+    // Create or update status in DB (Appointment / Application) if MongoDB is connected
+    if (mongoose.connection.readyState === 1) {
+      let appointment = await Appointment.findOne({ orderId: finalOrderId });
+      if (!appointment) {
+        const app = await Application.findOne({ referenceNumber: finalOrderId });
+        if (app) {
+          app.paymentStatus = 'pending';
+          app.status = 'pending payment';
+          app.paymentDetails = {
+            orderId: finalOrderId,
+            amount: parseFloat(formattedAmount),
+            currency: String(currency).toUpperCase(),
+          };
+          await app.save();
+        } else {
+          await Appointment.create({
+            orderId: finalOrderId,
+            amount: parseFloat(formattedAmount),
+            currency: String(currency).toUpperCase(),
+            customerName: customerDetails?.name || customerDetails?.firstName || '',
+            email: customerDetails?.email || '',
+            phone: customerDetails?.phone || '',
+            serviceType: itemTitle || 'appointment-booking',
+            paymentStatus: 'pending',
+            status: 'pending payment',
+          });
+        }
+      } else {
+        appointment.amount = parseFloat(formattedAmount);
+        appointment.paymentStatus = 'pending';
+        appointment.status = 'pending payment';
+        await appointment.save();
+      }
+    } else {
+      console.warn('⚠️ MongoDB is not connected. Generating PayHere hash without DB persistence.');
+    }
+
+    console.log(`\n💳 PayHere payment hash created: Order ${finalOrderId} | Amount: ${currency} ${formattedAmount}\n`);
+
+    res.status(200).json({
+      success: true,
+      merchantId,
+      merchant_id: merchantId,
+      orderId: finalOrderId,
+      order_id: finalOrderId,
+      amount: formattedAmount,
+      currency: String(currency).toUpperCase(),
+      hash,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────
+// @desc    Receive and verify PayHere IPN notification callback
+// @route   POST /api/payment/notify (or /api/payments/notify)
+// @access  Public (PayHere Webhook)
+// ─────────────────────────────────────────────
+export const handlePayHereNotify = async (req, res, next) => {
+  try {
+    const notifyData = req.body;
+    console.log('\n🔔 PayHere IPN Webhook Received:', notifyData);
+
+    const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET;
+    if (!merchantSecret) {
+      console.error('❌ PAYHERE_MERCHANT_SECRET is missing');
+      res.status(500);
+      return next(new Error('Server configuration error'));
+    }
+
+    // Verify MD5 signature
+    const isValidSignature = verifyPayHereNotifyHash(notifyData, merchantSecret);
+
+    if (!isValidSignature) {
+      console.error('⚠️ PayHere Notification Hash Verification Failed!');
+      res.status(400);
+      return next(new Error('Invalid PayHere security signature (md5sig verification failed)'));
+    }
+
+    const { order_id, payhere_amount, payhere_currency, status_code, payment_id, payhere_payment_id } = notifyData;
+    const paymentId = payment_id || payhere_payment_id || '';
+    const statusCodeStr = String(status_code);
+
+    // PayHere status_code 2 = Successful payment
+    if (statusCodeStr === '2') {
+      console.log(`\n✅ PayHere Payment SUCCESS for Order ${order_id} | Payment ID: ${paymentId}`);
+
+      if (mongoose.connection.readyState === 1) {
+        // 1. Update Appointment
+        const appointment = await Appointment.findOne({ orderId: order_id });
+        if (appointment) {
+          appointment.paymentStatus = 'paid';
+          appointment.status = 'confirmed';
+          appointment.payherePaymentId = paymentId;
+          appointment.paidAt = new Date();
+          await appointment.save();
+          console.log(`   Updated Appointment ${order_id}: paymentStatus=paid, status=confirmed`);
+        }
+
+        // 2. Update Application
+        const application = await Application.findOne({
+          $or: [{ referenceNumber: order_id }, { 'paymentDetails.orderId': order_id }],
+        });
+        if (application) {
+          application.paymentStatus = 'paid';
+          application.status = 'confirmed';
+          if (!application.paymentDetails) application.paymentDetails = {};
+          application.paymentDetails.payherePaymentId = paymentId;
+          application.paymentDetails.paidAt = new Date();
+          await application.save();
+          console.log(`   Updated Application ${application.referenceNumber}: paymentStatus=paid, status=confirmed`);
+        }
+      } else {
+        console.warn('⚠️ MongoDB is not connected. Signature verified successfully.');
+      }
+
+      return res.status(200).send('OK');
+    } else {
+      console.warn(`\n⚠️ PayHere Payment non-success status (${status_code}) for Order ${order_id}`);
+
+      const failureStatus = statusCodeStr === '0' ? 'pending' : 'failed';
+
+      if (mongoose.connection.readyState === 1) {
+        const appointment = await Appointment.findOne({ orderId: order_id });
+        if (appointment) {
+          appointment.paymentStatus = failureStatus;
+          await appointment.save();
+        }
+
+        const application = await Application.findOne({
+          $or: [{ referenceNumber: order_id }, { 'paymentDetails.orderId': order_id }],
+        });
+        if (application) {
+          application.paymentStatus = failureStatus;
+          await application.save();
+        }
+      }
+
+      return res.status(200).send('OK');
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+

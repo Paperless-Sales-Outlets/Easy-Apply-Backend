@@ -26,7 +26,10 @@ const seedDB = async () => {
       },
       customerType: 'home',
       email: 'lio.perera@example.lk',
-      status: 'disconnected'
+      status: 'disconnected',
+      disconnectedFrom: '2023-01-15',
+      disconnectedTo: '2023-10-15',
+      outstandingBalance: 2500.50
     };
 
     // Check if it exists and delete it to prevent duplicates

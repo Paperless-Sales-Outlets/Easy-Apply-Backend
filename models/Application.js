@@ -30,8 +30,20 @@ const applicationSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'approved', 'rejected', 'flagged'],
+      enum: ['pending', 'pending payment', 'approved', 'confirmed', 'rejected', 'flagged'],
       default: 'pending',
+    },
+    paymentStatus: {
+      type: String,
+      enum: ['pending', 'paid', 'failed'],
+      default: 'pending',
+    },
+    paymentDetails: {
+      orderId: { type: String, trim: true },
+      amount: { type: Number },
+      currency: { type: String, default: 'LKR' },
+      payherePaymentId: { type: String, trim: true },
+      paidAt: { type: Date },
     },
     nic: {
       type: String,
