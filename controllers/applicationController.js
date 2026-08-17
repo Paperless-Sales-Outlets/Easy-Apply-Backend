@@ -55,36 +55,14 @@ export const createApplication = async (req, res, next) => {
       }
     }
 
-    // Customer Type Driven Mandatory Document Checks (BRD 5.1.3 & 5.1.5)
+    // Customer Type Checks (BRD 5.1.5)
     const customerType = formData?.customerType || 'home';
     const files = req.files || {};
 
-    const hasNicFront = files.nicFront?.[0] || formData.nicFront;
-    const hasNicBack = files.nicBack?.[0] || formData.nicBack;
-    const hasPassport = files.passportDoc?.[0] || formData.passportDoc;
-    const hasBrc = files.brcDoc?.[0] || formData.brcDoc;
-
     if (serviceType === 'new-connection') {
-      if (customerType === 'foreign') {
-        if (!hasPassport) {
-          res.status(400);
-          return next(new Error('Passport main page upload is mandatory for foreign customers (BRD 5.1.3).'));
-        }
-      } else if (customerType === 'business') {
-        if (!formData.vatNumber?.trim()) {
-          res.status(400);
-          return next(new Error('VAT Registration Number is required for business customers (BRD 5.1.5).'));
-        }
-        if (!hasBrc) {
-          res.status(400);
-          return next(new Error('Business Registration Certificate (BRC) upload is mandatory for business customers (BRD 5.1.3).'));
-        }
-      } else {
-        // home, office, religious, government
-        if (!hasNicFront || !hasNicBack) {
-          res.status(400);
-          return next(new Error('Both NIC Front and NIC Back document uploads are mandatory (BRD 5.1.3).'));
-        }
+      if (customerType === 'business' && !formData.vatNumber?.trim()) {
+        res.status(400);
+        return next(new Error('VAT Registration Number is required for business customers (BRD 5.1.5).'));
       }
     }
 

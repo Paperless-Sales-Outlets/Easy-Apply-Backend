@@ -48,11 +48,12 @@ export const validateApplicationSubmission = [
         throw new Error('Form data must be an object');
       }
 
-      // BRD 5.1.6 Validation: Validate at least one broadband package is selected for new connection
+      // BRD 5.1.6 Validation: Validate package selection or cart items for new connection
       if (req.body.serviceType === 'new-connection') {
+        const hasCartItems = Array.isArray(parsedData.cartItems) && parsedData.cartItems.length > 0;
         const broadbandPkg = parsedData.broadbandPackage || parsedData.otherBroadbandPackage;
-        if (!broadbandPkg) {
-          throw new Error('Selection of at least one Broadband Package is mandatory per BRD 5.1.6.');
+        if (!hasCartItems && !broadbandPkg) {
+          throw new Error('Selection of at least one Broadband / Telecom Package is mandatory.');
         }
       }
 
