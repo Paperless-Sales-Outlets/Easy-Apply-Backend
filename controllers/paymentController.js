@@ -374,7 +374,7 @@ export const createPayHerePayment = async (req, res, next) => {
       // PayHere requires these URLs — empty strings cause "Unauthorized payment request"
       return_url: `${baseUrl}${basePath}/payment/success`,
       cancel_url: `${baseUrl}${basePath}/payment/cancel`,
-      notify_url: `${apiUrl}/api/payment/notify`,
+      notify_url: `${apiUrl}${basePath}/api/payment/notify`,
     });
   } catch (error) {
     next(error);
