@@ -38,7 +38,6 @@ const cartSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      index: true,
     },
     items: {
       type: [cartItemSchema],
