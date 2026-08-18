@@ -8,6 +8,7 @@ import {
   webhookBillGenerated,
   createPayHerePayment,
   handlePayHereNotify,
+  getOrderByOrderId,
 } from '../controllers/paymentController.js';
 import { validatePaymentCreate } from '../middleware/validationMiddleware.js';
 
@@ -16,6 +17,7 @@ const router = express.Router();
 // PayHere Sandbox Payment API Endpoints
 router.post('/create', validatePaymentCreate, createPayHerePayment);
 router.post('/notify', handlePayHereNotify);
+router.get('/order/:orderId', getOrderByOrderId);
 
 // Create a secure payment session (setup intent)
 router.post('/setup-intent', setupIntent);
