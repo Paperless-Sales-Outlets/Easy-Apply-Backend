@@ -26,6 +26,8 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           envs: BACKEND_ENV
           script: |
+            set -e
+
             # 1. Determine folder, port, and PM2 process name based on branch
             if [ "${{ github.ref_name }}" = "main" ]; then
               TARGET_DIR="$HOME/paperless_project/Easy-Apply-Backend"
@@ -49,7 +51,7 @@ jobs:
             # 4. Dynamically generate the .env file on the server
             echo "PORT=$PORT" > .env
             echo "NODE_ENV=production" >> .env
-            printf '%s\n' "$BACKEND_ENV" >> .env
+            echo "$BACKEND_ENV" >> .env
 
             # 5. Install production dependencies
             npm install --omit=dev

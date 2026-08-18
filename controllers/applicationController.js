@@ -98,6 +98,11 @@ export const createApplication = async (req, res, next) => {
 
       const customerType = formData?.customerType || 'home';
 
+      // Identity documents are only needed to establish who the customer is —
+      // an existing SLTMobitel customer already has NIC/passport/BRC on file
+      // from account creation, so don't make them re-upload it for a new
+      // connection request.
+      const isExistingCustomer = formData?.isExistingCustomer === 'yes';
 
       const hasNicFront =
         files.nicFront?.[0] || formData.nicFront;
@@ -112,56 +117,59 @@ export const createApplication = async (req, res, next) => {
         files.brcDoc?.[0] || formData.brcDoc;
 
 
-      // Foreign customer
-      if (customerType === 'foreign') {
+      if (!isExistingCustomer) {
 
-        if (!hasPassport) {
-          res.status(400);
-          return next(
-            new Error(
-              'Passport main page upload is mandatory for foreign customers (BRD 5.1.3).'
-            )
-          );
+        // Foreign customer
+        if (customerType === 'foreign') {
+
+          if (!hasPassport) {
+            res.status(400);
+            return next(
+              new Error(
+                'Passport main page upload is mandatory for foreign customers (BRD 5.1.3).'
+              )
+            );
+          }
+
         }
 
-      }
+        // Business customer
+        else if (customerType === 'business') {
 
-      // Business customer
-      else if (customerType === 'business') {
+          if (!formData.vatNumber?.trim()) {
+            res.status(400);
+            return next(
+              new Error(
+                'VAT Registration Number is required for business customers (BRD 5.1.5).'
+              )
+            );
+          }
 
-        if (!formData.vatNumber?.trim()) {
-          res.status(400);
-          return next(
-            new Error(
-              'VAT Registration Number is required for business customers (BRD 5.1.5).'
-            )
-          );
+
+          if (!hasBrc) {
+            res.status(400);
+            return next(
+              new Error(
+                'Business Registration Certificate (BRC) upload is mandatory for business customers (BRD 5.1.3).'
+              )
+            );
+          }
+
         }
 
+        // Home / Office / Government / Religious
+        else {
 
-        if (!hasBrc) {
-          res.status(400);
-          return next(
-            new Error(
-              'Business Registration Certificate (BRC) upload is mandatory for business customers (BRD 5.1.3).'
-            )
-          );
+          if (!hasNicFront || !hasNicBack) {
+            res.status(400);
+            return next(
+              new Error(
+                'Both NIC Front and NIC Back document uploads are mandatory (BRD 5.1.3).'
+              )
+            );
+          }
+
         }
-
-      }
-
-      // Home / Office / Government / Religious
-      else {
-
-        if (!hasNicFront || !hasNicBack) {
-          res.status(400);
-          return next(
-            new Error(
-              'Both NIC Front and NIC Back document uploads are mandatory (BRD 5.1.3).'
-            )
-          );
-        }
-
       }
     }
 
