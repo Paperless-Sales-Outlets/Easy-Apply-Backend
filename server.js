@@ -51,11 +51,10 @@ app.use(
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow all origins in development or if FRONTEND_URL is not set
-    if (!origin || !process.env.FRONTEND_URL || origin === process.env.FRONTEND_URL || process.env.NODE_ENV === 'development') {
+    if (!origin || origin === process.env.FRONTEND_URL) {
       callback(null, true);
     } else {
-      callback(null, false);
+      callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
