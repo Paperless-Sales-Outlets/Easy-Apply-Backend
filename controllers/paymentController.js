@@ -364,6 +364,7 @@ export const createPayHerePayment = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      sandbox: (process.env.PAYHERE_MODE || 'sandbox') === 'sandbox',
       merchantId,
       merchant_id: merchantId,
       orderId: finalOrderId,
@@ -371,9 +372,6 @@ export const createPayHerePayment = async (req, res, next) => {
       amount: formattedAmount,
       currency: String(currency).toUpperCase(),
       hash,
-      // PayHere requires these URLs — empty strings cause "Unauthorized payment request"
-      return_url: `${baseUrl}${basePath}/payment/success`,
-      cancel_url: `${baseUrl}${basePath}/payment/cancel`,
       notify_url: `${apiUrl}/api/payment/notify`,
     });
   } catch (error) {
