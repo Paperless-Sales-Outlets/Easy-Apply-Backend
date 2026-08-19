@@ -22,9 +22,8 @@ import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 
-import { errorHandler } from './middleware/errorMiddleware.js';
+import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
-import { notFound } from './middleware/errorHandler.js';
 import { protect, authorize } from './middleware/authMiddleware.js';
 
 

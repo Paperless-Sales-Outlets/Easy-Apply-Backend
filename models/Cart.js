@@ -56,8 +56,6 @@ const cartSchema = new mongoose.Schema(
   }
 );
 
-// Index for faster queries
-cartSchema.index({ userId: 1 });
 
 // Method to calculate total amount
 cartSchema.methods.calculateTotal = function () {
