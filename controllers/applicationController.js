@@ -9,22 +9,28 @@ export const createApplication = async (req, res, next) => {
   const files = req.files;
 
   try {
-    // Extract NIC from formData (checking common keys)
-    const nic = formData?.nic || formData?.NIC;
+    // Extract Identification (NIC / Passport / BR Number) from formData
+    const nic = formData?.nic || formData?.NIC || formData?.passportNumber || formData?.brNumber;
 
     if (!nic) {
       res.status(400);
       return next(new Error('Identification (NIC / Passport / BR Number) is required'));
     }
 
-    // Process files and add them to formData
+    // Process uploaded files and save metadata to formData.documents
     if (files && files.length > 0) {
-      formData.documents = files.map(f => ({
+      const uploadedDocs = files.map((f) => ({
+        fieldname: f.fieldname,
         originalname: f.originalname,
         filename: f.filename,
-        path: f.path,
-        mimetype: f.mimetype
+        path: f.path || `uploads/${f.filename}`,
+        mimetype: f.mimetype,
+        size: f.size,
       }));
+
+      formData.documents = Array.isArray(formData.documents)
+        ? [...formData.documents, ...uploadedDocs]
+        : uploadedDocs;
     }
 
     // Extract phone from top-level body, formData, or mobileNumber

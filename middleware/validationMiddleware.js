@@ -55,8 +55,45 @@ export const validateApplicationSubmission = [
     .matches(/^01\d{8}$/)
     .withMessage('Fixed telephone must be 10 digits starting with 01'),
   body().custom((value, { req }) => {
+    const data = req.body.formData || {};
+
+    if (req.body.serviceType === 'new-connection') {
+      const customerType = data.customerType || 'home';
+
+      // BRD 5.1.5: Validate VAT Number for Business customer type
+      if (customerType === 'business') {
+        if (!data.vatNumber || !data.vatNumber.toString().trim()) {
+          throw new Error('VAT Registration Number is mandatory for Business customers (BRD 5.1.5).');
+        }
+      }
+
+      // BRD 5.1.4: Identification validation
+      const idNumber = data.nic || data.NIC || data.passportNumber || data.brNumber;
+      if (!idNumber || !idNumber.toString().trim()) {
+        throw new Error(
+          customerType === 'foreign'
+            ? 'Passport Number is mandatory for foreign customers.'
+            : 'NIC / Identification Number is mandatory.'
+        );
+      }
+
+      // BRD 5.1.6: Only Broadband package is mandatory. (PEO TV and Fixed Voice are optional)
+      const hasBroadbandCart = Array.isArray(data.cartItems) && data.cartItems.length > 0 && data.cartItems.some(
+        (item) => item.type === 'broadband' || item.category === 'broadband' || item.type === 'fibre' || (item.title && !item.title.toLowerCase().includes('peo') && !item.title.toLowerCase().includes('addon'))
+      );
+      const hasBroadbandField = !!(data.broadbandPackage && data.broadbandPackage.trim()) || !!(data.otherBroadbandPackage && data.otherBroadbandPackage.trim()) || (Array.isArray(data.cartItems) && data.cartItems.length > 0);
+
+      if (!hasBroadbandCart && !hasBroadbandField) {
+        throw new Error('At least one Broadband package must be selected (BRD 5.1.6).');
+      }
+
+      // Digital Signature validation
+      if (!data.signature || !data.signature.toString().trim()) {
+        throw new Error('Digital Signature is mandatory before submitting your application.');
+      }
+    }
+
     if (req.body.serviceType === 'reconnection') {
-      const data = req.body.formData || {};
       const hasFacility = data.facility_broadband || data.facility_peoTv || data.facility_sltPlus || data.facility_cli || data.facility_idd || data.facility_email || data.facility_dialUp || data.facility_other;
       
       if (!hasFacility) {
