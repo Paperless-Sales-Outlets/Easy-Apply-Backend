@@ -23,9 +23,8 @@ import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
 
-import { errorHandler } from './middleware/errorMiddleware.js';
+import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
-import { notFound } from './middleware/errorHandler.js';
 import { protect, authorize } from './middleware/authMiddleware.js';
 
 
@@ -52,11 +51,10 @@ app.use(
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow all origins in development or if FRONTEND_URL is not set
-    if (!origin || !process.env.FRONTEND_URL || origin === process.env.FRONTEND_URL || process.env.NODE_ENV === 'development') {
+    if (!origin || origin === process.env.FRONTEND_URL) {
       callback(null, true);
     } else {
-      callback(null, false);
+      callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
