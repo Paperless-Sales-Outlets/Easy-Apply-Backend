@@ -46,11 +46,22 @@ export const createApplication = async (req, res, next) => {
 
 
     // Process uploaded files
+    // When MongoDB is connected, Multer-GridFS stores the file inside MongoDB
+    // and exposes file.id (the GridFS ObjectId).  We persist a reference URI
+    // so the admin KYC viewer can fetch it via GET /api/files/:id.
+    // When offline (disk fallback), we store the local path as before.
     const uploadedDocuments = {};
 
-    Object.keys(files).forEach((key) => {
-      if (files[key]?.[0]) {
-        uploadedDocuments[key] = `/uploads/documents/${files[key][0].filename}`;
+    (Array.isArray(files) ? files : Object.values(files).flat()).forEach((file) => {
+      if (!file) return;
+      const key = file.fieldname;
+
+      if (file.storageBackend === 'gridfs' && file.id) {
+        // GridFS — store reference ID so it can be streamed back later
+        uploadedDocuments[key] = `gridfs://${file.id}`;
+      } else if (file.filename) {
+        // Disk fallback
+        uploadedDocuments[key] = `/uploads/documents/${file.filename}`;
       }
     });
 
