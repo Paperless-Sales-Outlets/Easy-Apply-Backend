@@ -21,6 +21,7 @@
     "mongoose": "^8.3.1",
     "morgan": "^1.10.0",
     "multer": "^2.2.0",
+    "multer-gridfs-storage": "^6.1.0",
     "uuid": "^14.0.1"
   },
   "devDependencies": {
