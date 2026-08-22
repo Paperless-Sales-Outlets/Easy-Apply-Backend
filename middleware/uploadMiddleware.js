@@ -3,6 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import mongoose from 'mongoose';
 import { GridFsStorage } from 'multer-gridfs-storage';
+import dotenv from 'dotenv';
+dotenv.config();
 
 // ---------------------------------------------------------------------------
 // Shared file filter — accepts PDF / JPG / JPEG / PNG up to 5 MB
@@ -36,35 +38,15 @@ const LIMITS = { fileSize: 5 * 1024 * 1024 }; // 5 MB per file
 // GridFS storage — files are saved directly into MongoDB (fs.files / fs.chunks)
 // ---------------------------------------------------------------------------
 const gridFsStorage = new GridFsStorage({
-  // Re-use the existing Mongoose connection so we don't open a second socket.
-  db: () => {
-    // GridFsStorage accepts a promise that resolves to a mongoose connection
-    // or a native db object.  Returning the mongoose connection works because
-    // multer-gridfs-storage internally calls .db on it when needed.
-    return new Promise((resolve, reject) => {
-      const state = mongoose.connection.readyState;
-
-      if (state === 1) {
-        // Already connected
-        return resolve(mongoose.connection);
-      }
-
-      if (state === 2) {
-        // Still connecting — wait for the open event
-        mongoose.connection.once('open', () => resolve(mongoose.connection));
-        mongoose.connection.once('error', reject);
-        return;
-      }
-
-      reject(new Error('MongoDB is not connected'));
-    });
-  },
+  // Instead of trying to share the Mongoose connection and fighting version mismatches,
+  // we let GridFS connect independently using its own built-in driver:
+  url: process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/paperlessoutlet',
 
   file: (req, file) => {
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
     const ext = path.extname(file.originalname).toLowerCase();
     return {
-      bucketName: 'uploads',                              // GridFS bucket name
+      bucketName: 'uploads',
       filename: `${file.fieldname}-${uniqueSuffix}${ext}`,
       metadata: {
         originalname: file.originalname,
@@ -74,6 +56,7 @@ const gridFsStorage = new GridFsStorage({
     };
   },
 });
+
 
 const gridFsUpload = multer({
   storage: gridFsStorage,
