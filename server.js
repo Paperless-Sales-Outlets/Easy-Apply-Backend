@@ -21,6 +21,7 @@ import paymentRoutes from './routes/paymentRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
+import fileRoutes from './routes/fileRoutes.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -80,7 +81,10 @@ app.use(
 
 
 
-// Upload Directory
+// Upload Directory — only used as a LOCAL FALLBACK when MongoDB is offline.
+// Files are normally stored in MongoDB GridFS and served via the protected
+// /api/files/:id endpoint (see routes/fileRoutes.js).
+// This folder is intentionally in .gitignore — its contents are NEVER committed.
 const uploadsPath = path.join(
   process.cwd(),
   'uploads'
@@ -97,10 +101,10 @@ if (!fs.existsSync(uploadsPath)) {
 }
 
 
-app.use(
-  '/uploads',
-  express.static(uploadsPath)
-);
+// NOTE: We deliberately do NOT serve /uploads as a public static directory.
+// Sensitive KYC documents must only be accessed by authenticated Admin/Staff
+// via GET /api/files/:id which enforces authorization before streaming.
+
 
 
 
@@ -217,6 +221,14 @@ app.use(
 );
 
 
+// Protected file-serving — streams KYC documents stored in MongoDB GridFS.
+// Requires Admin or Staff JWT authentication.
+app.use(
+  '/api/files',
+  fileRoutes
+);
+
+
 
 // Handle OPTIONS requests before 404 handler
 app.options('*', (req, res) => {
@@ -252,7 +264,7 @@ const server = app.listen(
   () => {
 
     console.log(
-      `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`
+      `Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`
     );
 
   }

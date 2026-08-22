@@ -374,7 +374,11 @@ export const createPayHerePayment = async (req, res, next) => {
       // PayHere requires these URLs — empty strings cause "Unauthorized payment request"
       return_url: `${baseUrl}${basePath}/payment/success`,
       cancel_url: `${baseUrl}${basePath}/payment/cancel`,
-      notify_url: `${apiUrl}${basePath}/api/payment/notify`,
+      // NOTE: Server is on SLT private network, PayHere cannot reach it directly.
+      // Using a public echo endpoint for sandbox testing only.
+      // In production (once server has a public IP), change this back to:
+      // notify_url: `${apiUrl}${basePath}/api/payment/notify`,
+      notify_url: process.env.PAYHERE_NOTIFY_URL || 'https://httpbin.org/post',
     });
   } catch (error) {
     next(error);
