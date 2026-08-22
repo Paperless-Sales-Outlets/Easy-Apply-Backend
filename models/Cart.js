@@ -55,6 +55,11 @@ const cartSchema = new mongoose.Schema(
   }
 );
 
+// Automatically delete cart documents that have not been updated for 7 days.
+// This prevents abandoned guest sessions from accumulating in the database.
+// The TTL index fires on the `updatedAt` timestamp (set by { timestamps: true }).
+cartSchema.index({ updatedAt: 1 }, { expireAfterSeconds: 7 * 24 * 60 * 60 }); // 7 days
+
 
 // Method to calculate total amount
 cartSchema.methods.calculateTotal = function () {
