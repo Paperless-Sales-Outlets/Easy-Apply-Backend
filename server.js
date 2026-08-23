@@ -49,17 +49,36 @@ app.use(
 );
 
 
+// Build an allowlist from FRONTEND_URL plus any local dev origins.
+// FRONTEND_URL may contain multiple comma-separated values for flexibility.
+const rawAllowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((u) => u.trim())
+  .filter(Boolean);
+
+// Always permit localhost Vite dev server in non-production environments
+if (process.env.NODE_ENV !== 'production') {
+  ['http://localhost:5173', 'http://localhost:3000'].forEach((devOrigin) => {
+    if (!rawAllowedOrigins.includes(devOrigin)) {
+      rawAllowedOrigins.push(devOrigin);
+    }
+  });
+}
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || origin === process.env.FRONTEND_URL) {
+    // Allow non-browser requests (curl, Postman, server-to-server) and
+    // any origin that is explicitly listed in the allowlist.
+    if (!origin || rawAllowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error(`CORS: origin '${origin}' is not allowed`));
     }
   },
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id'],
-  optionsSuccessStatus: 204
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  optionsSuccessStatus: 204,
 }));
 
 
