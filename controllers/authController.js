@@ -23,6 +23,34 @@ const generateRefreshToken = (user) => {
   );
 };
 
+// @desc    Get all users (admin only)
+// @route   GET /api/auth/users
+// @access  Private (Admin)
+export const getUsers = async (req, res, next) => {
+  try {
+    const users = await User.find()
+      .select('name email phone role NIC createdAt')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      users: users.map(u => ({
+        id: u._id,
+        name: u.name,
+        email: u.email,
+        phone: u.phone,
+        role: u.role,
+        NIC: u.NIC,
+        createdAt: u.createdAt,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Send OTP to mobile number
 // @route   POST /api/auth/send-otp
 // @access  Public

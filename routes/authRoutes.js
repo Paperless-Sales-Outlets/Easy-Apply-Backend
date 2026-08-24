@@ -6,6 +6,7 @@ import {
   login,
   refresh,
   logout,
+  getUsers,
 } from '../controllers/authController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
 
@@ -20,6 +21,8 @@ router.post('/refresh', refresh);
 router.post('/logout', logout);
 
 // Protected routes (for testing JWT middleware & role-based access control)
+router.get('/users', protect, authorize('Admin'), getUsers);
+
 router.get('/me', protect, (req, res) => {
   res.status(200).json({
     success: true,
