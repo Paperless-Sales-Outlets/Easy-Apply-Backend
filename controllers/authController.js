@@ -5,6 +5,42 @@ import User from '../models/User.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
 
+// @desc    Check if a phone number is registered (used by login flow to decide
+//          whether to send OTP or redirect to sign-up)
+// @route   POST /api/auth/check-phone
+// @access  Public
+export const checkPhone = async (req, res, next) => {
+  const { phone } = req.body;
+  if (!phone) {
+    return res.status(400).json({ success: false, message: 'Phone number is required' });
+  }
+
+  try {
+    const digitsOnly = String(phone).replace(/\D/g, '');
+    const last9 = digitsOnly.slice(-9);
+
+    // Try all common formats stored in DB
+    const user = await User.findOne({
+      $or: [
+        { phone: phone },
+        { phone: digitsOnly },
+        { phone: last9 },
+        { phone: `0${last9}` },
+        { phone: `+94${last9}` },
+        { phone: `94${last9}` },
+      ],
+    }).select('_id');
+
+    return res.status(200).json({
+      success: true,
+      registered: !!user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
 // Helper to generate access token
 const generateAccessToken = (user) => {
   return jwt.sign(
@@ -109,7 +145,11 @@ export const verifyOtp = async (req, res, next) => {
 // @route   POST /api/auth/register
 // @access  Public
 export const register = async (req, res, next) => {
-  const { name, email, phone, role, NIC, password } = req.body;
+  const {
+    name, email, phone, role, NIC, password,
+    title, dob, gender, nationality, contactNumber,
+    addressLine1, addressLine2, city, district, postalCode, preferredContact
+  } = req.body;
 
   if (!name || !email || !phone || !NIC || !password) {
     res.status(400);
@@ -133,12 +173,9 @@ export const register = async (req, res, next) => {
 
     // Create user (password will be hashed in model pre-save hook)
     const user = await User.create({
-      name,
-      email,
-      phone,
-      role: role || 'Customer',
-      NIC,
-      password,
+      name, email, phone, role: role || 'Customer', NIC, password,
+      title, dob, gender, nationality, contactNumber,
+      addressLine1, addressLine2, city, district, postalCode, preferredContact
     });
 
     // Generate tokens
@@ -162,6 +199,17 @@ export const register = async (req, res, next) => {
         phone: user.phone,
         role: user.role,
         NIC: user.NIC,
+        title: user.title,
+        dob: user.dob,
+        gender: user.gender,
+        nationality: user.nationality,
+        contactNumber: user.contactNumber,
+        addressLine1: user.addressLine1,
+        addressLine2: user.addressLine2,
+        city: user.city,
+        district: user.district,
+        postalCode: user.postalCode,
+        preferredContact: user.preferredContact,
       },
       accessToken,
       refreshToken,
