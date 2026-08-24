@@ -337,7 +337,7 @@ export const getApplicationsByPhone = async (req, res, next) => {
       ],
     })
       .sort({ createdAt: -1 })
-      .select('referenceNumber serviceType status createdAt');
+      .select('referenceNumber serviceType status createdAt formData notes');
 
     res.status(200).json({
       success: true,
@@ -346,6 +346,8 @@ export const getApplicationsByPhone = async (req, res, next) => {
         serviceType: app.serviceType,
         status: app.status,
         createdAt: app.createdAt,
+        formData: app.formData,
+        adminComments: app.notes ? [{ text: app.notes }] : [],
       })),
     });
   } catch (error) {
