@@ -71,6 +71,12 @@ const applicationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       required: true,
     },
+    officeFields: {
+      crNumber: { type: String, trim: true, default: '' },
+      amountPaid: { type: Number, default: null },
+      staffSignature: { type: String, trim: true, default: '' },
+      appointmentDate: { type: Date, default: null },
+    },
   },
   {
     timestamps: true,

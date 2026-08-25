@@ -15,6 +15,9 @@ import adminFormsRoutes from './routes/admin/formsRoutes.js';
 import adminDashboardRoutes from './routes/admin/dashboardRoutes.js';
 import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
 import adminKycRoutes from './routes/admin/kycRoutes.js';
+import adminAnalyticsRoutes from './routes/admin/analyticsRoutes.js';
+import adminAppointmentRoutes from './routes/admin/appointmentRoutes.js';
+import fieldAppointmentRoutes from './routes/field/fieldAppointmentRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
@@ -34,6 +37,17 @@ dotenv.config();
 
 // Connect Database
 connectDB();
+
+// Drop legacy orderId index once connected
+mongoose.connection.once('open', async () => {
+  try {
+    const indexes = await mongoose.connection.collection('appointments').indexes();
+    if (indexes.find(i => i.name === 'orderId_1')) {
+      await mongoose.connection.collection('appointments').dropIndex('orderId_1');
+      console.log('✅ Dropped legacy orderId_1 index from appointments');
+    }
+  } catch (e) { /* index may not exist or collection may not exist yet */ }
+});
 
 
 const app = express();
@@ -212,6 +226,21 @@ app.use(
 app.use(
   '/api/admin/kyc',
   adminKycRoutes
+);
+
+app.use(
+  '/api/admin/analytics',
+  adminAnalyticsRoutes
+);
+
+app.use(
+  '/api/admin/appointments',
+  adminAppointmentRoutes
+);
+
+app.use(
+  '/api/field/appointments',
+  fieldAppointmentRoutes
 );
 
 
