@@ -355,10 +355,12 @@ export const createPayHerePayment = async (req, res, next) => {
       console.warn('⚠️ MongoDB is not connected. Generating PayHere hash without DB persistence.');
     }
 
-    console.log(`\n💳 PayHere payment hash created: Order ${finalOrderId} | Amount: ${currency} ${formattedAmount}\n`);
+    console.log(`\n💳 PayHere payment hash created: Order ${finalOrderId} | Amount: ${currency} ${formattedAmount}`);
+    console.log(`   merchant_id: ${merchantId} | hash: ${hash}\n`);
 
     const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const apiUrl = process.env.API_URL || `http://localhost:${process.env.PORT || 5000}`;
+    const basePath = (process.env.FRONTEND_BASE_PATH || '/Paperlessbackup/').replace(/\/$/, '');
+    const apiUrl = process.env.API_URL || `http://localhost:${process.env.PORT || 5050}`;
 
     res.status(200).json({
       success: true,
@@ -370,9 +372,13 @@ export const createPayHerePayment = async (req, res, next) => {
       currency: String(currency).toUpperCase(),
       hash,
       // PayHere requires these URLs — empty strings cause "Unauthorized payment request"
-      return_url: `${baseUrl}/payment/success`,
-      cancel_url: `${baseUrl}/payment/cancel`,
-      notify_url: `${apiUrl}/api/payment/notify`,
+      return_url: `${baseUrl}${basePath}/payment/success`,
+      cancel_url: `${baseUrl}${basePath}/payment/cancel`,
+      // NOTE: Server is on SLT private network, PayHere cannot reach it directly.
+      // Using a public echo endpoint for sandbox testing only.
+      // In production (once server has a public IP), change this back to:
+      // notify_url: `${apiUrl}${basePath}/api/payment/notify`,
+      notify_url: process.env.PAYHERE_NOTIFY_URL || 'https://httpbin.org/post',
     });
   } catch (error) {
     next(error);
@@ -472,3 +478,53 @@ export const handlePayHereNotify = async (req, res, next) => {
 };
 
 
+// ─────────────────────────────────────────────
+// @desc    Resolve a PayHere order_id to an application reference number
+// @route   GET /api/payment/order/:orderId
+// @access  Public
+// ─────────────────────────────────────────────
+export const getOrderByOrderId = async (req, res, next) => {
+  const { orderId } = req.params;
+
+  if (!orderId) {
+    res.status(400);
+    return next(new Error('orderId is required'));
+  }
+
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(200).json({ success: false, referenceNumber: orderId });
+    }
+
+    // 1. Try Application whose paymentDetails.orderId matches
+    const application = await Application.findOne({
+      $or: [
+        { 'paymentDetails.orderId': orderId },
+        { referenceNumber: orderId },
+      ],
+    }).select('referenceNumber paymentStatus');
+
+    if (application) {
+      return res.status(200).json({
+        success: true,
+        referenceNumber: application.referenceNumber,
+        paymentStatus: application.paymentStatus,
+      });
+    }
+
+    // 2. Fallback to Appointment
+    const appointment = await Appointment.findOne({ orderId }).select('orderId paymentStatus');
+    if (appointment) {
+      return res.status(200).json({
+        success: true,
+        referenceNumber: appointment.orderId,
+        paymentStatus: appointment.paymentStatus,
+      });
+    }
+
+    // 3. Nothing found — return orderId as the reference
+    return res.status(200).json({ success: false, referenceNumber: orderId });
+  } catch (error) {
+    next(error);
+  }
+};

@@ -46,11 +46,22 @@ export const createApplication = async (req, res, next) => {
 
 
     // Process uploaded files
+    // When MongoDB is connected, Multer-GridFS stores the file inside MongoDB
+    // and exposes file.id (the GridFS ObjectId).  We persist a reference URI
+    // so the admin KYC viewer can fetch it via GET /api/files/:id.
+    // When offline (disk fallback), we store the local path as before.
     const uploadedDocuments = {};
 
-    Object.keys(files).forEach((key) => {
-      if (files[key]?.[0]) {
-        uploadedDocuments[key] = `/uploads/documents/${files[key][0].filename}`;
+    (Array.isArray(files) ? files : Object.values(files).flat()).forEach((file) => {
+      if (!file) return;
+      const key = file.fieldname;
+
+      if (file.storageBackend === 'gridfs' && file.id) {
+        // GridFS — store reference ID so it can be streamed back later
+        uploadedDocuments[key] = `gridfs://${file.id}`;
+      } else if (file.filename) {
+        // Disk fallback
+        uploadedDocuments[key] = `/uploads/documents/${file.filename}`;
       }
     });
 
@@ -98,6 +109,11 @@ export const createApplication = async (req, res, next) => {
 
       const customerType = formData?.customerType || 'home';
 
+      // Identity documents are only needed to establish who the customer is —
+      // an existing SLTMobitel customer already has NIC/passport/BRC on file
+      // from account creation, so don't make them re-upload it for a new
+      // connection request.
+      const isExistingCustomer = formData?.isExistingCustomer === 'yes';
 
       const hasNicFront =
         files.nicFront?.[0] || formData.nicFront;
@@ -112,56 +128,59 @@ export const createApplication = async (req, res, next) => {
         files.brcDoc?.[0] || formData.brcDoc;
 
 
-      // Foreign customer
-      if (customerType === 'foreign') {
+      if (!isExistingCustomer) {
 
-        if (!hasPassport) {
-          res.status(400);
-          return next(
-            new Error(
-              'Passport main page upload is mandatory for foreign customers (BRD 5.1.3).'
-            )
-          );
+        // Foreign customer
+        if (customerType === 'foreign') {
+
+          if (!hasPassport) {
+            res.status(400);
+            return next(
+              new Error(
+                'Passport main page upload is mandatory for foreign customers (BRD 5.1.3).'
+              )
+            );
+          }
+
         }
 
-      }
+        // Business customer
+        else if (customerType === 'business') {
 
-      // Business customer
-      else if (customerType === 'business') {
+          if (!formData.vatNumber?.trim()) {
+            res.status(400);
+            return next(
+              new Error(
+                'VAT Registration Number is required for business customers (BRD 5.1.5).'
+              )
+            );
+          }
 
-        if (!formData.vatNumber?.trim()) {
-          res.status(400);
-          return next(
-            new Error(
-              'VAT Registration Number is required for business customers (BRD 5.1.5).'
-            )
-          );
+
+          if (!hasBrc) {
+            res.status(400);
+            return next(
+              new Error(
+                'Business Registration Certificate (BRC) upload is mandatory for business customers (BRD 5.1.3).'
+              )
+            );
+          }
+
         }
 
+        // Home / Office / Government / Religious
+        else {
 
-        if (!hasBrc) {
-          res.status(400);
-          return next(
-            new Error(
-              'Business Registration Certificate (BRC) upload is mandatory for business customers (BRD 5.1.3).'
-            )
-          );
+          if (!hasNicFront || !hasNicBack) {
+            res.status(400);
+            return next(
+              new Error(
+                'Both NIC Front and NIC Back document uploads are mandatory (BRD 5.1.3).'
+              )
+            );
+          }
+
         }
-
-      }
-
-      // Home / Office / Government / Religious
-      else {
-
-        if (!hasNicFront || !hasNicBack) {
-          res.status(400);
-          return next(
-            new Error(
-              'Both NIC Front and NIC Back document uploads are mandatory (BRD 5.1.3).'
-            )
-          );
-        }
-
       }
     }
 
@@ -318,7 +337,7 @@ export const getApplicationsByPhone = async (req, res, next) => {
       ],
     })
       .sort({ createdAt: -1 })
-      .select('referenceNumber serviceType status createdAt');
+      .select('referenceNumber serviceType status createdAt formData notes');
 
     res.status(200).json({
       success: true,
@@ -327,6 +346,8 @@ export const getApplicationsByPhone = async (req, res, next) => {
         serviceType: app.serviceType,
         status: app.status,
         createdAt: app.createdAt,
+        formData: app.formData,
+        adminComments: app.notes ? [{ text: app.notes }] : [],
       })),
     });
   } catch (error) {

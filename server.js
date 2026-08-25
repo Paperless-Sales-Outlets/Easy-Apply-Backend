@@ -24,10 +24,10 @@ import paymentRoutes from './routes/paymentRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
+import fileRoutes from './routes/fileRoutes.js';
 
-import { errorHandler } from './middleware/errorMiddleware.js';
+import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
-import { notFound } from './middleware/errorHandler.js';
 import { protect, authorize } from './middleware/authMiddleware.js';
 
 
@@ -63,18 +63,36 @@ app.use(
 );
 
 
+// Build an allowlist from FRONTEND_URL plus any local dev origins.
+// FRONTEND_URL may contain multiple comma-separated values for flexibility.
+const rawAllowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((u) => u.trim())
+  .filter(Boolean);
+
+// Always permit localhost Vite dev server in non-production environments
+if (process.env.NODE_ENV !== 'production') {
+  ['http://localhost:5173', 'http://localhost:3000'].forEach((devOrigin) => {
+    if (!rawAllowedOrigins.includes(devOrigin)) {
+      rawAllowedOrigins.push(devOrigin);
+    }
+  });
+}
+
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow all origins in development or if FRONTEND_URL is not set
-    if (!origin || !process.env.FRONTEND_URL || origin === process.env.FRONTEND_URL || process.env.NODE_ENV === 'development') {
+    // Allow non-browser requests (curl, Postman, server-to-server) and
+    // any origin that is explicitly listed in the allowlist.
+    if (!origin || rawAllowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(null, false);
+      callback(new Error(`CORS: origin '${origin}' is not allowed`));
     }
   },
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id'],
-  optionsSuccessStatus: 204
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  optionsSuccessStatus: 204,
 }));
 
 
@@ -96,7 +114,10 @@ app.use(
 
 
 
-// Upload Directory
+// Upload Directory — only used as a LOCAL FALLBACK when MongoDB is offline.
+// Files are normally stored in MongoDB GridFS and served via the protected
+// /api/files/:id endpoint (see routes/fileRoutes.js).
+// This folder is intentionally in .gitignore — its contents are NEVER committed.
 const uploadsPath = path.join(
   process.cwd(),
   'uploads'
@@ -113,10 +134,10 @@ if (!fs.existsSync(uploadsPath)) {
 }
 
 
-app.use(
-  '/uploads',
-  express.static(uploadsPath)
-);
+// NOTE: We deliberately do NOT serve /uploads as a public static directory.
+// Sensitive KYC documents must only be accessed by authenticated Admin/Staff
+// via GET /api/files/:id which enforces authorization before streaming.
+
 
 
 
@@ -248,6 +269,14 @@ app.use(
 );
 
 
+// Protected file-serving — streams KYC documents stored in MongoDB GridFS.
+// Requires Admin or Staff JWT authentication.
+app.use(
+  '/api/files',
+  fileRoutes
+);
+
+
 
 // Handle OPTIONS requests before 404 handler
 app.options('*', (req, res) => {
@@ -283,7 +312,7 @@ const server = app.listen(
   () => {
 
     console.log(
-      `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`
+      `Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`
     );
 
   }
