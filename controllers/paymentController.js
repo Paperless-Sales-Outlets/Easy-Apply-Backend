@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 import PaymentMethod from '../models/PaymentMethod.js';
 import Appointment from '../models/Appointment.js';
 import Application from '../models/Application.js';
+import Connection from '../models/Connection.js';
+import { sendPaymentConfirmationEmail } from '../services/emailService.js';
 
 import {
   generatePayHereHash,
@@ -419,6 +421,15 @@ export const handlePayHereNotify = async (req, res, next) => {
     if (statusCodeStr === '2') {
       console.log(`\n✅ PayHere Payment SUCCESS for Order ${order_id} | Payment ID: ${paymentId}`);
 
+      // Track resolved data for the confirmation email
+      let emailTo = null;
+      let emailCustomerName = null;
+      let emailReferenceNumber = order_id;
+      let emailAmount = payhere_amount;
+      let emailCurrency = payhere_currency || 'LKR';
+      let emailServiceType = null;
+      let emailPaidAt = new Date();
+
       if (mongoose.connection.readyState === 1) {
         // 1. Update Appointment
         const appointment = await Appointment.findOne({ orderId: order_id });
@@ -426,9 +437,16 @@ export const handlePayHereNotify = async (req, res, next) => {
           appointment.paymentStatus = 'paid';
           appointment.status = 'confirmed';
           appointment.payherePaymentId = paymentId;
-          appointment.paidAt = new Date();
+          appointment.paidAt = emailPaidAt;
           await appointment.save();
           console.log(`   Updated Appointment ${order_id}: paymentStatus=paid, status=confirmed`);
+
+          // Collect email data from appointment
+          if (appointment.email) emailTo = appointment.email;
+          if (appointment.customerName) emailCustomerName = appointment.customerName;
+          emailAmount = appointment.amount ?? emailAmount;
+          emailCurrency = appointment.currency ?? emailCurrency;
+          emailServiceType = appointment.serviceType;
         }
 
         // 2. Update Application
@@ -440,10 +458,53 @@ export const handlePayHereNotify = async (req, res, next) => {
           application.status = 'confirmed';
           if (!application.paymentDetails) application.paymentDetails = {};
           application.paymentDetails.payherePaymentId = paymentId;
-          application.paymentDetails.paidAt = new Date();
+          application.paymentDetails.paidAt = emailPaidAt;
           await application.save();
           console.log(`   Updated Application ${application.referenceNumber}: paymentStatus=paid, status=confirmed`);
+
+          // Application data takes priority over appointment for email fields
+          emailReferenceNumber = application.referenceNumber;
+          emailServiceType = application.serviceType ?? emailServiceType;
+          emailAmount = application.paymentDetails?.amount ?? emailAmount;
+          emailCurrency = application.paymentDetails?.currency ?? emailCurrency;
+
+          // Try email from application formData first
+          const formEmail =
+            application.formData?.email ||
+            application.formData?.emailAddress ||
+            application.formData?.customerEmail ||
+            null;
+          if (formEmail) emailTo = formEmail;
+
+          // Try customer name from formData
+          const formName =
+            application.formData?.nameFull ||
+            application.formData?.fullName ||
+            application.formData?.customerName ||
+            null;
+          if (formName) emailCustomerName = formName;
+
+          // If email still not resolved, look up Connection by phone
+          if (!emailTo && application.phone) {
+            const connection = await Connection.findOne({ telephone: application.phone }).select('email fullName');
+            if (connection) {
+              if (connection.email) emailTo = connection.email;
+              if (!emailCustomerName && connection.fullName) emailCustomerName = connection.fullName;
+            }
+          }
         }
+
+        // 3. Send payment confirmation email (non-blocking — errors are caught inside)
+        await sendPaymentConfirmationEmail({
+          to: emailTo,
+          customerName: emailCustomerName,
+          referenceNumber: emailReferenceNumber,
+          orderId: order_id,
+          amount: emailAmount,
+          currency: emailCurrency,
+          serviceType: emailServiceType,
+          paidAt: emailPaidAt,
+        });
       } else {
         console.warn('⚠️ MongoDB is not connected. Signature verified successfully.');
       }
