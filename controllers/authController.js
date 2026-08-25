@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
 import User from '../models/User.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
@@ -19,7 +20,7 @@ export const checkPhone = async (req, res, next) => {
     const digitsOnly = String(phone).replace(/\D/g, '');
     const last9 = digitsOnly.slice(-9);
 
-    // Try all common formats stored in DB
+    // 1. Try finding in the App User database
     const user = await User.findOne({
       $or: [
         { phone: phone },
@@ -30,10 +31,44 @@ export const checkPhone = async (req, res, next) => {
         { phone: `94${last9}` },
       ],
     }).select('_id');
+    
+    let registered = !!user;
+
+    // 2. If not found in App Users, check if they are an existing SLT Customer
+    if (!registered) {
+      if (mongoose.connection.readyState === 1) {
+        const Connection = mongoose.models.Connection || mongoose.model('Connection');
+        const match = await Connection.findOne({
+          $or: [
+            { telephone: phone },
+            { telephone: digitsOnly },
+            { telephone: `0${last9}` },
+            { contactNo: phone },
+            { contactNo: digitsOnly },
+            { contactNo: `0${last9}` },
+          ],
+        }).select('_id');
+
+        if (match) {
+          registered = true;
+        } else if (mongoose.models.Application) {
+          const app = await mongoose.models.Application.findOne({
+            $or: [
+              { phone: phone },
+              { phone: digitsOnly },
+              { phone: `0${last9}` },
+              { 'formData.mobileNumber': digitsOnly },
+              { 'formData.mobileNumber': `0${last9}` },
+            ],
+          }).select('_id');
+          if (app) registered = true;
+        }
+      }
+    }
 
     return res.status(200).json({
       success: true,
-      registered: !!user,
+      registered,
     });
   } catch (error) {
     next(error);
