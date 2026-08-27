@@ -1,18 +1,19 @@
 import nodemailer from 'nodemailer';
 
 // ─────────────────────────────────────────────────────────────
-// Transporter — use env SMTP creds when provided,
-// otherwise auto-create an Ethereal test account (demo mode).
-// Preview URL is logged to the console after every send.
+// Demo recipient addresses — all emails CC'd here for testing
 // ─────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// Transporter — use env SMTP creds when provided,
+// otherwise auto-create an Ethereal test account (demo mode).
+// ─────────────────────────────────────────────────────────────
 let _transporter = null;
 
 async function getTransporter() {
   if (_transporter) return _transporter;
 
   if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-    // Real SMTP (Gmail, SendGrid, etc.)
     _transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: parseInt(process.env.SMTP_PORT || '587', 10),
@@ -22,277 +23,257 @@ async function getTransporter() {
         pass: process.env.SMTP_PASS,
       },
     });
-
     console.log(`\n📧 Nodemailer: using SMTP host ${process.env.SMTP_HOST}\n`);
   } else {
-    // Demo mode — Ethereal catch-all (no real email sent)
     const testAccount = await nodemailer.createTestAccount();
     _transporter = nodemailer.createTransport({
       host: 'smtp.ethereal.email',
       port: 587,
       secure: false,
-      auth: {
-        user: testAccount.user,
-        pass: testAccount.pass,
-      },
+      auth: { user: testAccount.user, pass: testAccount.pass },
     });
-
     console.log('\n📧 Nodemailer: running in DEMO mode via Ethereal Email.');
     console.log(`   Ethereal user: ${testAccount.user}`);
-    console.log('   All sent emails are captured at https://ethereal.email (no real delivery)\n');
+    console.log('   All sent emails captured at https://ethereal.email\n');
   }
 
   return _transporter;
 }
 
 // ─────────────────────────────────────────────────────────────
-// Build a premium HTML email body
+// Shared UI helpers
 // ─────────────────────────────────────────────────────────────
-function buildPaymentConfirmationHtml({
-  customerName,
-  referenceNumber,
-  orderId,
-  amount,
-  currency,
-  serviceType,
-  paidAt,
-}) {
-  const displayService = serviceType
-    ? serviceType.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-    : 'SLTMobitel Service';
+function formatServiceLabel(serviceType) {
+  const map = {
+    'new-connection': 'New Connection',
+    'reconnection': 'Reconnection',
+    'relocation': 'Relocation',
+    'termination': 'Service Termination',
+    'transfer': 'Ownership Transfer',
+    'package-migration': 'Package Migration',
+    'service-vacation': 'Service Vacation',
+    'refund-request': 'Refund Request',
+    'customer-request-acceptance': 'Customer Request',
+    'internet-services': 'Internet Services',
+    'appointment-booking': 'Appointment Booking',
+  };
+  return map[serviceType] || (serviceType || 'Service').replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
-  const displayAmount = `${currency || 'LKR'} ${parseFloat(amount || 0).toLocaleString('en-LK', {
+function formatAmountLKR(amount) {
+  return `LKR ${parseFloat(amount || 0).toLocaleString('en-LK', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
 
-  const displayDate = new Date(paidAt || Date.now()).toLocaleString('en-LK', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Asia/Colombo',
+function formatDate(date) {
+  return new Date(date || Date.now()).toLocaleString('en-LK', {
+    year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Colombo',
   });
+}
 
-  const displayRef = referenceNumber || orderId || '—';
-  const displayName = customerName || 'Valued Customer';
-
+// ─────────────────────────────────────────────────────────────
+// Shared email shell (header + footer wrapper)
+// ─────────────────────────────────────────────────────────────
+function emailShell({ subject, bodyHtml }) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Payment Confirmed — SLTMobitel EasyApply</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>${subject}</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background-color: #f1f5f9;
-      color: #1e293b;
-    }
-    .wrapper {
-      max-width: 600px;
-      margin: 32px auto;
-      background: #ffffff;
-      border-radius: 20px;
-      overflow: hidden;
-      box-shadow: 0 8px 40px rgba(0, 86, 179, 0.10);
-    }
-    /* ── Header banner ── */
-    .header {
-      background: linear-gradient(135deg, #003b73 0%, #0056b3 60%, #0284c7 100%);
-      padding: 32px 36px 28px;
-      text-align: center;
-    }
-    .header .brand {
-      font-size: 22px;
-      font-weight: 900;
-      color: #ffffff;
-      letter-spacing: 0.04em;
-    }
-    .header .brand span { color: #34d399; }
-    .header .tagline {
-      font-size: 12px;
-      color: rgba(255,255,255,0.75);
-      margin-top: 4px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-    /* ── Success icon row ── */
-    .success-icon-row {
-      text-align: center;
-      padding: 32px 36px 0;
-    }
-    .success-circle {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 72px;
-      height: 72px;
-      background: #dcfce7;
-      border-radius: 50%;
-      margin-bottom: 16px;
-    }
-    .success-circle svg { width: 36px; height: 36px; stroke: #16a34a; fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
-    .success-title {
-      font-size: 22px;
-      font-weight: 900;
-      color: #0f172a;
-      margin-bottom: 6px;
-    }
-    .success-sub {
-      font-size: 14px;
-      color: #64748b;
-      line-height: 1.55;
-    }
-    /* ── Reference box ── */
-    .ref-box {
-      margin: 24px 36px;
-      background: #f0f9ff;
-      border: 1.5px dashed #0284c7;
-      border-radius: 14px;
-      padding: 20px 24px;
-      text-align: center;
-    }
-    .ref-label {
-      font-size: 11px;
-      color: #0284c7;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      margin-bottom: 6px;
-    }
-    .ref-value {
-      font-size: 26px;
-      font-weight: 900;
-      color: #0056b3;
-      letter-spacing: 1px;
-    }
-    /* ── Details table ── */
-    .details {
-      margin: 0 36px 24px;
-      border: 1px solid #e2e8f0;
-      border-radius: 14px;
-      overflow: hidden;
-    }
-    .details table { width: 100%; border-collapse: collapse; }
-    .details td {
-      padding: 13px 18px;
-      font-size: 14px;
-      border-bottom: 1px solid #f1f5f9;
-    }
-    .details tr:last-child td { border-bottom: none; }
-    .details .lbl { color: #64748b; font-weight: 700; width: 42%; }
-    .details .val { color: #0f172a; font-weight: 600; }
-    .amount-val { color: #16a34a !important; font-weight: 900 !important; font-size: 16px !important; }
-    /* ── Notice box ── */
-    .notice {
-      margin: 0 36px 24px;
-      background: #fefce8;
-      border-left: 4px solid #f59e0b;
-      border-radius: 0 10px 10px 0;
-      padding: 14px 18px;
-      font-size: 13px;
-      color: #78350f;
-      line-height: 1.6;
-    }
-    .notice strong { color: #92400e; }
-    /* ── Footer ── */
-    .footer {
-      background: #f8fafc;
-      border-top: 1px solid #e2e8f0;
-      padding: 20px 36px;
-      text-align: center;
-    }
-    .footer .helpline {
-      font-size: 13px;
-      color: #475569;
-      margin-bottom: 8px;
-    }
-    .footer .helpline strong { color: #0056b3; }
-    .footer .copy {
-      font-size: 11px;
-      color: #94a3b8;
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#f1f5f9;color:#1e293b;-webkit-font-smoothing:antialiased}
+    .wrap{max-width:600px;margin:28px auto;background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 8px 40px rgba(0,86,179,.10)}
+    .hdr{background:linear-gradient(135deg,#003b73 0%,#0056b3 60%,#0284c7 100%);padding:28px 32px 24px;text-align:center}
+    .brand{font-size:20px;font-weight:900;color:#fff;letter-spacing:.04em}
+    .brand span{color:#34d399}
+    .tagline{font-size:11px;color:rgba(255,255,255,.7);margin-top:3px;letter-spacing:.08em;text-transform:uppercase}
+    .body{padding:28px 32px}
+    .ftr{background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 32px;text-align:center}
+    .ftr p{font-size:11px;color:#94a3b8;line-height:1.6}
+    .ftr strong{color:#0056b3}
+    @media(max-width:600px){
+      .wrap{margin:0;border-radius:0;box-shadow:none}
+      .hdr,.body,.ftr{padding:20px 16px}
     }
   </style>
 </head>
 <body>
-  <div class="wrapper">
-
-    <!-- Header -->
-    <div class="header">
-      <div class="brand">SLT<span>MOBITEL</span> EasyApply</div>
-      <div class="tagline">Digital Service Portal — Official Payment Receipt</div>
-    </div>
-
-    <!-- Success icon -->
-    <div class="success-icon-row">
-      <div class="success-circle">
-        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-      </div>
-      <div class="success-title">Payment Confirmed! 🎉</div>
-      <div class="success-sub">
-        Dear <strong>${displayName}</strong>, your payment has been received<br/>
-        and your application is now confirmed.
-      </div>
-    </div>
-
-    <!-- Reference box -->
-    <div class="ref-box">
-      <div class="ref-label">Application Reference Number</div>
-      <div class="ref-value">${displayRef}</div>
-    </div>
-
-    <!-- Payment details -->
-    <div class="details">
-      <table>
-        <tr>
-          <td class="lbl">Service</td>
-          <td class="val">${displayService}</td>
-        </tr>
-        <tr>
-          <td class="lbl">Amount Paid</td>
-          <td class="val amount-val">${displayAmount}</td>
-        </tr>
-        <tr>
-          <td class="lbl">Payment Date</td>
-          <td class="val">${displayDate}</td>
-        </tr>
-        <tr>
-          <td class="lbl">Order ID</td>
-          <td class="val">${orderId || displayRef}</td>
-        </tr>
-        <tr>
-          <td class="lbl">Status</td>
-          <td class="val" style="color:#16a34a;font-weight:900;">✔ Paid &amp; Confirmed</td>
-        </tr>
-      </table>
-    </div>
-
-    <!-- Notice -->
-    <div class="notice">
-      <strong>📌 Keep this for your records.</strong><br/>
-      Quote reference <strong>${displayRef}</strong> for all inquiries.
-      You will receive an SMS once your service is activated (within 24–48 hours).
-      For urgent support call <strong>1212</strong> or visit your nearest SLT Teleshop.
-    </div>
-
-    <!-- Footer -->
-    <div class="footer">
-      <div class="helpline">
-        Customer Helpline: <strong>1212</strong> &nbsp;|&nbsp;
-        Web: <strong>sltmobitel.lk</strong>
-      </div>
-      <div class="copy">
-        &copy; ${new Date().getFullYear()} Sri Lanka Telecom PLC. All rights reserved.<br/>
-        This is an automated email — please do not reply.
-      </div>
-    </div>
-
+<div class="wrap">
+  <div class="hdr">
+    <div class="brand">SLT<span>MOBITEL</span> EasyApply</div>
+    <div class="tagline">Digital Service Portal — Official Notification</div>
   </div>
+  <div class="body">${bodyHtml}</div>
+  <div class="ftr">
+    <p>Customer Helpline: <strong>1212</strong> &nbsp;|&nbsp; Web: <strong>sltmobitel.lk</strong></p>
+    <p style="margin-top:6px">&copy; ${new Date().getFullYear()} Sri Lanka Telecom PLC. All rights reserved.<br/>This is an automated message — please do not reply.</p>
+  </div>
+</div>
 </body>
 </html>`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 1. PAYMENT CONFIRMATION EMAIL
+//    Triggered: PayHere IPN status_code=2 (and cart checkout)
+// ─────────────────────────────────────────────────────────────
+function buildPaymentConfirmationBody({ customerName, referenceNumber, orderId, amount, currency, serviceType, paidAt }) {
+  const displayRef = referenceNumber || orderId || '—';
+  const displayName = customerName || 'Valued Customer';
+
+  return `
+  <style>
+    .sc{display:inline-block;background:#dcfce7;border-radius:50%;width:64px;height:64px;line-height:64px;text-align:center;margin:0 auto 16px;font-size:32px}
+    .stitle{font-size:20px;font-weight:900;color:#0f172a;text-align:center;margin-bottom:6px}
+    .ssub{font-size:14px;color:#64748b;text-align:center;line-height:1.55;margin-bottom:20px}
+    .ref-box{background:#f0f9ff;border:1.5px dashed #0284c7;border-radius:12px;padding:16px 20px;text-align:center;margin-bottom:20px}
+    .ref-lbl{font-size:10px;color:#0284c7;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px}
+    .ref-val{font-size:24px;font-weight:900;color:#0056b3;letter-spacing:1px}
+    .details{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:20px}
+    .details table{width:100%;border-collapse:collapse}
+    .details td{padding:11px 16px;font-size:13px;border-bottom:1px solid #f1f5f9}
+    .details tr:last-child td{border-bottom:none}
+    .lbl{color:#64748b;font-weight:700;width:44%}
+    .val{color:#0f172a;font-weight:600}
+    .amt{color:#16a34a!important;font-weight:900!important;font-size:15px!important}
+    .notice{background:#fefce8;border-left:4px solid #f59e0b;border-radius:0 10px 10px 0;padding:12px 16px;font-size:13px;color:#78350f;line-height:1.6}
+  </style>
+  <div style="text-align:center"><div class="sc">✅</div></div>
+  <div class="stitle">Payment Confirmed! 🎉</div>
+  <div class="ssub">Dear <strong>${displayName}</strong>, your payment has been received and your application is confirmed.</div>
+
+  <div class="ref-box">
+    <div class="ref-lbl">Application Reference Number</div>
+    <div class="ref-val">${displayRef}</div>
+  </div>
+
+  <div class="details">
+    <table>
+      <tr><td class="lbl">Service</td><td class="val">${formatServiceLabel(serviceType)}</td></tr>
+      <tr><td class="lbl">Amount Paid</td><td class="val amt">${formatAmountLKR(amount)}</td></tr>
+      <tr><td class="lbl">Payment Date</td><td class="val">${formatDate(paidAt)}</td></tr>
+      <tr><td class="lbl">Order ID</td><td class="val">${orderId || displayRef}</td></tr>
+      <tr><td class="lbl">Status</td><td class="val" style="color:#16a34a;font-weight:900">✔ Paid &amp; Confirmed</td></tr>
+    </table>
+  </div>
+
+  <div class="notice">
+    <strong>📌 Keep this for your records.</strong><br/>
+    Quote reference <strong>${displayRef}</strong> for all inquiries.
+    You will receive an SMS once your service is activated (within 24–48 hours).
+    For urgent support call <strong>1212</strong> or visit your nearest SLT Teleshop.
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 2. APPLICATION SUBMITTED EMAIL
+//    Triggered: Every wizard/service form submission
+// ─────────────────────────────────────────────────────────────
+function buildApplicationSubmittedBody({ customerName, referenceNumber, serviceType, phone, submittedAt, requiresPayment }) {
+  const displayRef = referenceNumber || '—';
+  const displayName = customerName || 'Valued Customer';
+
+  return `
+  <style>
+    .icon-ring{display:inline-block;background:#dbeafe;border-radius:50%;width:64px;height:64px;line-height:64px;text-align:center;margin:0 auto 16px;font-size:28px}
+    .stitle{font-size:20px;font-weight:900;color:#0f172a;text-align:center;margin-bottom:6px}
+    .ssub{font-size:14px;color:#64748b;text-align:center;line-height:1.55;margin-bottom:20px}
+    .ref-box{background:#f0f9ff;border:1.5px dashed #0284c7;border-radius:12px;padding:16px 20px;text-align:center;margin-bottom:20px}
+    .ref-lbl{font-size:10px;color:#0284c7;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px}
+    .ref-val{font-size:24px;font-weight:900;color:#0056b3;letter-spacing:1px}
+    .details{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:20px}
+    .details table{width:100%;border-collapse:collapse}
+    .details td{padding:11px 16px;font-size:13px;border-bottom:1px solid #f1f5f9}
+    .details tr:last-child td{border-bottom:none}
+    .lbl{color:#64748b;font-weight:700;width:44%}
+    .val{color:#0f172a;font-weight:600}
+    .timeline{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px}
+    .tl-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px}
+    .tl-row:last-child{margin-bottom:0}
+    .tl-dot{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;flex-shrink:0}
+    .notice{background:#f0fdf4;border-left:4px solid #16a34a;border-radius:0 10px 10px 0;padding:12px 16px;font-size:13px;color:#14532d;line-height:1.6}
+    .pay-notice{background:#fefce8;border-left:4px solid #f59e0b;border-radius:0 10px 10px 0;padding:12px 16px;font-size:13px;color:#78350f;line-height:1.6;margin-top:12px}
+  </style>
+  <div style="text-align:center"><div class="icon-ring">📋</div></div>
+  <div class="stitle">Application Submitted!</div>
+  <div class="ssub">Dear <strong>${displayName}</strong>, your SLTMobitel service request has been received and is now under review.</div>
+
+  <div class="ref-box">
+    <div class="ref-lbl">Application Reference Number</div>
+    <div class="ref-val">${displayRef}</div>
+  </div>
+
+  <div class="details">
+    <table>
+      <tr><td class="lbl">Service Requested</td><td class="val">${formatServiceLabel(serviceType)}</td></tr>
+      <tr><td class="lbl">Contact Number</td><td class="val">+94${phone || '—'}</td></tr>
+      <tr><td class="lbl">Submitted On</td><td class="val">${formatDate(submittedAt)}</td></tr>
+      <tr><td class="lbl">Status</td><td class="val" style="color:#0284c7;font-weight:900">📝 Under Review</td></tr>
+    </table>
+  </div>
+
+  <div class="timeline">
+    <div style="font-size:11px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px">Processing Timeline</div>
+    <div class="tl-row">
+      <div class="tl-dot" style="background:#10b981;color:#fff">✓</div>
+      <div style="flex:1;font-weight:700;color:#0f172a">Application Logged &amp; Received</div>
+      <span style="font-size:11px;color:#15803d;font-weight:800;background:#dcfce7;padding:2px 8px;border-radius:20px">Done</span>
+    </div>
+    <div class="tl-row">
+      <div class="tl-dot" style="background:#0284c7;color:#fff">⏱</div>
+      <div style="flex:1;font-weight:700;color:#0f172a">Technical Verification &amp; Dispatch</div>
+      <span style="font-size:11px;color:#0369a1;font-weight:800;background:#e0f2fe;padding:2px 8px;border-radius:20px">24–48 hrs</span>
+    </div>
+    <div class="tl-row">
+      <div class="tl-dot" style="background:#cbd5e1;color:#fff">○</div>
+      <div style="flex:1;font-weight:600;color:#64748b">SMS Notification &amp; Activation</div>
+      <span style="font-size:11px;color:#64748b;font-weight:700;background:#f1f5f9;padding:2px 8px;border-radius:20px">Pending</span>
+    </div>
+  </div>
+
+  <div class="notice">
+    <strong>✅ What happens next?</strong><br/>
+    Quote reference <strong>${displayRef}</strong> for any inquiry.
+    Our team will contact you within 24–48 hours.
+    For urgent support call <strong>1212</strong>.
+  </div>
+  ${requiresPayment ? `<div class="pay-notice"><strong>💳 Payment Required:</strong><br/>Your application requires payment to proceed. Please complete payment via the portal to activate your service.</div>` : ''}`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Internal send helper
+// ─────────────────────────────────────────────────────────────
+async function _send({ to, subject, html }) {
+  if (!to) {
+    console.warn('⚠️  [emailService] No recipient — skipping email.');
+    return;
+  }
+
+  try {
+    const transporter = await getTransporter();
+    const from = process.env.SMTP_FROM || '"SLTMobitel EasyApply" <noreply@sltmobitel.lk>';
+
+    const info = await transporter.sendMail({
+      from,
+      to,
+      subject,
+      html,
+    });
+
+    console.log(`\n📧 Email sent → ${to}`);
+    console.log(`   Subject    : ${subject}`);
+    console.log(`   Message ID : ${info.messageId}`);
+    const preview = nodemailer.getTestMessageUrl(info);
+    if (preview) console.log(`   📬 PREVIEW : ${preview}\n`);
+    else console.log('   Delivered via real SMTP.\n');
+  } catch (err) {
+    console.error(`\n❌ [emailService] Send failed (${to}): ${err.message}\n`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -300,67 +281,29 @@ function buildPaymentConfirmationHtml({
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Send a payment confirmation email.
- *
- * @param {object} opts
- * @param {string} opts.to            - Recipient email address
- * @param {string} opts.customerName  - Full name of the customer
- * @param {string} opts.referenceNumber - Application reference (e.g. REQ-12345678)
- * @param {string} opts.orderId       - PayHere order ID
- * @param {number|string} opts.amount - Amount paid
- * @param {string} opts.currency      - Currency code (default: LKR)
- * @param {string} opts.serviceType   - e.g. 'new-connection'
- * @param {Date}   opts.paidAt        - Payment timestamp
+ * Send payment confirmation email (after PayHere IPN or cart checkout).
  */
 export async function sendPaymentConfirmationEmail({
-  to,
-  customerName,
-  referenceNumber,
-  orderId,
-  amount,
-  currency = 'LKR',
-  serviceType,
-  paidAt,
+  to, customerName, referenceNumber, orderId, amount, currency = 'LKR', serviceType, paidAt,
 }) {
-  if (!to) {
-    console.warn('⚠️  [emailService] No recipient email — skipping confirmation email.');
-    return;
-  }
+  const subject = `✅ Payment Confirmed — Ref: ${referenceNumber || orderId}`;
+  const html = emailShell({
+    subject,
+    bodyHtml: buildPaymentConfirmationBody({ customerName, referenceNumber, orderId, amount, currency, serviceType, paidAt }),
+  });
+  await _send({ to, subject, html });
+}
 
-  try {
-    const transporter = await getTransporter();
-
-    const from =
-      process.env.SMTP_FROM || '"SLTMobitel EasyApply" <noreply@sltmobitel.lk>';
-
-    const info = await transporter.sendMail({
-      from,
-      to,
-      subject: `✅ Payment Confirmed — Ref: ${referenceNumber || orderId}`,
-      html: buildPaymentConfirmationHtml({
-        customerName,
-        referenceNumber,
-        orderId,
-        amount,
-        currency,
-        serviceType,
-        paidAt,
-      }),
-    });
-
-    console.log(`\n📧 Payment confirmation email sent to ${to}`);
-    console.log(`   Message ID : ${info.messageId}`);
-
-    // Ethereal preview URL (only available in demo mode)
-    const previewUrl = nodemailer.getTestMessageUrl(info);
-    if (previewUrl) {
-      console.log(`   📬 PREVIEW  : ${previewUrl}`);
-      console.log('   ↑ Open this URL in your browser to see the email (demo only)\n');
-    } else {
-      console.log('   Email delivered via real SMTP.\n');
-    }
-  } catch (err) {
-    // Never crash the payment webhook due to email failure
-    console.error(`\n❌ [emailService] Failed to send confirmation email to ${to}: ${err.message}\n`);
-  }
+/**
+ * Send application submitted email (after any wizard submits to /api/applications).
+ */
+export async function sendApplicationSubmittedEmail({
+  to, customerName, referenceNumber, serviceType, phone, submittedAt, requiresPayment = false,
+}) {
+  const subject = `📋 Application Received — Ref: ${referenceNumber}`;
+  const html = emailShell({
+    subject,
+    bodyHtml: buildApplicationSubmittedBody({ customerName, referenceNumber, serviceType, phone, submittedAt, requiresPayment }),
+  });
+  await _send({ to, subject, html });
 }

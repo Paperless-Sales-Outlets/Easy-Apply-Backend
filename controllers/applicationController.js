@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
+import { sendApplicationSubmittedEmail } from '../services/emailService.js';
 
 // @desc    Submit a new service application
 // @route   POST /api/applications
@@ -286,6 +287,45 @@ export const createApplication = async (req, res, next) => {
 
     }
 
+
+    // ─────────────────────────────────────────────────────────
+    // Send application submitted email (non-blocking)
+    // ─────────────────────────────────────────────────────────
+    (async () => {
+      try {
+        // 1. Try email in formData
+        let emailTo =
+          formData?.email ||
+          formData?.emailAddress ||
+          formData?.customerEmail ||
+          null;
+
+        // 2. Try to resolve name from formData
+        const customerName =
+          formData?.nameFull ||
+          formData?.fullName ||
+          formData?.customerName ||
+          null;
+
+        // 3. Fallback: look up Connection by phone for email
+        if (!emailTo && verifiedPhone && mongoose.connection.readyState === 1) {
+          const conn = await Connection.findOne({ telephone: verifiedPhone }).select('email fullName');
+          if (conn?.email) emailTo = conn.email;
+        }
+
+        await sendApplicationSubmittedEmail({
+          to: emailTo, // falls back to DEMO_CC inside emailService if null
+          customerName,
+          referenceNumber: application.referenceNumber,
+          serviceType,
+          phone: verifiedPhone,
+          submittedAt: application.createdAt || new Date(),
+          requiresPayment: application.paymentStatus === 'pending' && application.status === 'pending payment',
+        });
+      } catch (emailErr) {
+        console.error('[applicationController] Email error:', emailErr.message);
+      }
+    })();
 
     res.status(201).json({
       success: true,
