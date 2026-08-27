@@ -142,3 +142,42 @@ export const updateApplicationStatus = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Update office fields (CR Number, Amount Paid, Staff Signature, Appointment Date)
+//          Staff-only operation — does not change application status.
+// @route   PATCH /api/admin/applications/:id/office-fields
+// @access  Private (Admin / Staff only)
+export const updateOfficeFields = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { crNumber, amountPaid, staffSignature, appointmentDate } = req.body;
+
+    const officeFields = {};
+    if (crNumber !== undefined)      officeFields.crNumber      = crNumber;
+    if (amountPaid !== undefined)    officeFields.amountPaid     = amountPaid !== null ? Number(amountPaid) : null;
+    if (staffSignature !== undefined) officeFields.staffSignature = staffSignature;
+    if (appointmentDate !== undefined) officeFields.appointmentDate = appointmentDate ? new Date(appointmentDate) : null;
+
+    if (Object.keys(officeFields).length === 0) {
+      res.status(400);
+      return next(new Error('At least one office field is required'));
+    }
+
+    const application = await Application.findByIdAndUpdate(
+      id,
+      { $set: { officeFields } },
+      { new: true, runValidators: true }
+    )
+      .populate('actionedBy', 'name email role')
+      .lean();
+
+    if (!application) {
+      res.status(404);
+      return next(new Error('Application not found'));
+    }
+
+    res.status(200).json({ success: true, application });
+  } catch (error) {
+    next(error);
+  }
+};
