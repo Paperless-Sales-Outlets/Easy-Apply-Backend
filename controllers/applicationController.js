@@ -268,10 +268,11 @@ export const createApplication = async (req, res, next) => {
         10000000 + Math.random() * 90000000
       ).toString();
 
+      const prefix = serviceType === 'customer-request-acceptance' ? 'SR' : 'REQ';
 
       application = {
         _id: `mock_app_${refDigits}`,
-        referenceNumber: `REQ-${refDigits}`,
+        referenceNumber: `${prefix}-${refDigits}`,
         serviceType,
         status: 'pending',
         nic,
