@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - main-backup
+      - main-v3
   workflow_dispatch: # Allows manual triggering from the Actions tab
 
 jobs:
@@ -49,12 +49,12 @@ jobs:
             git reset --hard origin/${{ github.ref_name }}
 
             # 4. (Removed) We no longer overwrite the .env file so manual server edits are preserved
-            
+
             # 5. Install production dependencies
             npm install --omit=dev
 
             # 6. Restart or start the PM2 service
             pm2 restart $PM2_NAME --update-env || pm2 start server.js --name "$PM2_NAME"
-            
+
             # 7. Save PM2 configuration to survive reboots
             pm2 save
