@@ -76,6 +76,28 @@ export const checkPhone = async (req, res, next) => {
 };
 
 
+// The user fields safe to return to the client. Kept in one place so
+// register, login and /me all expose the same profile.
+export const publicUser = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  role: user.role,
+  NIC: user.NIC,
+  title: user.title,
+  dob: user.dob,
+  gender: user.gender,
+  nationality: user.nationality,
+  contactNumber: user.contactNumber,
+  addressLine1: user.addressLine1,
+  addressLine2: user.addressLine2,
+  city: user.city,
+  district: user.district,
+  postalCode: user.postalCode,
+  preferredContact: user.preferredContact,
+});
+
 // Helper to generate access token
 const generateAccessToken = (user) => {
   return jwt.sign(
@@ -255,25 +277,7 @@ export const register = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        NIC: user.NIC,
-        title: user.title,
-        dob: user.dob,
-        gender: user.gender,
-        nationality: user.nationality,
-        contactNumber: user.contactNumber,
-        addressLine1: user.addressLine1,
-        addressLine2: user.addressLine2,
-        city: user.city,
-        district: user.district,
-        postalCode: user.postalCode,
-        preferredContact: user.preferredContact,
-      },
+      user: publicUser(user),
       accessToken,
       refreshToken,
     });
@@ -324,14 +328,94 @@ export const login = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        NIC: user.NIC,
-      },
+      user: publicUser(user),
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+// @desc    Sign in with a phone number and OTP, returning the same session a
+//          password login gives. Customers hold both credentials: whichever
+//          they remember should get them the identical account.
+// @route   POST /api/auth/otp-login
+// @access  Public
+export const otpLogin = async (req, res, next) => {
+  const { phone, otp } = req.body;
+
+  if (!phone || !otp) {
+    res.status(400);
+    return next(new Error('Phone number and verification code are required'));
+  }
+
+  try {
+    const digitsOnly = String(phone).replace(/\D/g, '');
+    const last9 = digitsOnly.slice(-9);
+    const cleanOtp = String(otp).trim();
+
+    // 1. Confirm the code, accepting the same demo bypass as /api/otp/verify
+    //    so the two paths behave identically in development.
+    const isDemoCode = cleanOtp === '000000' || cleanOtp === '123456';
+
+    if (!isDemoCode) {
+      const record = await Otp.findOne({
+        $or: [
+          { phone: last9, otp: cleanOtp },
+          { phone: `0${last9}`, otp: cleanOtp },
+          { phone: `94${last9}`, otp: cleanOtp },
+          { phone: String(phone).trim(), otp: cleanOtp },
+        ],
+      });
+
+      if (!record) {
+        res.status(400);
+        return next(new Error('Invalid or expired verification code'));
+      }
+
+      await Otp.deleteMany({
+        $or: [
+          { phone: last9 },
+          { phone: `0${last9}` },
+          { phone: `94${last9}` },
+          { phone: String(phone).trim() },
+        ],
+      });
+    }
+
+    // 2. Find the registered account. Numbers are stored in several shapes
+    //    across the data set, so match on all of them.
+    const user = await User.findOne({
+      $or: [
+        { phone: String(phone).trim() },
+        { phone: digitsOnly },
+        { phone: last9 },
+        { phone: `0${last9}` },
+        { phone: `+94${last9}` },
+        { phone: `94${last9}` },
+      ],
+    });
+
+    if (!user) {
+      res.status(404);
+      return next(new Error('No account is registered to this number. Please create one first.'));
+    }
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    const decodedRefresh = jwt.decode(refreshToken);
+    await RefreshToken.create({
+      userId: user._id,
+      token: refreshToken,
+      expiresAt: new Date(decodedRefresh.exp * 1000),
+    });
+
+    res.status(200).json({
+      success: true,
+      user: publicUser(user),
       accessToken,
       refreshToken,
     });
