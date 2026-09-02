@@ -96,7 +96,44 @@ export const publicUser = (user) => ({
   district: user.district,
   postalCode: user.postalCode,
   preferredContact: user.preferredContact,
+  // Ids only — the images are served admin-only via /api/files/:id.
+  identityDocuments: user.identityDocuments || null,
+  hasIdentityDocuments: !!(user.identityDocuments && user.identityDocuments.facePhoto),
 });
+
+
+/**
+ * Write a base64 data URL into GridFS and return its file id.
+ *
+ * KYC images are stored as files rather than inline on the user document:
+ * three base64 images would add roughly a megabyte to every record and are
+ * already served admin-only through /api/files/:id.
+ */
+const storeIdentityImage = async (dataUrl, label, userId) => {
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
+
+  const [meta, base64] = dataUrl.split(',');
+  if (!base64) return null;
+
+  const contentType = (meta.match(/data:(image\/[a-zA-Z+]+);/) || [])[1] || 'image/jpeg';
+  const buffer = Buffer.from(base64, 'base64');
+
+  // Guard against oversized payloads reaching the database.
+  if (buffer.length > 5 * 1024 * 1024) {
+    throw new Error(`${label} exceeds the 5MB limit`);
+  }
+
+  const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'uploads' });
+  return new Promise((resolve, reject) => {
+    const stream = bucket.openUploadStream(`${label}-${userId}-${Date.now()}`, {
+      contentType,
+      metadata: { userId, kind: label, uploadedAt: new Date() },
+    });
+    stream.on('error', reject);
+    stream.on('finish', () => resolve(stream.id));
+    stream.end(buffer);
+  });
+};
 
 // Helper to generate access token
 const generateAccessToken = (user) => {
@@ -233,7 +270,8 @@ export const register = async (req, res, next) => {
   const {
     name, email, phone, role, NIC, password,
     title, dob, gender, nationality, contactNumber,
-    addressLine1, addressLine2, city, district, postalCode, preferredContact
+    addressLine1, addressLine2, city, district, postalCode, preferredContact,
+    nicFront, nicBack, facePhoto
   } = req.body;
 
   if (!name || !email || !phone || !NIC || !password) {
@@ -262,6 +300,29 @@ export const register = async (req, res, next) => {
       title, dob, gender, nationality, contactNumber,
       addressLine1, addressLine2, city, district, postalCode, preferredContact
     });
+
+    // Persist the KYC images captured during sign-up. A storage failure must
+    // not cost the customer their account — the images can be re-supplied, so
+    // registration is allowed to succeed either way.
+    try {
+      const [frontId, backId, faceId] = await Promise.all([
+        storeIdentityImage(nicFront, 'nic-front', user._id),
+        storeIdentityImage(nicBack, 'nic-back', user._id),
+        storeIdentityImage(facePhoto, 'face-photo', user._id),
+      ]);
+
+      if (frontId || backId || faceId) {
+        user.identityDocuments = {
+          nicFront: frontId,
+          nicBack: backId,
+          facePhoto: faceId,
+          capturedAt: new Date(),
+        };
+        await user.save();
+      }
+    } catch (uploadErr) {
+      console.error('Identity document storage failed for', String(user._id), uploadErr.message);
+    }
 
     // Generate tokens
     const accessToken = generateAccessToken(user);
