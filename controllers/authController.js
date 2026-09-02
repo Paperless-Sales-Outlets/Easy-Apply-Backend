@@ -275,22 +275,23 @@ export const register = async (req, res, next) => {
   } = req.body;
 
   // Password is intentionally absent: accounts are created and accessed with a
-  // mobile number and one-time code.
-  if (!name || !email || !phone || !NIC) {
+  // mobile number and one-time code. Email is optional too — it is no longer
+  // asked for at registration and is collected on the application form instead.
+  if (!name || !phone || !NIC) {
     res.status(400);
-    return next(new Error('Name, email, phone number and NIC are required'));
+    return next(new Error('Name, phone number and NIC are required'));
   }
 
   try {
     // Check if user already exists
     const userExists = await User.findOne({
-      $or: [{ email }, { phone }, { NIC }],
+      $or: [...(email ? [{ email }] : []), { phone }, { NIC }],
     });
 
     if (userExists) {
       res.status(400);
       let duplicateField = 'Email, phone number, or NIC';
-      if (userExists.email === email.toLowerCase()) duplicateField = 'Email';
+      if (email && userExists.email === email.toLowerCase()) duplicateField = 'Email';
       else if (userExists.phone === phone) duplicateField = 'Phone number';
       else if (userExists.NIC === NIC.toUpperCase()) duplicateField = 'NIC';
       return next(new Error(`${duplicateField} is already registered`));

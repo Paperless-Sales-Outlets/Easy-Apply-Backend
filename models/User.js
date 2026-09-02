@@ -10,8 +10,11 @@ const userSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      required: [true, 'Email is required'],
+      // Optional: registration no longer collects an email address, so an
+      // account may exist without one. `sparse` keeps the unique index from
+      // treating every address-less account as a duplicate null.
       unique: true,
+      sparse: true,
       trim: true,
       lowercase: true,
       match: [
