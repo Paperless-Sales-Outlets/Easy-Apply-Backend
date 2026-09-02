@@ -8,6 +8,8 @@ import {
   logout,
   getUsers,
   checkPhone,
+  otpLogin,
+  publicUser,
 } from '../controllers/authController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
 
@@ -18,6 +20,7 @@ router.post('/send-otp', sendOtp);
 router.post('/verify-otp', verifyOtp);
 router.post('/register', register);
 router.post('/login', login);
+router.post('/otp-login', otpLogin);
 router.post('/refresh', refresh);
 router.post('/logout', logout);
 router.post('/check-phone', checkPhone);
@@ -28,14 +31,7 @@ router.get('/users', protect, authorize('Admin'), getUsers);
 router.get('/me', protect, (req, res) => {
   res.status(200).json({
     success: true,
-    user: {
-      id: req.user._id,
-      name: req.user.name,
-      email: req.user.email,
-      phone: req.user.phone,
-      role: req.user.role,
-      NIC: req.user.NIC,
-    },
+    user: publicUser(req.user),
   });
 });
 

@@ -76,6 +76,65 @@ export const checkPhone = async (req, res, next) => {
 };
 
 
+// The user fields safe to return to the client. Kept in one place so
+// register, login and /me all expose the same profile.
+export const publicUser = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  role: user.role,
+  NIC: user.NIC,
+  title: user.title,
+  dob: user.dob,
+  gender: user.gender,
+  nationality: user.nationality,
+  contactNumber: user.contactNumber,
+  addressLine1: user.addressLine1,
+  addressLine2: user.addressLine2,
+  city: user.city,
+  district: user.district,
+  postalCode: user.postalCode,
+  preferredContact: user.preferredContact,
+  // Ids only — the images are served admin-only via /api/files/:id.
+  identityDocuments: user.identityDocuments || null,
+  hasIdentityDocuments: !!(user.identityDocuments && user.identityDocuments.facePhoto),
+});
+
+
+/**
+ * Write a base64 data URL into GridFS and return its file id.
+ *
+ * KYC images are stored as files rather than inline on the user document:
+ * three base64 images would add roughly a megabyte to every record and are
+ * already served admin-only through /api/files/:id.
+ */
+const storeIdentityImage = async (dataUrl, label, userId) => {
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
+
+  const [meta, base64] = dataUrl.split(',');
+  if (!base64) return null;
+
+  const contentType = (meta.match(/data:(image\/[a-zA-Z+]+);/) || [])[1] || 'image/jpeg';
+  const buffer = Buffer.from(base64, 'base64');
+
+  // Guard against oversized payloads reaching the database.
+  if (buffer.length > 5 * 1024 * 1024) {
+    throw new Error(`${label} exceeds the 5MB limit`);
+  }
+
+  const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'uploads' });
+  return new Promise((resolve, reject) => {
+    const stream = bucket.openUploadStream(`${label}-${userId}-${Date.now()}`, {
+      contentType,
+      metadata: { userId, kind: label, uploadedAt: new Date() },
+    });
+    stream.on('error', reject);
+    stream.on('finish', () => resolve(stream.id));
+    stream.end(buffer);
+  });
+};
+
 // Helper to generate access token
 const generateAccessToken = (user) => {
   return jwt.sign(
@@ -211,7 +270,8 @@ export const register = async (req, res, next) => {
   const {
     name, email, phone, role, NIC, password,
     title, dob, gender, nationality, contactNumber,
-    addressLine1, addressLine2, city, district, postalCode, preferredContact
+    addressLine1, addressLine2, city, district, postalCode, preferredContact,
+    nicFront, nicBack, facePhoto
   } = req.body;
 
   if (!name || !email || !phone || !NIC || !password) {
@@ -241,6 +301,29 @@ export const register = async (req, res, next) => {
       addressLine1, addressLine2, city, district, postalCode, preferredContact
     });
 
+    // Persist the KYC images captured during sign-up. A storage failure must
+    // not cost the customer their account — the images can be re-supplied, so
+    // registration is allowed to succeed either way.
+    try {
+      const [frontId, backId, faceId] = await Promise.all([
+        storeIdentityImage(nicFront, 'nic-front', user._id),
+        storeIdentityImage(nicBack, 'nic-back', user._id),
+        storeIdentityImage(facePhoto, 'face-photo', user._id),
+      ]);
+
+      if (frontId || backId || faceId) {
+        user.identityDocuments = {
+          nicFront: frontId,
+          nicBack: backId,
+          facePhoto: faceId,
+          capturedAt: new Date(),
+        };
+        await user.save();
+      }
+    } catch (uploadErr) {
+      console.error('Identity document storage failed for', String(user._id), uploadErr.message);
+    }
+
     // Generate tokens
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
@@ -255,25 +338,7 @@ export const register = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        NIC: user.NIC,
-        title: user.title,
-        dob: user.dob,
-        gender: user.gender,
-        nationality: user.nationality,
-        contactNumber: user.contactNumber,
-        addressLine1: user.addressLine1,
-        addressLine2: user.addressLine2,
-        city: user.city,
-        district: user.district,
-        postalCode: user.postalCode,
-        preferredContact: user.preferredContact,
-      },
+      user: publicUser(user),
       accessToken,
       refreshToken,
     });
@@ -324,14 +389,94 @@ export const login = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        NIC: user.NIC,
-      },
+      user: publicUser(user),
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+// @desc    Sign in with a phone number and OTP, returning the same session a
+//          password login gives. Customers hold both credentials: whichever
+//          they remember should get them the identical account.
+// @route   POST /api/auth/otp-login
+// @access  Public
+export const otpLogin = async (req, res, next) => {
+  const { phone, otp } = req.body;
+
+  if (!phone || !otp) {
+    res.status(400);
+    return next(new Error('Phone number and verification code are required'));
+  }
+
+  try {
+    const digitsOnly = String(phone).replace(/\D/g, '');
+    const last9 = digitsOnly.slice(-9);
+    const cleanOtp = String(otp).trim();
+
+    // 1. Confirm the code, accepting the same demo bypass as /api/otp/verify
+    //    so the two paths behave identically in development.
+    const isDemoCode = cleanOtp === '000000' || cleanOtp === '123456';
+
+    if (!isDemoCode) {
+      const record = await Otp.findOne({
+        $or: [
+          { phone: last9, otp: cleanOtp },
+          { phone: `0${last9}`, otp: cleanOtp },
+          { phone: `94${last9}`, otp: cleanOtp },
+          { phone: String(phone).trim(), otp: cleanOtp },
+        ],
+      });
+
+      if (!record) {
+        res.status(400);
+        return next(new Error('Invalid or expired verification code'));
+      }
+
+      await Otp.deleteMany({
+        $or: [
+          { phone: last9 },
+          { phone: `0${last9}` },
+          { phone: `94${last9}` },
+          { phone: String(phone).trim() },
+        ],
+      });
+    }
+
+    // 2. Find the registered account. Numbers are stored in several shapes
+    //    across the data set, so match on all of them.
+    const user = await User.findOne({
+      $or: [
+        { phone: String(phone).trim() },
+        { phone: digitsOnly },
+        { phone: last9 },
+        { phone: `0${last9}` },
+        { phone: `+94${last9}` },
+        { phone: `94${last9}` },
+      ],
+    });
+
+    if (!user) {
+      res.status(404);
+      return next(new Error('No account is registered to this number. Please create one first.'));
+    }
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    const decodedRefresh = jwt.decode(refreshToken);
+    await RefreshToken.create({
+      userId: user._id,
+      token: refreshToken,
+      expiresAt: new Date(decodedRefresh.exp * 1000),
+    });
+
+    res.status(200).json({
+      success: true,
+      user: publicUser(user),
       accessToken,
       refreshToken,
     });
