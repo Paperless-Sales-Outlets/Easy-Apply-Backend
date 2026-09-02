@@ -57,9 +57,11 @@ const userSchema = new mongoose.Schema(
       facePhoto: { type: mongoose.Schema.Types.ObjectId },
       capturedAt: { type: Date },
     },
+    // Sign-in is by mobile number and one-time code, so accounts are created
+    // without a password. The field is kept so existing records stay valid and
+    // a password-based flow could be reintroduced later.
     password: {
       type: String,
-      required: [true, 'Password is required'],
       minlength: [6, 'Password must be at least 6 characters'],
       select: false, // Don't return password in user queries by default
     },
@@ -71,15 +73,19 @@ const userSchema = new mongoose.Schema(
 
 // Encrypt password using bcrypt pre-save
 userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) {
-    next();
-  }
+  // Accounts created through the OTP flow have no password at all, and the
+  // original guard fell through to hashing even when nothing had changed.
+  if (!this.password || !this.isModified('password')) return next();
+
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
+  return next();
 });
 
 // Match user entered password to hashed password in database
 userSchema.methods.matchPassword = async function (enteredPassword) {
+  // No password set means password sign-in is not available for this account.
+  if (!this.password) return false;
   return await bcrypt.compare(enteredPassword, this.password);
 };
 

@@ -274,9 +274,11 @@ export const register = async (req, res, next) => {
     nicFront, nicBack, facePhoto
   } = req.body;
 
-  if (!name || !email || !phone || !NIC || !password) {
+  // Password is intentionally absent: accounts are created and accessed with a
+  // mobile number and one-time code.
+  if (!name || !email || !phone || !NIC) {
     res.status(400);
-    return next(new Error('All fields are required'));
+    return next(new Error('Name, email, phone number and NIC are required'));
   }
 
   try {
@@ -296,7 +298,8 @@ export const register = async (req, res, next) => {
 
     // Create user (password will be hashed in model pre-save hook)
     const user = await User.create({
-      name, email, phone, role: role || 'Customer', NIC, password,
+      name, email, phone, role: role || 'Customer', NIC,
+      ...(password ? { password } : {}),
       title, dob, gender, nationality, contactNumber,
       addressLine1, addressLine2, city, district, postalCode, preferredContact
     });
@@ -350,6 +353,14 @@ export const register = async (req, res, next) => {
 // @desc    Login user
 // @route   POST /api/auth/login
 // @access  Public
+/**
+ * Legacy email + password sign-in.
+ *
+ * SLT removed this option — customers sign in with a mobile number and OTP via
+ * /api/auth/otp-login. Accounts created since that change have no password, so
+ * this will correctly reject them. Kept for any older account that still has
+ * one, and so existing integrations don't 404.
+ */
 export const login = async (req, res, next) => {
   const { email, password } = req.body;
 
