@@ -152,3 +152,59 @@ export const getCustomerByTelephone = async (req, res, next) => {
   req.body.phoneNumber = req.params.telephone;
   return lookupCustomer(req, res, next);
 };
+
+// @desc    Check whether a phone number belongs to an existing SLT customer.
+//          Returns ONLY {success, exists} — no PII before OTP verification.
+// @route   POST /api/customers/check-phone
+// @access  Public
+export const checkCustomerPhone = async (req, res, next) => {
+  const phoneStr = req.body.phoneNumber || req.body.phone;
+
+  if (!phoneStr) {
+    return res.status(400).json({ success: false, message: 'Phone number is required' });
+  }
+
+  const digitsOnly = String(phoneStr).replace(/\D/g, '');
+  const last9 = digitsOnly.slice(-9);
+
+  try {
+    let found = false;
+
+    if (mongoose.connection.readyState === 1) {
+      // Check Connection collection (primary SLT customer records)
+      const match = await Connection.findOne({
+        $or: [
+          { telephone: phoneStr },
+          { telephone: digitsOnly },
+          { telephone: `0${last9}` },
+          { contactNo: phoneStr },
+          { contactNo: digitsOnly },
+          { contactNo: `0${last9}` },
+        ],
+      }).select('_id');
+
+      if (match) {
+        found = true;
+      }
+
+      // Also check Application collection for recent submissions
+      if (!found && mongoose.models.Application) {
+        const app = await mongoose.models.Application.findOne({
+          $or: [
+            { phone: phoneStr },
+            { phone: digitsOnly },
+            { phone: `0${last9}` },
+            { 'formData.mobileNumber': digitsOnly },
+            { 'formData.mobileNumber': `0${last9}` },
+          ],
+        }).select('_id');
+
+        if (app) found = true;
+      }
+    }
+
+    return res.status(200).json({ success: true, exists: found });
+  } catch (error) {
+    next(error);
+  }
+};

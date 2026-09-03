@@ -71,6 +71,12 @@ const applicationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       required: true,
     },
+    officeFields: {
+      crNumber: { type: String, trim: true, default: '' },
+      amountPaid: { type: Number, default: null },
+      staffSignature: { type: String, trim: true, default: '' },
+      appointmentDate: { type: Date, default: null },
+    },
   },
   {
     timestamps: true,
@@ -83,10 +89,13 @@ applicationSchema.pre('validate', async function (next) {
     let isUnique = false;
     let ref = '';
     
+    // Determine prefix based on service type (BRD 5.9.6)
+    const prefix = this.serviceType === 'customer-request-acceptance' ? 'SR' : 'REQ';
+
     // Retry generation until a unique one is found
     while (!isUnique) {
       const randomDigits = Math.floor(10000000 + Math.random() * 90000000).toString();
-      ref = `REQ-${randomDigits}`;
+      ref = `${prefix}-${randomDigits}`;
       
       const existing = await mongoose.models.Application?.findOne({ referenceNumber: ref });
       if (!existing) {

@@ -2,61 +2,75 @@ import mongoose from 'mongoose';
 
 const appointmentSchema = new mongoose.Schema(
   {
-    orderId: {
+    applicationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Application',
+      default: null,
+    },
+    referenceNumber: {
       type: String,
-      required: [true, 'Order ID is required'],
-      unique: true,
       trim: true,
+      default: '',
     },
     customerName: {
       type: String,
       trim: true,
-    },
-    email: {
-      type: String,
-      trim: true,
-      lowercase: true,
+      default: '',
     },
     phone: {
       type: String,
       trim: true,
+      default: '',
+    },
+    address: {
+      type: String,
+      trim: true,
+      default: '',
     },
     serviceType: {
       type: String,
-      default: 'appointment-booking',
+      enum: [
+        'new-connection',
+        'reconnection',
+        'relocation',
+        'termination',
+        'transfer',
+        'package-migration',
+        'service-vacation',
+        'refund-request',
+        'customer-request-acceptance',
+        'internet-services',
+      ],
+      default: 'new-connection',
     },
-    amount: {
-      type: Number,
-      required: [true, 'Amount is required'],
-      min: [0, 'Amount must be greater than or equal to 0'],
+    scheduledAt: {
+      type: Date,
+      required: [true, 'Scheduled date/time is required'],
     },
-    currency: {
-      type: String,
-      default: 'LKR',
-      uppercase: true,
-    },
-    paymentStatus: {
-      type: String,
-      enum: ['pending', 'paid', 'failed'],
-      default: 'pending',
+    technicianId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
     status: {
       type: String,
-      enum: ['pending payment', 'confirmed', 'cancelled'],
-      default: 'pending payment',
+      enum: ['scheduled', 'in-progress', 'completed', 'cancelled'],
+      default: 'scheduled',
     },
-    payherePaymentId: {
+    notes: {
       type: String,
       trim: true,
-    },
-    paidAt: {
-      type: Date,
+      default: '',
+      maxlength: [2000, 'Notes must be at most 2000 characters'],
     },
   },
   {
     timestamps: true,
   }
 );
+
+appointmentSchema.index({ scheduledAt: 1 });
+appointmentSchema.index({ technicianId: 1 });
 
 const Appointment = mongoose.model('Appointment', appointmentSchema);
 
