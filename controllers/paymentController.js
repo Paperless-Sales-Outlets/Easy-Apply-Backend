@@ -366,7 +366,7 @@ export const createPayHerePayment = async (req, res, next) => {
       // Using a public echo endpoint for sandbox testing only.
       // In production (once server has a public IP), change this back to:
       // notify_url: `${apiUrl}${basePath}/api/payment/notify`,
-      notify_url: process.env.PAYHERE_NOTIFY_URL || `${apiUrl}/api/payment/notify`,
+      notify_url: process.env.PAYHERE_NOTIFY_URL || 'https://httpbin.org/post',
     });
   } catch (error) {
     next(error);
