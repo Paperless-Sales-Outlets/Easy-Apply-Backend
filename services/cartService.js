@@ -85,9 +85,8 @@ export const updateCartItemQuantity = async (userId, productId, quantity) => {
     throw new Error('Quantity must be greater than zero');
   }
 
-  // Get cart — must be a real document (not getCart's .lean() result) since
-  // updateItemQuantity below is a Mongoose instance method.
-  const cart = await getOrCreateCart(userId);
+  // Get cart
+  const cart = await getCart(userId);
 
   // Check if item exists in cart
   const existingItem = cart.items.find((item) => item.productId === productId);
@@ -109,8 +108,8 @@ export const updateCartItemQuantity = async (userId, productId, quantity) => {
  * Remove item from cart
  */
 export const removeItemFromCart = async (userId, productId) => {
-  // Get cart — must be a real document, see updateCartItemQuantity above.
-  const cart = await getOrCreateCart(userId);
+  // Get cart
+  const cart = await getCart(userId);
 
   // Check if item exists in cart
   const existingItem = cart.items.find((item) => item.productId === productId);
@@ -129,8 +128,7 @@ export const removeItemFromCart = async (userId, productId) => {
  * Clear cart
  */
 export const clearCart = async (userId) => {
-  // Must be a real document, see updateCartItemQuantity above.
-  const cart = await getOrCreateCart(userId);
+  const cart = await getCart(userId);
 
   await cart.clearCart();
 

@@ -30,24 +30,19 @@ router.post('/add', cartController.addToCart);
 router.put('/update', cartController.updateCart);
 
 /**
- * @route   DELETE /api/cart/clear
- * @desc    Clear the cart
- * @access  Public (session-based)
- *
- * Registered before the /:id route below — Express matches routes in
- * registration order, so with /:id first, a request to /cart/clear would
- * match it with id='clear' instead of reaching this handler, then 500
- * with "Item not found in cart" since no item has that product id.
- */
-router.delete('/clear', cartController.clearCart);
-
-/**
  * @route   DELETE /api/cart/:id
  * @desc    Remove an item from cart
  * @access  Public (session-based)
  */
 router.delete('/:id', cartController.removeFromCart);
 router.delete('/remove/:id', cartController.removeFromCart);
+
+/**
+ * @route   DELETE /api/cart/clear
+ * @desc    Clear the cart
+ * @access  Public (session-based)
+ */
+router.delete('/clear', cartController.clearCart);
 
 /**
  * @route   GET /api/cart/validate

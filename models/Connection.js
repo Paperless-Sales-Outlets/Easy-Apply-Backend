@@ -50,7 +50,7 @@ const connectionSchema = new mongoose.Schema(
     // Additional fields based on NewConnectionWizard
     customerType: {
       type: String,
-      enum: ['home', 'office', 'religious', 'business', 'government', 'foreign'],
+      enum: ['home', 'office', 'religious'],
       default: 'home'
     },
     email: {

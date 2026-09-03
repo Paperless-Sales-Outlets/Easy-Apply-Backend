@@ -320,7 +320,7 @@ export const createPayHerePayment = async (req, res, next) => {
 
     // Create or update status in DB (Appointment / Application) if MongoDB is connected
     if (mongoose.connection.readyState === 1) {
-      let appointment = await Appointment.findOne({ referenceNumber: finalOrderId });
+      let appointment = await Appointment.findOne({ orderId: finalOrderId });
       if (!appointment) {
         const app = await Application.findOne({ referenceNumber: finalOrderId });
         if (app) {
@@ -332,12 +332,24 @@ export const createPayHerePayment = async (req, res, next) => {
             currency: String(currency).toUpperCase(),
           };
           await app.save();
+        } else {
+          await Appointment.create({
+            orderId: finalOrderId,
+            amount: parseFloat(formattedAmount),
+            currency: String(currency).toUpperCase(),
+            customerName: customerDetails?.name || customerDetails?.firstName || '',
+            email: customerDetails?.email || '',
+            phone: customerDetails?.phone || '',
+            serviceType: itemTitle || 'appointment-booking',
+            paymentStatus: 'pending',
+            status: 'pending payment',
+          });
         }
       } else {
-        // Appointment model does not have amount, paymentStatus, etc. fields natively but we might just ignore this or update what is valid.
-        // Actually, Appointment model only has status: ['scheduled', 'in-progress', 'completed', 'cancelled']
-        // It does not have paymentStatus, amount, etc.
-        // So we probably shouldn't do anything here, or just let it pass.
+        appointment.amount = parseFloat(formattedAmount);
+        appointment.paymentStatus = 'pending';
+        appointment.status = 'pending payment';
+        await appointment.save();
       }
     } else {
       console.warn('⚠️ MongoDB is not connected. Generating PayHere hash without DB persistence.');
@@ -362,11 +374,7 @@ export const createPayHerePayment = async (req, res, next) => {
       // PayHere requires these URLs — empty strings cause "Unauthorized payment request"
       return_url: `${baseUrl}${basePath}/payment/success`,
       cancel_url: `${baseUrl}${basePath}/payment/cancel`,
-      // NOTE: Server is on SLT private network, PayHere cannot reach it directly.
-      // Using a public echo endpoint for sandbox testing only.
-      // In production (once server has a public IP), change this back to:
-      // notify_url: `${apiUrl}${basePath}/api/payment/notify`,
-      notify_url: process.env.PAYHERE_NOTIFY_URL || `${apiUrl}/api/payment/notify`,
+      notify_url: `${apiUrl}/api/payment/notify`,
     });
   } catch (error) {
     next(error);
@@ -409,13 +417,14 @@ export const handlePayHereNotify = async (req, res, next) => {
 
       if (mongoose.connection.readyState === 1) {
         // 1. Update Appointment
-        const appointment = await Appointment.findOne({ referenceNumber: order_id });
+        const appointment = await Appointment.findOne({ orderId: order_id });
         if (appointment) {
-          appointment.status = 'scheduled'; // Valid enum for Appointment instead of 'confirmed'
-          // Optionally save notes about payment if needed, since other payment fields don't exist
-          appointment.notes = appointment.notes ? appointment.notes + ` | Paid via PayHere: ${paymentId}` : `Paid via PayHere: ${paymentId}`;
+          appointment.paymentStatus = 'paid';
+          appointment.status = 'confirmed';
+          appointment.payherePaymentId = paymentId;
+          appointment.paidAt = new Date();
           await appointment.save();
-          console.log(`   Updated Appointment ${order_id}: status=scheduled`);
+          console.log(`   Updated Appointment ${order_id}: paymentStatus=paid, status=confirmed`);
         }
 
         // 2. Update Application
@@ -442,11 +451,9 @@ export const handlePayHereNotify = async (req, res, next) => {
       const failureStatus = statusCodeStr === '0' ? 'pending' : 'failed';
 
       if (mongoose.connection.readyState === 1) {
-        const appointment = await Appointment.findOne({ referenceNumber: order_id });
+        const appointment = await Appointment.findOne({ orderId: order_id });
         if (appointment) {
-          // Appointment does not have paymentStatus, you could update status to 'cancelled' or similar if needed.
-          // Since it's pending/failed, we just leave it or log it.
-          appointment.notes = appointment.notes ? appointment.notes + ` | Payment ${failureStatus}` : `Payment ${failureStatus}`;
+          appointment.paymentStatus = failureStatus;
           await appointment.save();
         }
 
@@ -502,12 +509,12 @@ export const getOrderByOrderId = async (req, res, next) => {
     }
 
     // 2. Fallback to Appointment
-    const appointment = await Appointment.findOne({ referenceNumber: orderId }).select('referenceNumber status');
+    const appointment = await Appointment.findOne({ orderId }).select('orderId paymentStatus');
     if (appointment) {
       return res.status(200).json({
         success: true,
-        referenceNumber: appointment.referenceNumber,
-        paymentStatus: appointment.status === 'scheduled' ? 'paid' : 'pending', // Hacky fallback since no paymentStatus natively
+        referenceNumber: appointment.orderId,
+        paymentStatus: appointment.paymentStatus,
       });
     }
 

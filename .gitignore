@@ -6,9 +6,3 @@ yarn-debug.log*
 yarn-error.log*
 .idea/
 .vscode/
-
-# Uploaded user documents — must NEVER be committed to version control
-# (NICs, passports, signatures, BRC documents etc.)
-# Files are stored in MongoDB GridFS in production.
-# This folder only exists as a local fallback when DB is offline.
-uploads/

@@ -1,80 +1,9 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import mongoose from 'mongoose';
 import User from '../models/User.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
-
-// @desc    Check if a phone number is registered (used by login flow to decide
-//          whether to send OTP or redirect to sign-up)
-// @route   POST /api/auth/check-phone
-// @access  Public
-export const checkPhone = async (req, res, next) => {
-  const { phone } = req.body;
-  if (!phone) {
-    return res.status(400).json({ success: false, message: 'Phone number is required' });
-  }
-
-  try {
-    const digitsOnly = String(phone).replace(/\D/g, '');
-    const last9 = digitsOnly.slice(-9);
-
-    // 1. Try finding in the App User database
-    const user = await User.findOne({
-      $or: [
-        { phone: phone },
-        { phone: digitsOnly },
-        { phone: last9 },
-        { phone: `0${last9}` },
-        { phone: `+94${last9}` },
-        { phone: `94${last9}` },
-      ],
-    }).select('_id');
-    
-    let registered = !!user;
-
-    // 2. If not found in App Users, check if they are an existing SLT Customer
-    if (!registered) {
-      if (mongoose.connection.readyState === 1) {
-        const Connection = mongoose.models.Connection || mongoose.model('Connection');
-        const match = await Connection.findOne({
-          $or: [
-            { telephone: phone },
-            { telephone: digitsOnly },
-            { telephone: `0${last9}` },
-            { contactNo: phone },
-            { contactNo: digitsOnly },
-            { contactNo: `0${last9}` },
-          ],
-        }).select('_id');
-
-        if (match) {
-          registered = true;
-        } else if (mongoose.models.Application) {
-          const app = await mongoose.models.Application.findOne({
-            $or: [
-              { phone: phone },
-              { phone: digitsOnly },
-              { phone: `0${last9}` },
-              { 'formData.mobileNumber': digitsOnly },
-              { 'formData.mobileNumber': `0${last9}` },
-            ],
-          }).select('_id');
-          if (app) registered = true;
-        }
-      }
-    }
-
-    return res.status(200).json({
-      success: true,
-      registered,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 
 // Helper to generate access token
 const generateAccessToken = (user) => {
@@ -92,34 +21,6 @@ const generateRefreshToken = (user) => {
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d' }
   );
-};
-
-// @desc    Get all users (admin only)
-// @route   GET /api/auth/users
-// @access  Private (Admin)
-export const getUsers = async (req, res, next) => {
-  try {
-    const users = await User.find()
-      .select('name email phone role NIC createdAt')
-      .sort({ createdAt: -1 })
-      .lean();
-
-    res.status(200).json({
-      success: true,
-      count: users.length,
-      users: users.map(u => ({
-        id: u._id,
-        name: u.name,
-        email: u.email,
-        phone: u.phone,
-        role: u.role,
-        NIC: u.NIC,
-        createdAt: u.createdAt,
-      })),
-    });
-  } catch (error) {
-    next(error);
-  }
 };
 
 // @desc    Send OTP to mobile number
@@ -208,11 +109,7 @@ export const verifyOtp = async (req, res, next) => {
 // @route   POST /api/auth/register
 // @access  Public
 export const register = async (req, res, next) => {
-  const {
-    name, email, phone, role, NIC, password,
-    title, dob, gender, nationality, contactNumber,
-    addressLine1, addressLine2, city, district, postalCode, preferredContact
-  } = req.body;
+  const { name, email, phone, role, NIC, password } = req.body;
 
   if (!name || !email || !phone || !NIC || !password) {
     res.status(400);
@@ -236,9 +133,12 @@ export const register = async (req, res, next) => {
 
     // Create user (password will be hashed in model pre-save hook)
     const user = await User.create({
-      name, email, phone, role: role || 'Customer', NIC, password,
-      title, dob, gender, nationality, contactNumber,
-      addressLine1, addressLine2, city, district, postalCode, preferredContact
+      name,
+      email,
+      phone,
+      role: role || 'Customer',
+      NIC,
+      password,
     });
 
     // Generate tokens
@@ -262,17 +162,6 @@ export const register = async (req, res, next) => {
         phone: user.phone,
         role: user.role,
         NIC: user.NIC,
-        title: user.title,
-        dob: user.dob,
-        gender: user.gender,
-        nationality: user.nationality,
-        contactNumber: user.contactNumber,
-        addressLine1: user.addressLine1,
-        addressLine2: user.addressLine2,
-        city: user.city,
-        district: user.district,
-        postalCode: user.postalCode,
-        preferredContact: user.preferredContact,
       },
       accessToken,
       refreshToken,

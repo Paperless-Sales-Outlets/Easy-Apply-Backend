@@ -35,11 +35,7 @@ export const errorHandler = (err, req, res, next) => {
 
   // Mongoose duplicate key
   if (err.code === 11000) {
-    const field = err.keyValue ? Object.keys(err.keyValue)[0] : '';
-    const displayField = field === 'NIC' ? 'NIC / Passport / BR Number' : field;
-    const message = displayField
-      ? `${displayField.charAt(0).toUpperCase() + displayField.slice(1)} is already registered`
-      : 'Duplicate field value entered';
+    const message = 'Duplicate field value entered';
     error = new AppError(message, 400);
   }
 
@@ -60,8 +56,8 @@ export const errorHandler = (err, req, res, next) => {
     error = new AppError(message, 401);
   }
 
-  // Default to res.statusCode (if set) or 500 server error
-  const statusCode = error.statusCode || (res.statusCode && res.statusCode !== 200 ? res.statusCode : 500);
+  // Default to 500 server error
+  const statusCode = error.statusCode || 500;
   const message = error.message || 'Internal server error';
 
   // Don't leak stack trace in production
