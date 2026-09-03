@@ -46,11 +46,22 @@ export const createApplication = async (req, res, next) => {
 
 
     // Process uploaded files
+    // When MongoDB is connected, Multer-GridFS stores the file inside MongoDB
+    // and exposes file.id (the GridFS ObjectId).  We persist a reference URI
+    // so the admin KYC viewer can fetch it via GET /api/files/:id.
+    // When offline (disk fallback), we store the local path as before.
     const uploadedDocuments = {};
 
-    Object.keys(files).forEach((key) => {
-      if (files[key]?.[0]) {
-        uploadedDocuments[key] = `/uploads/documents/${files[key][0].filename}`;
+    (Array.isArray(files) ? files : Object.values(files).flat()).forEach((file) => {
+      if (!file) return;
+      const key = file.fieldname;
+
+      if (file.storageBackend === 'gridfs' && file.id) {
+        // GridFS — store reference ID so it can be streamed back later
+        uploadedDocuments[key] = `gridfs://${file.id}`;
+      } else if (file.filename) {
+        // Disk fallback
+        uploadedDocuments[key] = `/uploads/documents/${file.filename}`;
       }
     });
 
@@ -257,10 +268,11 @@ export const createApplication = async (req, res, next) => {
         10000000 + Math.random() * 90000000
       ).toString();
 
+      const prefix = serviceType === 'customer-request-acceptance' ? 'SR' : 'REQ';
 
       application = {
         _id: `mock_app_${refDigits}`,
-        referenceNumber: `REQ-${refDigits}`,
+        referenceNumber: `${prefix}-${refDigits}`,
         serviceType,
         status: 'pending',
         nic,
@@ -326,7 +338,7 @@ export const getApplicationsByPhone = async (req, res, next) => {
       ],
     })
       .sort({ createdAt: -1 })
-      .select('referenceNumber serviceType status createdAt');
+      .select('referenceNumber serviceType status createdAt formData notes');
 
     res.status(200).json({
       success: true,
@@ -335,6 +347,8 @@ export const getApplicationsByPhone = async (req, res, next) => {
         serviceType: app.serviceType,
         status: app.status,
         createdAt: app.createdAt,
+        formData: app.formData,
+        adminComments: app.notes ? [{ text: app.notes }] : [],
       })),
     });
   } catch (error) {

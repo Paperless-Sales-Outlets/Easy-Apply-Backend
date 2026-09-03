@@ -443,3 +443,36 @@ export const validateGetFormsQuery = [
   query('limit').optional().isInt({ min: 1, max: 200 }).withMessage('Limit must be between 1 and 200'),
   validateRequest,
 ];
+
+
+// Validation for updating office fields (CR Number, Amount Paid, Staff Signature, Appointment Date)
+export const validateOfficeFields = [
+  body('crNumber')
+    .optional()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage('CR Number must be at most 100 characters'),
+  body('amountPaid')
+    .optional()
+    .custom((value) => {
+      if (value === null) return true;
+      if (typeof value === 'string' && value.trim() === '') return true;
+      const num = Number(value);
+      if (isNaN(num) || num < 0) throw new Error('Amount Paid must be a non-negative number');
+      return true;
+    }),
+  body('staffSignature')
+    .optional()
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage('Staff Signature must be at most 200 characters'),
+  body('appointmentDate')
+    .optional()
+    .custom((value) => {
+      if (value === null || value === '') return true;
+      const date = new Date(value);
+      if (isNaN(date.getTime())) throw new Error('Appointment Date must be a valid date');
+      return true;
+    }),
+  validateRequest,
+];
