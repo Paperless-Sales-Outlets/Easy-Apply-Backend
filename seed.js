@@ -318,10 +318,14 @@ const seedDB = async () => {
       },
     ];
 
-    // Insert or update records without creating duplicates
+    // Insert or update records without creating duplicates or unique index conflicts
     for (const connection of sampleConnections) {
+      const query = connection.accountNo
+        ? { $or: [{ accountNo: connection.accountNo }, { telephone: connection.telephone }] }
+        : { telephone: connection.telephone };
+
       await Connection.updateOne(
-        { telephone: connection.telephone },
+        query,
         { $set: connection },
         { upsert: true }
       );
