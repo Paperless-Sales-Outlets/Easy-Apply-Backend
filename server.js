@@ -25,6 +25,7 @@ import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
+import nicRoutes from './routes/nicRoutes.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -274,6 +275,11 @@ app.use(
 app.use(
   '/api/files',
   fileRoutes
+);
+
+app.use(
+  '/api/nic',
+  nicRoutes
 );
 
 
