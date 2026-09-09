@@ -1,4 +1,17 @@
 import mongoose from 'mongoose';
+import dns from 'dns';
+
+// Node's own resolver (not the OS one `nslookup` uses) sometimes ends up
+// pointed at a local/VPN DNS proxy that answers plain A/AAAA lookups but
+// refuses SRV queries — that's what causes `querySrv ECONNREFUSED` on the
+// mongodb+srv:// connection string even though the network is otherwise
+// fine. Forcing a public resolver here fixes SRV lookups without touching
+// OS-wide DNS settings.
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch (error) {
+  console.warn('⚠️ Could not override DNS servers for SRV lookups:', error.message);
+}
 
 const RETRY_DELAY_MS = 15000;
 const LOCAL_FALLBACK_URI = 'mongodb://127.0.0.1:27017/paperlessoutlet';
