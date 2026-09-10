@@ -205,7 +205,7 @@ export const getAllProducts = async (options = {}) => {
     maxPrice,
   } = options;
 
-  const hubUrl = process.env.REACT_APP_PRODUCT_HUB_URL || 'https://product-hub-api-7hkn.onrender.com/templates';
+  const hubUrl = process.env.PRODUCT_HUB_URL || process.env.REACT_APP_PRODUCT_HUB_URL || 'https://dpdlab1.slt.lk:703/api/templates';
 
   // 1. Try fetching live templates from Product Hub
   const liveHubProducts = await fetchLiveProductHubTemplates();

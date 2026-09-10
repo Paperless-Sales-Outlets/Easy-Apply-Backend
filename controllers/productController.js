@@ -32,7 +32,7 @@ export const getAllProducts = async (req, res, next) => {
       message: 'Products retrieved successfully',
       data: products,
       source: source || 'LOCAL_DATABASE',
-      hubUrl: hubUrl || process.env.REACT_APP_PRODUCT_HUB_URL || 'https://product-hub-api-7hkn.onrender.com/templates',
+      hubUrl: hubUrl || process.env.PRODUCT_HUB_URL || process.env.REACT_APP_PRODUCT_HUB_URL || 'https://dpdlab1.slt.lk:703/api/templates',
       pagination: {
         page: pagination.page || 1,
         limit: pagination.limit || 10,
