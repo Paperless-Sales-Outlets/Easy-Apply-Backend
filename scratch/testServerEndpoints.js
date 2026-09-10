@@ -1,7 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import paymentRoutes from '../routes/paymentRoutes.js';
-import { errorHandler } from '../middleware/errorMiddleware.js';
+import { errorHandler } from '../middleware/errorHandler.js';
 import Appointment from '../models/Appointment.js';
 import Application from '../models/Application.js';
 import crypto from 'crypto';
