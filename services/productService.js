@@ -111,31 +111,32 @@ export const fetchLiveProductHubTemplates = async () => {
     }
 
     const json = await res.json();
-    const rawItems = json.data || (Array.isArray(json) ? json : []);
+    const rawItems = json.items || json.data || (Array.isArray(json) ? json : []);
 
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
       console.warn(`\x1b[33m[Product Hub API] Connected (${elapsed}ms) but 0 templates found.\x1b[0m`);
       return null;
     }
 
-    console.log(`\x1b[32m[Product Hub API] Connected Successfully!\x1b[0m Fetched \x1b[1m${rawItems.length} live templates\x1b[0m in \x1b[33m${elapsed}ms\x1b[0m from \x1b[34m${hubUrl}\x1b[0m`);
+    console.log(`\x1b[32m[Product Hub API] Connected Successfully!\x1b[0m Fetched \x1b[1m${rawItems.length} live products\x1b[0m in \x1b[33m${elapsed}ms\x1b[0m from \x1b[34m${hubUrl}\x1b[0m`);
 
     return rawItems.map((item) => {
       const t = item.template || item;
       const fv = t.fieldValues || {};
       const dataObj = t.data || {};
+      const attr = t.attributes || {};
 
       // Name & Title
       const name = t.productName || t.name || dataObj.productName || 'SLT Package';
 
       // Pricing
-      const price = Number(t.price ?? dataObj.price ?? fv['Monthly Rental'] ?? 0);
-      const installationFee = Number(dataObj['Installation Charge'] ?? dataObj.installationFee ?? fv['Installation Fee'] ?? 2500);
+      const price = Number(t.price ?? dataObj.price ?? fv['Monthly Rental'] ?? attr['Monthly Rental'] ?? attr.price ?? 0);
+      const installationFee = Number(dataObj['Installation Charge'] ?? dataObj.installationFee ?? fv['Installation Fee'] ?? attr['Installation Fee'] ?? 2500);
 
       // Category detection
-      let category = t.category || dataObj.category || 'Broadband';
+      let category = t.category || dataObj.category || attr.category || 'Broadband';
       const lowerName = name.toLowerCase();
-      const tech = (dataObj['Connection Technology'] || '').toLowerCase();
+      const tech = (dataObj['Connection Technology'] || attr['Connection Technology'] || '').toLowerCase();
       if (lowerName.includes('peo') || lowerName.includes('tv')) category = 'PEO TV';
       else if (lowerName.includes('voice') || lowerName.includes('megaline') || lowerName.includes('phone')) category = 'Voice';
       else if (lowerName.includes('lte') || lowerName.includes('4g') || tech.includes('lte')) category = 'LTE Broadband';
