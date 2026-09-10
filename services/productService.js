@@ -7,27 +7,101 @@ import dotenv from 'dotenv';
  * Handles all product-related business logic
  */
 
+// In-memory token cache for Product Hub
+let cachedProductHubToken = null;
+let tokenExpiresAt = 0;
+
+/**
+ * Automatically retrieves or refreshes the Product Hub JWT token using service credentials.
+ */
+export const getProductHubToken = async (forceRefresh = false) => {
+  dotenv.config({ override: true });
+
+  const authUrl = process.env.PRODUCT_HUB_AUTH_URL || 'https://dpdlab1.slt.lk:703/api/users/login';
+  const email = process.env.PRODUCT_HUB_EMAIL || 'user@slt.com';
+  const password = process.env.PRODUCT_HUB_PASSWORD || 'User@12345';
+  const staticToken = process.env.PRODUCT_HUB_TOKEN || process.env.REACT_APP_PRODUCT_HUB_TOKEN;
+
+  const now = Date.now();
+  if (!forceRefresh && cachedProductHubToken && tokenExpiresAt > now + 60 * 1000) {
+    return cachedProductHubToken;
+  }
+
+  try {
+    console.log(`\x1b[36m[Product Hub Auth]\x1b[0m Authenticating with \x1b[33m${authUrl}\x1b[0m as \x1b[35m${email}\x1b[0m ...`);
+    const res = await fetch(authUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!res.ok) {
+      console.warn(`\x1b[31m[Product Hub Auth] Login failed (Status: ${res.status} ${res.statusText})\x1b[0m`);
+      return staticToken || null;
+    }
+
+    const data = await res.json();
+    const token = data.token || data.accessToken || data.jwt;
+
+    if (token) {
+      cachedProductHubToken = token;
+      try {
+        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
+        tokenExpiresAt = payload.exp ? payload.exp * 1000 : now + 24 * 60 * 60 * 1000;
+      } catch (e) {
+        tokenExpiresAt = now + 24 * 60 * 60 * 1000;
+      }
+      console.log(`\x1b[32m[Product Hub Auth] Token retrieved & cached successfully!\x1b[0m (Valid until ${new Date(tokenExpiresAt).toLocaleTimeString()})`);
+      return token;
+    }
+
+    return staticToken || null;
+  } catch (err) {
+    console.warn(`\x1b[31m[Product Hub Auth] Error acquiring token:\x1b[0m`, err.message);
+    return staticToken || null;
+  }
+};
+
 /**
  * Fetches and normalizes live templates from Product Info Hub API
  */
 export const fetchLiveProductHubTemplates = async () => {
   dotenv.config({ override: true });
-  const hubUrl = process.env.REACT_APP_PRODUCT_HUB_URL || 'https://dpdlab1.slt.lk:703/api/templates';
-  const hubToken = process.env.REACT_APP_PRODUCT_HUB_TOKEN;
+  const hubUrl = process.env.PRODUCT_HUB_URL || process.env.REACT_APP_PRODUCT_HUB_URL || 'https://dpdlab1.slt.lk:703/api/templates';
 
   if (!hubUrl) return null;
 
+  let token = await getProductHubToken();
   const startTime = Date.now();
   console.log(`\x1b[36m[Product Hub API]\x1b[0m Connecting to: \x1b[33m${hubUrl}\x1b[0m ...`);
 
   try {
-    const res = await fetch(hubUrl, {
+    let res = await fetch(hubUrl, {
       headers: {
-        'Authorization': hubToken ? `Bearer ${hubToken}` : '',
+        'Authorization': token ? `Bearer ${token}` : '',
         'Accept': 'application/json',
       },
       signal: AbortSignal.timeout(6000),
     });
+
+    // If unauthorized / token expired, refresh token and retry once
+    if (res.status === 401) {
+      console.warn(`\x1b[33m[Product Hub API] Received 401 Unauthorized. Refreshing token & retrying...\x1b[0m`);
+      token = await getProductHubToken(true);
+      if (token) {
+        res = await fetch(hubUrl, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json',
+          },
+          signal: AbortSignal.timeout(6000),
+        });
+      }
+    }
 
     const elapsed = Date.now() - startTime;
 
