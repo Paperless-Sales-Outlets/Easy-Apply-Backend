@@ -36,9 +36,54 @@ const seedDB = async () => {
         status: 'active',
         packageName: 'Fibre Broadband 100 Mbps',
         speed: '100 Mbps',
+        monthlyPrice: 1500,
+        outstandingBalance: 0,
+      },
+
+      // ==============================
+      // Email Testing Connections
+      // ==============================
+      {
+        telephone: '0710001111',
+        accountNo: 'EMAIL-TEST-001',
+        fullName: 'Wehan Nimsara',
+        nic: '199512345678',
+        contactNo: '0710001111',
+        addressLine1: 'Test Address 1',
+        addressLine2: 'Colombo 03', // Colombo address for Loop Check
+        location: {
+          lat: 6.9271,
+          lng: 79.8612,
+        },
+        customerType: 'home',
+        email: 'wehannimsara@gmail.com',
+        status: 'active',
+        packageName: 'Fibre Broadband 100 Mbps',
+        speed: '100 Mbps',
         monthlyPrice: 4490,
         outstandingBalance: 0,
       },
+      {
+        telephone: '0710002222',
+        accountNo: 'EMAIL-TEST-002',
+        fullName: 'Vehan Test',
+        nic: '199512345679',
+        contactNo: '0710002222',
+        addressLine1: 'Test Address 2',
+        addressLine2: 'Colombo 01', // Colombo address for Loop Check
+        location: {
+          lat: 6.9319,
+          lng: 79.8478,
+        },
+        customerType: 'home',
+        email: 'vehan0911@gmail.com',
+        status: 'active',
+        packageName: '300 Mbps Fibre Broadband',
+        speed: '300 Mbps',
+        monthlyPrice: 6990,
+        outstandingBalance: 0,
+      },
+
 
       {
         telephone: '0112345678',
