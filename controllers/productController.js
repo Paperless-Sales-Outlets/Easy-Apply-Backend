@@ -25,14 +25,23 @@ export const getAllProducts = async (req, res, next) => {
       maxPrice: req.query.maxPrice || req.query.price,
     };
 
-    const { products, pagination } = await productService.getAllProducts(options);
+    const { products, pagination, source, hubUrl } = await productService.getAllProducts(options);
 
-    return paginatedResponse(
-      res,
-      'Products retrieved successfully',
-      products,
-      pagination
-    );
+    return res.status(200).json({
+      success: true,
+      message: 'Products retrieved successfully',
+      data: products,
+      source: source || 'LOCAL_DATABASE',
+      hubUrl: hubUrl || process.env.REACT_APP_PRODUCT_HUB_URL || 'https://product-hub-api-7hkn.onrender.com/templates',
+      pagination: {
+        page: pagination.page || 1,
+        limit: pagination.limit || 10,
+        total: pagination.total || 0,
+        totalPages: Math.ceil((pagination.total || 0) / (pagination.limit || 10)),
+        hasNextPage: (pagination.page || 1) < Math.ceil((pagination.total || 0) / (pagination.limit || 10)),
+        hasPrevPage: (pagination.page || 1) > 1,
+      },
+    });
   } catch (error) {
     next(error);
   }
