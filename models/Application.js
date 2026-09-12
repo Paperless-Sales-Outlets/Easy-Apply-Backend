@@ -77,6 +77,18 @@ const applicationSchema = new mongoose.Schema(
       staffSignature: { type: String, trim: true, default: '' },
       appointmentDate: { type: Date, default: null },
     },
+    consentHub: {
+      partyId: { type: String, trim: true },
+      consentIds: [{ type: String, trim: true }],
+      privacyNoticeId: { type: String, trim: true },
+      privacyNoticeVersion: { type: String, trim: true },
+      syncStatus: {
+        type: String,
+        enum: ['pending', 'synced', 'failed'],
+        default: 'pending'
+      },
+      syncedAt: { type: Date }
+    },
   },
   {
     timestamps: true,

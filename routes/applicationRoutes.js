@@ -15,6 +15,7 @@ import {
 } from '../middleware/validationMiddleware.js';
 
 import { handleFileUploads } from '../middleware/uploadMiddleware.js';
+import { optionalAuth } from '../middleware/authMiddleware.js';
 
 
 const router = express.Router();
@@ -57,6 +58,7 @@ router.get(
 // - JSON formData payload
 router.post(
   '/',
+  optionalAuth,
   handleFileUploads,
   parseMultipartFormData,
   validateApplicationSubmission,

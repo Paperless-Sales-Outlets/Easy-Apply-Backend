@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
+import { captureConsent } from '../services/consentHubService.js';
 
 // @desc    Submit a new service application
 // @route   POST /api/applications
@@ -287,6 +288,59 @@ export const createApplication = async (req, res, next) => {
       );
 
     }
+
+    // =====================================
+    // ConsentHub Phase 1 Sync
+    // =====================================
+    if (serviceType === 'new-connection' && formData.consentInfo) {
+      try {
+        const consentPayload = {
+          sourceSystem: 'EASYAPPLY',
+          externalCustomerId: req.user ? req.user._id.toString() : 'ANONYMOUS',
+          applicationReference: application.referenceNumber,
+          serviceType: 'new-connection',
+          customer: {
+            name: formData.nameFull || formData.fullName || formData.contactName || '',
+            phone: verifiedPhone,
+            email: formData.email || formData.emailAddress || ''
+          },
+          privacyNoticeId: formData.consentInfo.privacyNoticeId,
+          privacyNoticeVersion: formData.consentInfo.privacyNoticeVersion,
+          decisions: formData.consentInfo.decisions
+        };
+
+        const idempotencyKey = `EASYAPPLY-${application.referenceNumber}`;
+        const consentRes = await captureConsent(consentPayload, idempotencyKey);
+        
+        const consentData = {
+          partyId: consentRes.partyId,
+          consentIds: consentRes.consentIds || [],
+          privacyNoticeId: formData.consentInfo.privacyNoticeId,
+          privacyNoticeVersion: formData.consentInfo.privacyNoticeVersion,
+          syncStatus: 'synced',
+          syncedAt: new Date()
+        };
+
+        application.consentHub = consentData;
+
+        if (mongoose.connection.readyState === 1 && typeof application.save === 'function') {
+          await application.save();
+        }
+      } catch (consentErr) {
+        console.error('[applicationController] ConsentHub sync failed:', consentErr.message);
+        
+        application.consentHub = {
+          privacyNoticeId: formData.consentInfo.privacyNoticeId,
+          privacyNoticeVersion: formData.consentInfo.privacyNoticeVersion,
+          syncStatus: 'failed'
+        };
+        
+        if (mongoose.connection.readyState === 1 && typeof application.save === 'function') {
+          await application.save();
+        }
+      }
+    }
+
 
 
     // ─────────────────────────────────────────────────────────

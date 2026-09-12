@@ -25,6 +25,7 @@ import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
+import consentRoutes from './routes/consentRoutes.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -275,6 +276,12 @@ app.use(
   '/api/files',
   fileRoutes
 );
+
+app.use(
+  '/api/consent',
+  consentRoutes
+);
+
 
 
 
