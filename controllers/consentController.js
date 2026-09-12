@@ -19,10 +19,15 @@ export const getConsentConfig = async (req, res, next) => {
     });
   } catch (error) {
     // If ConsentHub fails, we shouldn't crash the whole wizard, maybe just return a fallback or error
-    console.error('[consentController] getConsentConfig error:', error.message);
-    res.status(502).json({
+    console.error('[consentController] getConsentConfig error:', error.message, error.upstreamBody ? `Body: ${error.upstreamBody}` : '');
+    
+    // Preserve actual upstream status (e.g. 404, 429) instead of opaque 502
+    const statusCode = error.status || 502;
+    
+    res.status(statusCode).json({
       success: false,
-      error: 'Failed to retrieve privacy notice configuration from ConsentHub.'
+      error: 'Failed to retrieve privacy notice configuration from ConsentHub.',
+      details: error.message
     });
   }
 };
