@@ -78,3 +78,28 @@ export const authorize = (...roles) => {
     next();
   };
 };
+
+export const integrationAuth = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401);
+    return next(new Error('Missing integration service token'));
+  }
+
+  const token = authHeader.split(' ')[1];
+  const validToken = process.env.CONSENTHUB_INTEGRATION_SERVICE_TOKEN;
+
+  if (!validToken) {
+    console.error('CONSENTHUB_INTEGRATION_SERVICE_TOKEN is not configured in the environment');
+    res.status(500);
+    return next(new Error('Integration not configured correctly'));
+  }
+
+  if (token !== validToken) {
+    res.status(403);
+    return next(new Error('Invalid integration service token'));
+  }
+
+  next();
+};
+

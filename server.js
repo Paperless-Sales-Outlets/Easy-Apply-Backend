@@ -26,6 +26,7 @@ import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
 import consentRoutes from './routes/consentRoutes.js';
+import integrationRoutes from './routes/integrationRoutes.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -280,6 +281,11 @@ app.use(
 app.use(
   '/api/consent',
   consentRoutes
+);
+
+app.use(
+  '/api/integrations',
+  integrationRoutes
 );
 
 
