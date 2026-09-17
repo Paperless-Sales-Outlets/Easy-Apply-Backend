@@ -1,4 +1,14 @@
+import dns from 'dns';
 import mongoose from 'mongoose';
+
+// Atlas "mongodb+srv://" URIs need an SRV lookup through Node's own resolver.
+// On some Windows machines Node can't read the system DNS servers and falls
+// back to 127.0.0.1, so the lookup fails with ECONNREFUSED. Only in that case,
+// resolve through public DNS instead.
+const isLoopback = (server) => /^(127\.|::1$|\[::1\])/.test(server);
+if (dns.getServers().every(isLoopback)) {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+}
 
 const RETRY_DELAY_MS = 15000;
 const LOCAL_FALLBACK_URI = 'mongodb://127.0.0.1:27017/paperlessoutlet';
