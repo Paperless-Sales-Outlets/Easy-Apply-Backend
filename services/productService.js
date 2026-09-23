@@ -118,55 +118,69 @@ export const fetchLiveProductHubTemplates = async () => {
       return null;
     }
 
-    console.log(`\x1b[32m[Product Hub API] Connected Successfully!\x1b[0m Fetched \x1b[1m${rawItems.length} live products\x1b[0m in \x1b[33m${elapsed}ms\x1b[0m from \x1b[34m${hubUrl}\x1b[0m`);
-
-    return rawItems.map((item) => {
-      const t = item.template || item;
+    // Helper: Normalize single product node
+    const normalizeProductNode = (t, parentCategory) => {
       const fv = t.fieldValues || {};
       const dataObj = t.data || {};
       const attr = t.attributes || {};
 
-      // Name & Title
       const name = t.productName || t.name || dataObj.productName || 'SLT Package';
-
-      // Pricing
       const price = Number(t.price ?? dataObj.price ?? fv['Monthly Rental'] ?? attr['Monthly Rental'] ?? attr.price ?? 0);
-      const installationFee = Number(dataObj['Installation Charge'] ?? dataObj.installationFee ?? fv['Installation Fee'] ?? attr['Installation Fee'] ?? 2500);
+      const installationFee = Number(dataObj['Installation Charge'] ?? dataObj.installationFee ?? fv['Installation Fee'] ?? attr['Installation Fee'] ?? (price > 5000 ? 0 : 2500));
 
-      // Category detection
-      let category = t.category || dataObj.category || attr.category || 'Broadband';
-      const lowerName = name.toLowerCase();
-      const tech = (dataObj['Connection Technology'] || attr['Connection Technology'] || '').toLowerCase();
-      if (lowerName.includes('peo') || lowerName.includes('tv')) category = 'PEO TV';
-      else if (lowerName.includes('voice') || lowerName.includes('megaline') || lowerName.includes('phone')) category = 'Voice';
-      else if (lowerName.includes('lte') || lowerName.includes('4g') || tech.includes('lte')) category = 'LTE Broadband';
-      else if (lowerName.includes('fibre') || lowerName.includes('fiber') || tech.includes('ftth')) category = 'Broadband';
+      // Category detection with parent hierarchy awareness
+      const contextStr = `${parentCategory || ''} ${t.category || ''} ${dataObj.category || ''} ${name}`.toLowerCase();
+      let category = 'Broadband';
+      if (contextStr.includes('peo') || contextStr.includes('tv')) {
+        category = 'PEO TV';
+      } else if (contextStr.includes('voice') || contextStr.includes('megaline') || contextStr.includes('phone')) {
+        category = 'Voice';
+      } else if (contextStr.includes('lte') || contextStr.includes('4g')) {
+        category = 'LTE Broadband';
+      } else if (contextStr.includes('fibre') || contextStr.includes('fiber') || contextStr.includes('broadband')) {
+        category = 'Fibre Broadband';
+      } else if (parentCategory) {
+        category = parentCategory;
+      }
 
       // Speed detection
       const speedStr = dataObj['Download Speed'] || t.speed;
       const speedMatch = speedStr ? speedStr : name.match(/(\d+)\s*(?:mbps|gbps)/i)?.[0];
-      const speed = speedMatch ? (speedMatch.includes('Mbps') || speedMatch.includes('Gbps') ? speedMatch : `${speedMatch} Mbps`) : null;
+      const speed = speedMatch ? (speedMatch.includes('Mbps') || speedMatch.includes('Gbps') ? speedMatch : `${speedMatch} Mbps`) : (category === 'PEO TV' ? 'HD TV' : category === 'Voice' ? 'Voice' : null);
 
-      // Image URL
-      const img = fv['Image']?.url || fv['Image 2']?.url || t.image || dataObj.image || '';
+      // Default high quality SLT category visuals
+      let defaultImg = 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?w=800&auto=format&fit=crop&q=80';
+      if (category === 'PEO TV') defaultImg = 'https://images.unsplash.com/photo-1593359677879-a4bb92f829d1?w=800&auto=format&fit=crop&q=80';
+      else if (category === 'Voice') defaultImg = 'https://images.unsplash.com/photo-1534536281715-e28d76689b4d?w=800&auto=format&fit=crop&q=80';
+
+      const img = fv['Image']?.url || fv['Image 2']?.url || t.image || dataObj.image || defaultImg;
 
       // Description & Features
       const description = t.description || dataObj.description || `${name} by SLTMobitel. High-speed connectivity & digital entertainment.`;
 
       const features = [];
-      if (speed) features.push(`Download Speed: ${speed}`);
+      if (speed && speed !== 'Voice' && speed !== 'HD TV') features.push(`Download Speed: ${speed}`);
       if (dataObj['Upload Speed']) features.push(`Upload Speed: ${dataObj['Upload Speed']}`);
       if (dataObj['Data Allowance']) features.push(`Data Allowance: ${dataObj['Data Allowance']}`);
       if (dataObj['Router Model']) features.push(`Router: ${dataObj['Router Model']}`);
-      if (dataObj['Voice Service Included'] === 'Yes') features.push('Voice Landline Included');
+      if (category === 'PEO TV') {
+        features.push('Live HD Channels', '7-Day Catch-up TV', 'Rewind & Pause Live TV');
+      } else if (category === 'Voice') {
+        features.push('Unlimited Local SLT Calls', 'Crystal Clear Voice Quality', 'Free Caller ID');
+      }
+      if (t.description && t.description.trim()) {
+        features.push(t.description.trim());
+      }
       if (features.length === 0) {
         features.push('High Reliability SLT Network', 'Unlimited Entertainment & Connectivity', '24/7 SLTMobitel Support');
       }
 
+      const id = t._id || t.id || t.templateID || `slt-${Math.random().toString(36).substring(2, 9)}`;
+
       return {
-        _id: t._id || t.id || t.templateID,
-        id: t._id || t.id || t.templateID,
-        productId: t._id || t.id || t.templateID,
+        _id: id,
+        id: id,
+        productId: id,
         productCode: `SLT-${name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()}`,
         name,
         productName: name,
@@ -177,13 +191,49 @@ export const fetchLiveProductHubTemplates = async () => {
         price,
         installationFee,
         availableQuantity: 999,
-        popular: price > 5000,
+        popular: price > 3500 || name.toLowerCase().includes('gold') || name.toLowerCase().includes('family'),
         status: t.lifecycleStatus?.toLowerCase() === 'retired' ? 'inactive' : 'active',
         image: img,
-        features,
+        features: [...new Set(features)].slice(0, 5),
         tmfOffering: t['@type'] === 'ProductOffering' ? t : undefined,
       };
-    });
+    };
+
+    // Helper: Recursively flatten arbitrary tree hierarchy
+    const flattenHierarchy = (nodes, parentCategory = null) => {
+      if (!Array.isArray(nodes) || nodes.length === 0) return [];
+      const results = [];
+
+      for (const item of nodes) {
+        const t = item.template || item;
+        const nodeName = t.productName || t.name || t.data?.productName || 'SLT Package';
+        const currentCategory = parentCategory || nodeName;
+        const hasChildren = Array.isArray(item.children) && item.children.length > 0;
+        const hasValidPrice = t.price !== null && t.price !== undefined && t.price !== '' && Number(t.price) > 0;
+
+        if (hasChildren) {
+          // Recurse into children passing current node as category
+          const childProducts = flattenHierarchy(item.children, currentCategory);
+          results.push(...childProducts);
+
+          // If the parent node itself is also a purchasable standalone product, include it
+          if (hasValidPrice) {
+            results.push(normalizeProductNode(t, currentCategory));
+          }
+        } else {
+          // Leaf product node
+          results.push(normalizeProductNode(t, currentCategory));
+        }
+      }
+
+      return results;
+    };
+
+    const flattenedProducts = flattenHierarchy(rawItems);
+
+    console.log(`\x1b[32m[Product Hub API] Connected Successfully!\x1b[0m Parsed \x1b[1m${flattenedProducts.length} live products\x1b[0m from hierarchy in \x1b[33m${elapsed}ms\x1b[0m (from ${rawItems.length} root categories)`);
+
+    return flattenedProducts;
   } catch (err) {
     console.warn(`\x1b[31m[Product Hub API] Live fetch error: ${err.message}\x1b[0m`);
     return null;
@@ -433,15 +483,114 @@ export const deleteProduct = async (productId) => {
   return product;
 };
 
+// In-memory cache for single product specifications
+const productDetailsCache = new Map();
+
+/**
+ * Fetch deep single product specifications, fixed fields, features, and tables from Product Info Hub API.
+ * Endpoint: https://dpdlab1.slt.lk:703/public-api/v1/integration/products/{productId}
+ */
+export const fetchProductDetailsFromHub = async (productId) => {
+  if (!productId) return null;
+
+  // Check cache (TTL 10 mins)
+  const cached = productDetailsCache.get(productId);
+  if (cached && Date.now() - cached.timestamp < 10 * 60 * 1000) {
+    return cached.data;
+  }
+
+  const detailUrl = `https://dpdlab1.slt.lk:703/public-api/v1/integration/products/${productId}`;
+  console.log(`\x1b[36m[Product Hub Detail API]\x1b[0m Fetching specs for product \x1b[33m${productId}\x1b[0m from \x1b[35m${detailUrl}\x1b[0m ...`);
+
+  try {
+    const res = await fetch(detailUrl, {
+      headers: {
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      console.log(`\x1b[32m[Product Hub Detail API] Successfully retrieved specifications for ${json.product?.productName || productId} (${json.tables?.length || 0} tables)\x1b[0m`);
+      const payload = {
+        success: true,
+        source: 'LIVE_PRODUCT_HUB',
+        product: json.product,
+        tables: json.tables || [],
+      };
+      productDetailsCache.set(productId, { timestamp: Date.now(), data: payload });
+      return payload;
+    } else {
+      console.warn(`\x1b[33m[Product Hub Detail API] Product specs not found or in design (Status: ${res.status})\x1b[0m`);
+      return {
+        success: false,
+        source: 'NOTICE',
+        message: 'Network Notice: Detailed specifications currently in design or unavailable from Product Info Hub.',
+        data: null,
+      };
+    }
+  } catch (err) {
+    console.warn(`\x1b[31m[Product Hub Detail API] Network error: ${err.message}\x1b[0m`);
+    return {
+      success: false,
+      source: 'NETWORK_ERROR',
+      message: `Network Notice: Unable to connect to Product Info Hub (${err.message}).`,
+      data: null,
+    };
+  }
+};
+
+/**
+ * Get product details by ID (Tries Hub Detail API first, falls back with clean notice)
+ */
+export const getProductDetails = async (id) => {
+  // 1. Live Hub Query
+  const hubResult = await fetchProductDetailsFromHub(id);
+  if (hubResult && hubResult.success) {
+    return hubResult;
+  }
+
+  // 2. Fallback Notice (Preserving reference fallback structure commented as requested)
+  /*
+  const FALLBACK_PRODUCT_SPEC_REFERENCE = {
+    product: {
+      id: id,
+      productName: 'SLT High-Speed Connection',
+      category: 'Broadband',
+      price: 2990,
+      monthlyPrice: 2990,
+      fixedFields: [
+        { name: 'Commitment Period', type: 'Fixed', value: '1 Year' },
+        { name: 'Applicable Tax Rate', type: 'Fixed', value: '42.02%' },
+        { name: 'Early Termination Fee', type: 'Fixed', value: '2500' }
+      ],
+      features: { 'Standard Support': '24/7' },
+      tables: []
+    }
+  };
+  */
+
+  return {
+    success: false,
+    source: hubResult?.source || 'NOTICE',
+    message: hubResult?.message || 'Network Notice: Detailed specifications currently in design or unavailable from Product Info Hub.',
+    data: null,
+  };
+};
+
 export default {
   getAllProducts,
   getProductsByCategory,
   searchProducts,
   getProductById,
   getProductByCode,
+  getProductDetails,
+  fetchProductDetailsFromHub,
   checkProductAvailability,
   createProduct,
   updateProduct,
   deleteProduct,
 };
+
 

@@ -101,6 +101,21 @@ export const getProductById = async (req, res, next) => {
 };
 
 /**
+ * @desc    Get detailed product specifications, fixed fields, and tables from Product Info Hub
+ * @route   GET /api/products/:id/details
+ * @access  Public
+ */
+export const getProductDetails = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const details = await productService.getProductDetails(id);
+    return res.status(200).json(details);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * @desc    Get a single product by product code
  * @route   GET /api/products/code/:code
  * @access  Public

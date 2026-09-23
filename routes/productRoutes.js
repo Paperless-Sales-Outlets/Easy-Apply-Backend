@@ -40,6 +40,13 @@ router.get('/code/:code', productController.getProductByCode);
 router.get('/:id', productController.getProductById);
 
 /**
+ * @route   GET /api/products/:id/details
+ * @desc    Get deep product specs and tables from Product Info Hub
+ * @access  Public
+ */
+router.get('/:id/details', productController.getProductDetails);
+
+/**
  * @route   POST /api/products
  * @desc    Create a new product
  * @access  Private/Admin
