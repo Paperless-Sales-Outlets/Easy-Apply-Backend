@@ -6,6 +6,7 @@ import {
   getApplicationsByPhone,
   lookupConnection,
   lookupPackage,
+  checkLoopAvailability,
 } from '../controllers/applicationController.js';
 
 import {
@@ -46,6 +47,13 @@ router.get(
 router.get(
   '/lookup-package',
   lookupPackage
+);
+
+
+// Public route for checking service loop availability
+router.post(
+  '/check-loop',
+  checkLoopAvailability
 );
 
 

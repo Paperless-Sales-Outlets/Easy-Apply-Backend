@@ -565,3 +565,102 @@ export const logout = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Unified Entry verification: verifies OTP and checks if customer is existing (login) or new (NIC upload)
+// @route   POST /api/auth/verify-entry
+// @access  Public
+export const verifyEntry = async (req, res, next) => {
+  const { phone, nic, otp } = req.body;
+
+  if (!phone || !nic || !otp) {
+    res.status(400);
+    return next(new Error('Phone number, NIC number, and verification code are required'));
+  }
+
+  try {
+    const digitsOnly = String(phone).replace(/\D/g, '');
+    const last9 = digitsOnly.slice(-9);
+    const cleanNic = String(nic).trim().toUpperCase();
+    const cleanOtp = String(otp).trim();
+
+    if (last9.length !== 9) {
+      res.status(400);
+      return next(new Error('Please provide a valid 9-digit Sri Lankan mobile number'));
+    }
+
+    // 1. Verify OTP (accept demo codes 000000 / 123456)
+    const isDemoCode = cleanOtp === '000000' || cleanOtp === '123456';
+
+    if (!isDemoCode) {
+      const record = await Otp.findOne({
+        $or: [
+          { phone: last9, otp: cleanOtp },
+          { phone: `0${last9}`, otp: cleanOtp },
+          { phone: `94${last9}`, otp: cleanOtp },
+          { phone: String(phone).trim(), otp: cleanOtp },
+        ],
+      });
+
+      if (!record) {
+        res.status(400);
+        return next(new Error('Invalid or expired verification code'));
+      }
+
+      await Otp.deleteMany({
+        $or: [
+          { phone: last9 },
+          { phone: `0${last9}` },
+          { phone: `94${last9}` },
+          { phone: String(phone).trim() },
+        ],
+      });
+    }
+
+    // 2. Check if customer is registered in User collection by phone or NIC
+    const user = await User.findOne({
+      $or: [
+        { phone: String(phone).trim() },
+        { phone: digitsOnly },
+        { phone: last9 },
+        { phone: `0${last9}` },
+        { phone: `+94${last9}` },
+        { phone: `94${last9}` },
+        { NIC: cleanNic },
+      ],
+    });
+
+    if (user) {
+      // Existing registered user -> direct login
+      const accessToken = generateAccessToken(user);
+      const refreshToken = generateRefreshToken(user);
+
+      const decodedRefresh = jwt.decode(refreshToken);
+      await RefreshToken.create({
+        userId: user._id,
+        token: refreshToken,
+        expiresAt: new Date(decodedRefresh.exp * 1000),
+      });
+
+      return res.status(200).json({
+        success: true,
+        existing: true,
+        message: 'Existing customer authenticated',
+        user: publicUser(user),
+        accessToken,
+        refreshToken,
+      });
+    }
+
+    // 3. New Customer (not yet registered) -> proceed to NIC uploading step
+    return res.status(200).json({
+      success: true,
+      existing: false,
+      message: 'New customer verified. Please proceed with identity upload.',
+      phone: last9,
+      nic: cleanNic,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

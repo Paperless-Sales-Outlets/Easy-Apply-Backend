@@ -9,6 +9,7 @@ import {
   getUsers,
   checkPhone,
   otpLogin,
+  verifyEntry,
   publicUser,
 } from '../controllers/authController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
@@ -18,6 +19,7 @@ const router = express.Router();
 // Public routes
 router.post('/send-otp', sendOtp);
 router.post('/verify-otp', verifyOtp);
+router.post('/verify-entry', verifyEntry);
 router.post('/register', register);
 router.post('/login', login);
 router.post('/otp-login', otpLogin);

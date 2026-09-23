@@ -125,8 +125,8 @@ export const fetchLiveProductHubTemplates = async () => {
       const attr = t.attributes || {};
 
       const name = t.productName || t.name || dataObj.productName || 'SLT Package';
-      const price = Number(t.price ?? dataObj.price ?? fv['Monthly Rental'] ?? attr['Monthly Rental'] ?? attr.price ?? 0);
-      const installationFee = Number(dataObj['Installation Charge'] ?? dataObj.installationFee ?? fv['Installation Fee'] ?? attr['Installation Fee'] ?? (price > 5000 ? 0 : 2500));
+      const rawPrice = t.monthlyPrice || t.price || dataObj.monthlyPrice || dataObj.price || fv['Monthly Rental'] || fv['Package Monthly Rental'] || attr['Monthly Rental'] || attr.price;
+      let price = Number(rawPrice) || 0;
 
       // Category detection with parent hierarchy awareness
       const contextStr = `${parentCategory || ''} ${t.category || ''} ${dataObj.category || ''} ${name}`.toLowerCase();
@@ -142,6 +142,20 @@ export const fetchLiveProductHubTemplates = async () => {
       } else if (parentCategory) {
         category = parentCategory;
       }
+
+      // Fallback tariff pricing for PEO TV if price was 0 or unassigned
+      if (price === 0 && category === 'PEO TV') {
+        const lowerName = name.toLowerCase();
+        if (lowerName.includes('silver plus')) price = 1375;
+        else if (lowerName.includes('silver')) price = 1125;
+        else if (lowerName.includes('family')) price = 1625;
+        else if (lowerName.includes('entertainment')) price = 1875;
+        else if (lowerName.includes('gold')) price = 2100;
+        else if (lowerName.includes('titanium')) price = 3890;
+        else if (lowerName.includes('starter') || lowerName.includes('basic')) price = 1490;
+      }
+
+      const installationFee = Number(dataObj['Installation Charge'] ?? dataObj.installationFee ?? fv['Installation Fee'] ?? attr['Installation Fee'] ?? (price > 5000 ? 0 : 2500));
 
       // Speed detection
       const speedStr = dataObj['Download Speed'] || t.speed;
@@ -159,6 +173,11 @@ export const fetchLiveProductHubTemplates = async () => {
       const description = t.description || dataObj.description || `${name} by SLTMobitel. High-speed connectivity & digital entertainment.`;
 
       const features = [];
+      if (t.features && typeof t.features === 'object' && !Array.isArray(t.features)) {
+        if (t.features['No of Channels']) {
+          features.push(`${t.features['No of Channels']}+ Live TV Channels`);
+        }
+      }
       if (speed && speed !== 'Voice' && speed !== 'HD TV') features.push(`Download Speed: ${speed}`);
       if (dataObj['Upload Speed']) features.push(`Upload Speed: ${dataObj['Upload Speed']}`);
       if (dataObj['Data Allowance']) features.push(`Data Allowance: ${dataObj['Data Allowance']}`);
@@ -209,7 +228,8 @@ export const fetchLiveProductHubTemplates = async () => {
         const nodeName = t.productName || t.name || t.data?.productName || 'SLT Package';
         const currentCategory = parentCategory || nodeName;
         const hasChildren = Array.isArray(item.children) && item.children.length > 0;
-        const hasValidPrice = t.price !== null && t.price !== undefined && t.price !== '' && Number(t.price) > 0;
+        const rawPrice = t.monthlyPrice || t.price || t.data?.monthlyPrice || t.data?.price || t.fieldValues?.['Monthly Rental'];
+        const hasValidPrice = rawPrice !== null && rawPrice !== undefined && rawPrice !== '' && Number(rawPrice) > 0;
 
         if (hasChildren) {
           // Recurse into children passing current node as category
@@ -258,10 +278,19 @@ export const getAllProducts = async (options = {}) => {
 
   const hubUrl = process.env.PRODUCT_HUB_URL || process.env.REACT_APP_PRODUCT_HUB_URL || 'https://dpdlab1.slt.lk:703/api/templates';
 
-  // 1. Try fetching live templates from Product Hub
+  // 1. Fetch live templates strictly from Product Hub API
   const liveHubProducts = await fetchLiveProductHubTemplates();
+  let candidateProducts = [];
+
   if (liveHubProducts && liveHubProducts.length > 0) {
-    let filtered = liveHubProducts;
+    const validLive = liveHubProducts.filter(
+      (p) => !p.name?.toLowerCase().includes('test') && p.monthlyPrice > 0
+    );
+    candidateProducts.push(...validLive);
+  }
+
+  if (candidateProducts.length > 0) {
+    let filtered = candidateProducts;
 
     if (status && status !== 'all') {
       filtered = filtered.filter((p) => p.status === status);
@@ -289,7 +318,7 @@ export const getAllProducts = async (options = {}) => {
 
     return {
       products: paginated,
-      source: 'LIVE_PRODUCT_HUB',
+      source: liveHubProducts && liveHubProducts.length > 0 ? 'LIVE_PRODUCT_HUB' : 'LOCAL_DATABASE',
       hubUrl,
       pagination: {
         page: parseInt(page, 10),
@@ -298,53 +327,6 @@ export const getAllProducts = async (options = {}) => {
       },
     };
   }
-
-  // 2. Fallback to local MongoDB database
-  console.log('\x1b[33m[Product Hub API] Using Local MongoDB database fallback\x1b[0m');
-  const query = {};
-
-  if (status && status !== 'all') {
-    query.status = status;
-  }
-
-  if (category && category !== 'All Products') {
-    query.category = { $regex: new RegExp(`^${category.replace('-', ' ')}`, 'i') };
-  }
-
-  if (search) {
-    query.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { description: { $regex: search, $options: 'i' } },
-      { category: { $regex: search, $options: 'i' } },
-      { speed: { $regex: search, $options: 'i' } },
-    ];
-  }
-
-  if (maxPrice) {
-    query.monthlyPrice = { $lte: Number(maxPrice) };
-  }
-
-  const skip = (page - 1) * limit;
-  const sort = {};
-  sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
-
-  const [products, total] = await Promise.all([
-    Product.find(query)
-      .sort(sort)
-      .skip(skip)
-      .limit(parseInt(limit, 10))
-      .lean(),
-    Product.countDocuments(query),
-  ]);
-
-  return {
-    products,
-    pagination: {
-      page: parseInt(page, 10),
-      limit: parseInt(limit, 10),
-      total,
-    },
-  };
 };
 
 /**

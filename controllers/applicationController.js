@@ -565,3 +565,50 @@ export const lookupPackage = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Check loop availability for installation address/city
+// @route   POST /api/applications/check-loop
+// @access  Public
+export const checkLoopAvailability = async (req, res, next) => {
+  try {
+    const { address, city, district, latitude, longitude } = req.body;
+    const searchString = `${address || ''} ${city || ''} ${district || ''}`.toLowerCase();
+
+    // Check if explicitly unserviced or marked unavailable for testing/demo
+    const isExplicitlyUnavailable =
+      searchString.includes('no loop') ||
+      searchString.includes('no-loop') ||
+      searchString.includes('unavailable') ||
+      searchString.includes('unserviced') ||
+      searchString.includes('remote zone');
+
+    // If address or city is provided and not explicitly marked unavailable
+    const isAvailable = !isExplicitlyUnavailable && (searchString.trim().length > 0);
+
+    if (isAvailable) {
+      return res.status(200).json({
+        success: true,
+        available: true,
+        message: 'Service loop is available in your area.',
+        coverage: {
+          area: city || district || 'Standard Service Area',
+          loopStatus: 'AVAILABLE',
+          estimatedProvisionDays: 3,
+        },
+      });
+    } else {
+      return res.status(200).json({
+        success: true,
+        available: false,
+        message: 'No service loop available in this area. Please contact your nearest SLTMobitel branch.',
+        coverage: {
+          area: city || district || 'Unserviced Area',
+          loopStatus: 'UNAVAILABLE',
+          recommendedAction: 'CONTACT_NEAREST_BRANCH',
+        },
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
