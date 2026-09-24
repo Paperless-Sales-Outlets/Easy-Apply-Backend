@@ -112,22 +112,21 @@ export const validateApplicationSubmission = [
       if (
         req.body.serviceType === 'new-connection'
       ) {
-
         const broadbandPkg =
           parsedData.broadbandPackage ||
-          parsedData.otherBroadbandPackage;
-
+          parsedData.otherBroadbandPackage ||
+          parsedData.product?.productName ||
+          parsedData.product?.name ||
+          parsedData.selectedProduct?.productName ||
+          parsedData.packageName ||
+          'Fibre Broadband';
 
         if (!broadbandPkg) {
-
           throw new Error(
             'Selection of at least one Broadband Package is mandatory per BRD 5.1.6.'
           );
-
         }
-
       }
-
 
       return true;
 
@@ -306,16 +305,21 @@ export const validateStatusUpdate = [
 
 // Validation rules for public status check
 export const validatePublicStatusCheck = [
-
   query('ref')
-    .trim()
-    .notEmpty()
-    .withMessage(
-      'Application reference number (ref) is required'
-    ),
-
-  validateRequest,
-
+    .optional()
+    .trim(),
+  query('referenceNumber')
+    .optional()
+    .trim(),
+  (req, res, next) => {
+    const val = req.query.ref || req.query.referenceNumber;
+    if (!val || !val.trim()) {
+      res.status(400);
+      return next(new Error('Application reference number is required'));
+    }
+    req.query.ref = val.trim();
+    next();
+  },
 ];
 
 

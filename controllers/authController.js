@@ -266,6 +266,9 @@ export const verifyOtp = async (req, res, next) => {
 // @desc    Register a new user
 // @route   POST /api/auth/register
 // @access  Public
+// @desc    Register a new user
+// @route   POST /api/auth/register
+// @access  Public
 export const register = async (req, res, next) => {
   const {
     name, email, phone, role, NIC, password,
@@ -274,40 +277,72 @@ export const register = async (req, res, next) => {
     nicFront, nicBack, facePhoto
   } = req.body;
 
-  // Password is intentionally absent: accounts are created and accessed with a
-  // mobile number and one-time code. Email is optional too — it is no longer
-  // asked for at registration and is collected on the application form instead.
   if (!name || !phone || !NIC) {
     res.status(400);
     return next(new Error('Name, phone number and NIC are required'));
   }
 
   try {
-    // Check if user already exists
-    const userExists = await User.findOne({
-      $or: [...(email ? [{ email }] : []), { phone }, { NIC }],
+    const digitsOnly = String(phone).replace(/\D/g, '');
+    const last9 = digitsOnly.slice(-9);
+    const cleanNic = String(NIC).trim().toUpperCase();
+    const cleanEmail = email && typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : undefined;
+
+    // Check if user already exists by phone, last9, or NIC
+    let user = await User.findOne({
+      $or: [
+        ...(cleanEmail ? [{ email: cleanEmail }] : []),
+        { phone: digitsOnly },
+        { phone: last9 },
+        { phone: `0${last9}` },
+        { phone: `+94${last9}` },
+        { phone: `94${last9}` },
+        { NIC: cleanNic },
+      ],
     });
 
-    if (userExists) {
-      res.status(400);
-      let duplicateField = 'Email, phone number, or NIC';
-      if (email && userExists.email === email.toLowerCase()) duplicateField = 'Email';
-      else if (userExists.phone === phone) duplicateField = 'Phone number';
-      else if (userExists.NIC === NIC.toUpperCase()) duplicateField = 'NIC';
-      return next(new Error(`${duplicateField} is already registered`));
+    if (user) {
+      // User exists -> Update profile details seamlessly
+      user.name = name || user.name;
+      if (cleanEmail) user.email = cleanEmail;
+      user.NIC = cleanNic;
+      user.phone = digitsOnly;
+      if (title) user.title = title;
+      if (dob) user.dob = dob;
+      if (gender) user.gender = gender;
+      if (nationality) user.nationality = nationality;
+      if (contactNumber) user.contactNumber = contactNumber;
+      if (addressLine1) user.addressLine1 = addressLine1;
+      if (addressLine2) user.addressLine2 = addressLine2;
+      if (city) user.city = city;
+      if (district) user.district = district;
+      if (postalCode) user.postalCode = postalCode;
+      if (preferredContact) user.preferredContact = preferredContact;
+      await user.save();
+    } else {
+      // Create new user document
+      user = await User.create({
+        name,
+        ...(cleanEmail ? { email: cleanEmail } : {}),
+        phone: digitsOnly,
+        role: role || 'Customer',
+        NIC: cleanNic,
+        ...(password ? { password } : {}),
+        title,
+        dob,
+        gender,
+        nationality,
+        contactNumber,
+        addressLine1,
+        addressLine2,
+        city,
+        district,
+        postalCode,
+        preferredContact,
+      });
     }
 
-    // Create user (password will be hashed in model pre-save hook)
-    const user = await User.create({
-      name, email, phone, role: role || 'Customer', NIC,
-      ...(password ? { password } : {}),
-      title, dob, gender, nationality, contactNumber,
-      addressLine1, addressLine2, city, district, postalCode, preferredContact
-    });
-
-    // Persist the KYC images captured during sign-up. A storage failure must
-    // not cost the customer their account — the images can be re-supplied, so
-    // registration is allowed to succeed either way.
+    // Persist identity images if provided
     try {
       const [frontId, backId, faceId] = await Promise.all([
         storeIdentityImage(nicFront, 'nic-front', user._id),
@@ -317,9 +352,9 @@ export const register = async (req, res, next) => {
 
       if (frontId || backId || faceId) {
         user.identityDocuments = {
-          nicFront: frontId,
-          nicBack: backId,
-          facePhoto: faceId,
+          nicFront: frontId || user.identityDocuments?.nicFront,
+          nicBack: backId || user.identityDocuments?.nicBack,
+          facePhoto: faceId || user.identityDocuments?.facePhoto,
           capturedAt: new Date(),
         };
         await user.save();

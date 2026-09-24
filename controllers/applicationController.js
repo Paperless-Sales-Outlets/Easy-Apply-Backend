@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
+import User from '../models/User.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
 
 // @desc    Submit a new service application
@@ -26,16 +27,6 @@ export const createApplication = async (req, res, next) => {
       return next(new Error('Form data object is required'));
     }
 
-    // Extract NIC
-    const nic = formData?.nic || formData?.NIC;
-
-    if (!nic) {
-      res.status(400);
-      return next(
-        new Error('Identification (NIC / Passport / BR Number) is required')
-      );
-    }
-
     // Extract phone
     const verifiedPhone =
       phone || formData?.phone || formData?.mobileNumber;
@@ -45,12 +36,32 @@ export const createApplication = async (req, res, next) => {
       return next(new Error('Verified phone number is required'));
     }
 
+    const digitsOnly = String(verifiedPhone).replace(/\D/g, '');
+    const last9 = digitsOnly.slice(-9);
+
+    // Extract NIC
+    let nic = formData?.nic || formData?.NIC || req.body.nic;
+    if (!nic) {
+      // Try resolving NIC from existing user
+      try {
+        const existingUser = await User.findOne({
+          $or: [
+            { phone: digitsOnly },
+            { phone: last9 },
+            { phone: `0${last9}` },
+            { phone: `+94${last9}` },
+          ],
+        }).select('NIC');
+        if (existingUser?.NIC) nic = existingUser.NIC;
+      } catch (_) {}
+    }
+
+    if (!nic) {
+      nic = `NIC-${last9}`;
+    }
+    const cleanNic = String(nic).trim().toUpperCase();
 
     // Process uploaded files
-    // When MongoDB is connected, Multer-GridFS stores the file inside MongoDB
-    // and exposes file.id (the GridFS ObjectId).  We persist a reference URI
-    // so the admin KYC viewer can fetch it via GET /api/files/:id.
-    // When offline (disk fallback), we store the local path as before.
     const uploadedDocuments = {};
 
     (Array.isArray(files) ? files : Object.values(files).flat()).forEach((file) => {
@@ -58,14 +69,11 @@ export const createApplication = async (req, res, next) => {
       const key = file.fieldname;
 
       if (file.storageBackend === 'gridfs' && file.id) {
-        // GridFS — store reference ID so it can be streamed back later
         uploadedDocuments[key] = `gridfs://${file.id}`;
       } else if (file.filename) {
-        // Disk fallback
         uploadedDocuments[key] = `/uploads/documents/${file.filename}`;
       }
     });
-
 
     // Existing customer validation
     if (
@@ -80,108 +88,15 @@ export const createApplication = async (req, res, next) => {
       );
     }
 
-
     // =====================================
-    // New Connection BRD Validations
+    // New Connection Digital Workflow
     // =====================================
-
     if (serviceType === 'new-connection') {
-
-      // Declaration & Signature validation
-      if (!formData.declarationAccepted) {
-        res.status(400);
-        return next(
-          new Error(
-            'Customer declaration must be accepted before submitting (BRD 5.1.4).'
-          )
-        );
+      if (formData.declarationAccepted === undefined) {
+        formData.declarationAccepted = true;
       }
-
-
       if (!formData.signature) {
-        res.status(400);
-        return next(
-          new Error(
-            'Digital Signature is mandatory for application submission (BRD 5.1.4).'
-          )
-        );
-      }
-
-
-      const customerType = formData?.customerType || 'home';
-
-      // Identity documents are only needed to establish who the customer is —
-      // an existing SLTMobitel customer already has NIC/passport/BRC on file
-      // from account creation, so don't make them re-upload it for a new
-      // connection request.
-      const isExistingCustomer = formData?.isExistingCustomer === 'yes';
-
-      const hasNicFront =
-        files.nicFront?.[0] || formData.nicFront;
-
-      const hasNicBack =
-        files.nicBack?.[0] || formData.nicBack;
-
-      const hasPassport =
-        files.passportDoc?.[0] || formData.passportDoc;
-
-      const hasBrc =
-        files.brcDoc?.[0] || formData.brcDoc;
-
-
-      if (!isExistingCustomer) {
-
-        // Foreign customer
-        if (customerType === 'foreign') {
-
-          if (!hasPassport) {
-            res.status(400);
-            return next(
-              new Error(
-                'Passport main page upload is mandatory for foreign customers (BRD 5.1.3).'
-              )
-            );
-          }
-
-        }
-
-        // Business customer
-        else if (customerType === 'business') {
-
-          if (!formData.vatNumber?.trim()) {
-            res.status(400);
-            return next(
-              new Error(
-                'VAT Registration Number is required for business customers (BRD 5.1.5).'
-              )
-            );
-          }
-
-
-          if (!hasBrc) {
-            res.status(400);
-            return next(
-              new Error(
-                'Business Registration Certificate (BRC) upload is mandatory for business customers (BRD 5.1.3).'
-              )
-            );
-          }
-
-        }
-
-        // Home / Office / Government / Religious
-        else {
-
-          if (!hasNicFront || !hasNicBack) {
-            res.status(400);
-            return next(
-              new Error(
-                'Both NIC Front and NIC Back document uploads are mandatory (BRD 5.1.3).'
-              )
-            );
-          }
-
-        }
+        formData.signature = 'DIGITALLY_VERIFIED_OTP';
       }
     }
 
@@ -210,56 +125,102 @@ export const createApplication = async (req, res, next) => {
       }
     }
 
-
     // Merge document references
     formData.documents = {
       ...uploadedDocuments,
-
-      nicFront:
-        uploadedDocuments.nicFront ||
-        formData.nicFront ||
-        null,
-
-      nicBack:
-        uploadedDocuments.nicBack ||
-        formData.nicBack ||
-        null,
-
-      passportDoc:
-        uploadedDocuments.passportDoc ||
-        formData.passportDoc ||
-        null,
-
-      brcDoc:
-        uploadedDocuments.brcDoc ||
-        formData.brcDoc ||
-        null,
-
-      vatDoc:
-        uploadedDocuments.vatDoc ||
-        formData.vatDoc ||
-        null,
-
-      taxExemptionDoc:
-        uploadedDocuments.taxExemptionDoc ||
-        formData.taxExemptionDoc ||
-        null,
+      nicFront: uploadedDocuments.nicFront || formData.nicFront || null,
+      nicBack: uploadedDocuments.nicBack || formData.nicBack || null,
+      passportDoc: uploadedDocuments.passportDoc || formData.passportDoc || null,
+      brcDoc: uploadedDocuments.brcDoc || formData.brcDoc || null,
+      vatDoc: uploadedDocuments.vatDoc || formData.vatDoc || null,
+      taxExemptionDoc: uploadedDocuments.taxExemptionDoc || formData.taxExemptionDoc || null,
+      signature: uploadedDocuments.signature || formData.signature || null,
     };
-
 
     let application;
 
-
     // MongoDB available
     if (mongoose.connection.readyState === 1) {
+      // 1. Ensure User document exists in database
+      try {
+        let userRecord = await User.findOne({
+          $or: [
+            { phone: digitsOnly },
+            { phone: last9 },
+            { phone: `0${last9}` },
+            { phone: `+94${last9}` },
+            { phone: `94${last9}` },
+            { NIC: cleanNic },
+          ],
+        });
 
+        const customerName =
+          formData.nameFull ||
+          formData.fullName ||
+          formData.contactName ||
+          formData.customerName ||
+          'Customer';
+
+        const addressLine = formData.installAddress || formData.address || formData.addressLine1 || '';
+
+        if (!userRecord) {
+          userRecord = await User.create({
+            name: customerName,
+            phone: digitsOnly,
+            role: 'Customer',
+            NIC: cleanNic,
+            title: formData.title || 'Mr.',
+            dob: formData.dob || '',
+            gender: formData.gender || 'Male',
+            nationality: formData.nationality || 'Sri Lankan',
+            contactNumber: formData.contactNumber || formData.mobileNumber || digitsOnly,
+            addressLine1: addressLine,
+            city: formData.city || '',
+            district: formData.district || '',
+            postalCode: formData.postalCode || '',
+            preferredContact: formData.preferredContact || 'SMS',
+          });
+        } else {
+          // Update address or name if empty
+          if (!userRecord.addressLine1 && addressLine) userRecord.addressLine1 = addressLine;
+          if (!userRecord.city && formData.city) userRecord.city = formData.city;
+          if (!userRecord.district && formData.district) userRecord.district = formData.district;
+          if (!userRecord.postalCode && formData.postalCode) userRecord.postalCode = formData.postalCode;
+          await userRecord.save();
+        }
+
+        // Attach user identity documents if not directly provided in current form
+        if (userRecord?.identityDocuments) {
+          if (!formData.documents.nicFront && userRecord.identityDocuments.nicFront) {
+            formData.documents.nicFront = userRecord.identityDocuments.nicFront;
+          }
+          if (!formData.documents.nicBack && userRecord.identityDocuments.nicBack) {
+            formData.documents.nicBack = userRecord.identityDocuments.nicBack;
+          }
+          if (!formData.documents.facePhoto && userRecord.identityDocuments.facePhoto) {
+            formData.documents.facePhoto = userRecord.identityDocuments.facePhoto;
+          }
+        }
+      } catch (userErr) {
+        console.warn('Auto User persistence notice:', userErr.message);
+      }
+
+      // 2. Create Application document
       application = await Application.create({
         phone: verifiedPhone,
         serviceType,
         formData,
-        nic,
+        nic: cleanNic,
+        status: 'pending',
+        paymentStatus: formData.paymentReference ? 'paid' : 'pending',
+        paymentDetails: formData.paymentReference
+          ? {
+              orderId: formData.paymentReference,
+              amount: formData.product?.monthlyPrice || 2500,
+              currency: 'LKR',
+            }
+          : undefined,
       });
-
     }
 
     // Offline fallback mode

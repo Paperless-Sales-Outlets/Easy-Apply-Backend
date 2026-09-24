@@ -13,12 +13,14 @@ const NAME_FIELDS = [
 ];
 
 const DOC_KEYS = [
-  { key: 'passportDoc',     label: 'Passport' },
-  { key: 'nicFront',        label: 'NIC Front' },
-  { key: 'nicBack',         label: 'NIC Back' },
-  { key: 'brcDoc',          label: 'Business Registration' },
-  { key: 'vatDoc',          label: 'VAT Certificate' },
-  { key: 'taxExemptionDoc', label: 'Tax Exemption Certificate' },
+  { key: 'passportDoc',       label: 'Passport' },
+  { key: 'nicFront',          label: 'NIC Front' },
+  { key: 'nicBack',           label: 'NIC Back' },
+  { key: 'signature',         label: 'Digital Signature' },
+  { key: 'customerSignature', label: 'Customer Signature' },
+  { key: 'brcDoc',            label: 'Business Registration' },
+  { key: 'vatDoc',            label: 'VAT Certificate' },
+  { key: 'taxExemptionDoc',   label: 'Tax Exemption Certificate' },
 ];
 
 const REVIEW_STATUSES = ['pending', 'pending payment', 'flagged'];
@@ -46,7 +48,7 @@ const resolveDocUrl = async (raw) => {
     return `/api/files/${url}`;
   }
 
-  // Base64 Data URL (e.g. data:image/jpeg;base64,...)
+  // Base64 Data URL (e.g. data:image/png;base64,... or data:image/jpeg;base64,...)
   if (url.startsWith('data:image/')) {
     return url;
   }
@@ -80,6 +82,11 @@ async function toQueueItem(app) {
   const documents = [];
   for (const { key, label } of DOC_KEYS) {
     let raw = docs[key] ?? fd[key];
+
+    // Fallback for signature from root form data
+    if ((key === 'signature' || key === 'customerSignature') && !raw) {
+      raw = fd.signature || fd.customerSignature || docs.signature;
+    }
 
     // Fallback to User identityDocuments (captured during sign-up / OCR)
     if (!raw && userProfile?.identityDocuments?.[key]) {
