@@ -16,6 +16,7 @@ const DOC_KEYS = [
   { key: 'passportDoc',       label: 'Passport' },
   { key: 'nicFront',          label: 'NIC Front' },
   { key: 'nicBack',           label: 'NIC Back' },
+  { key: 'facePhoto',         label: 'Live Face Photo' },
   { key: 'signature',         label: 'Digital Signature' },
   { key: 'customerSignature', label: 'Customer Signature' },
   { key: 'brcDoc',            label: 'Business Registration' },
@@ -35,7 +36,10 @@ function pick(obj, keys) {
 
 const resolveDocUrl = async (raw) => {
   if (!raw) return null;
-  const url = typeof raw === 'string' ? raw : raw?.url || raw?.id || raw?.fileId;
+  // ObjectId instances (copied from User.identityDocuments) stringify to 24-hex
+  const url = typeof raw === 'string'
+    ? raw
+    : raw?._bsontype === 'ObjectId' ? String(raw) : raw?.url || raw?.fileId;
   if (!url || typeof url !== 'string') return null;
 
   // GridFS reference uri: gridfs://<objectId>
@@ -58,35 +62,60 @@ const resolveDocUrl = async (raw) => {
     return url;
   }
 
-  // Local uploads or S3 path
+  // Local uploads or S3 path — anything else (e.g. the 'DIGITALLY_VERIFIED_OTP' marker) is not a file
+  if (!url.startsWith('/uploads/')) return null;
   return await getSignedFileUrl(url);
 };
+
+const USER_DOC_KEYS = DOC_KEYS.filter(({ key }) => ['nicFront', 'nicBack', 'facePhoto'].includes(key));
+
+// Customer who registered (NIC + live photo captured) but has no application yet.
+async function userToQueueItem(user) {
+  const documents = [];
+  for (const { key, label } of USER_DOC_KEYS) {
+    const url = await resolveDocUrl(user.identityDocuments?.[key]);
+    if (url) documents.push({ key, label, url });
+  }
+  return {
+    id: user._id,
+    kind: 'account',
+    referenceNumber: 'ACCOUNT',
+    name: user.name,
+    nic: user.NIC,
+    phone: user.phone,
+    serviceType: 'account-registration',
+    status: user.kycStatus || 'pending',
+    submittedAt: user.identityDocuments?.capturedAt || user.createdAt,
+    updatedAt: user.updatedAt,
+    notes: user.kycNotes || '',
+    actionedAt: user.kycActionedAt || null,
+    actionedBy: null,
+    documents,
+  };
+}
 
 async function toQueueItem(app) {
   const fd = app.formData || {};
   const docs = fd.documents && typeof fd.documents === 'object' ? fd.documents : {};
 
-  // Find linked customer profile if identity photos were captured at registration
+  // Linked customer profile — holds the NIC + live face photo captured at registration
   let userProfile = null;
-  if (!docs.nicFront && !fd.nicFront) {
-    try {
-      userProfile = await User.findOne({
-        $or: [
-          ...(app.nic ? [{ NIC: app.nic.toUpperCase() }] : []),
-          ...(app.phone ? [{ phone: app.phone }] : []),
-        ],
-      }).lean();
-    } catch (_) {}
-  }
+  try {
+    const last9 = String(app.phone || '').replace(/\D/g, '').slice(-9);
+    userProfile = await User.findOne({
+      $or: [
+        ...(app.nic ? [{ NIC: app.nic.toUpperCase() }] : []),
+        ...(last9 ? [{ phone: new RegExp(`${last9}$`) }] : []),
+      ],
+    }).lean();
+  } catch (_) {}
 
   const documents = [];
   for (const { key, label } of DOC_KEYS) {
     let raw = docs[key] ?? fd[key];
 
     // Fallback for signature from root form data
-    if ((key === 'signature' || key === 'customerSignature') && !raw) {
-      raw = fd.signature || fd.customerSignature || docs.signature;
-    }
+    if (key === 'signature' && !raw) raw = fd.signature;
 
     // Fallback to User identityDocuments (captured during sign-up / OCR)
     if (!raw && userProfile?.identityDocuments?.[key]) {
@@ -118,7 +147,8 @@ async function toQueueItem(app) {
   };
 }
 
-// @desc    Get the KYC review queue (applications awaiting identity review)
+// @desc    Get the KYC review queue: applications awaiting review, plus registered
+//          customers whose NIC / live photo hasn't been tied to an application yet
 // @route   GET /api/admin/kyc
 // @access  Private (Admin / Staff only)
 export const getKycQueue = async (req, res, next) => {
@@ -131,7 +161,22 @@ export const getKycQueue = async (req, res, next) => {
 
     const queue = await Promise.all(applications.map(toQueueItem));
 
-    res.status(200).json({ success: true, count: queue.length, queue });
+    // Registered customers with captured ID images and no application yet — once they
+    // apply, the application (in any status) carries the decision
+    const covered = new Set((await Application.distinct('nic')).map((n) => String(n).toUpperCase()));
+    const users = await User
+      .find({
+        'identityDocuments.nicFront': { $exists: true },
+        $or: [{ kycStatus: { $exists: false } }, { kycStatus: { $in: REVIEW_STATUSES } }],
+      })
+      .sort({ 'identityDocuments.capturedAt': 1 })
+      .lean();
+    const accounts = await Promise.all(
+      users.filter((u) => !covered.has(String(u.NIC).toUpperCase())).map(userToQueueItem)
+    );
+
+    const all = [...queue, ...accounts];
+    res.status(200).json({ success: true, count: all.length, queue: all });
   } catch (error) {
     next(error);
   }
@@ -160,12 +205,29 @@ export const reviewKycApplication = async (req, res, next) => {
       .populate('actionedBy', 'name email role')
       .lean();
 
-    if (!application) {
+    if (application) {
+      return res.status(200).json({ success: true, application: await toQueueItem(application) });
+    }
+
+    // Not an application id — a registered customer's account-level KYC
+    const user = await User.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          kycStatus: status,
+          ...(notes !== undefined ? { kycNotes: notes } : {}),
+          kycActionedAt: new Date(),
+        },
+      },
+      { new: true }
+    ).lean();
+
+    if (!user) {
       res.status(404);
       return next(new Error('Application not found'));
     }
 
-    res.status(200).json({ success: true, application: await toQueueItem(application) });
+    res.status(200).json({ success: true, application: await userToQueueItem(user) });
   } catch (error) {
     next(error);
   }

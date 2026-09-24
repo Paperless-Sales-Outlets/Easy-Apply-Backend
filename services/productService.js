@@ -327,6 +327,30 @@ export const getAllProducts = async (options = {}) => {
       },
     };
   }
+
+  // Product Hub unreachable or empty — serve the locally seeded catalogue instead of failing
+  const query = {};
+  if (status && status !== 'all') query.status = status;
+  if (category && category !== 'All Products') {
+    query.category = { $regex: new RegExp(`^${category.replace('-', ' ')}`, 'i') };
+  }
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const pageSize = Math.max(1, parseInt(limit, 10) || 50);
+  const [products, total] = await Promise.all([
+    Product.find(query)
+      .sort({ [sortBy]: sortOrder === 'asc' ? 1 : -1 })
+      .skip((pageNum - 1) * pageSize)
+      .limit(pageSize)
+      .lean(),
+    Product.countDocuments(query),
+  ]);
+
+  return {
+    products,
+    source: 'LOCAL_DATABASE',
+    hubUrl,
+    pagination: { page: pageNum, limit: pageSize, total },
+  };
 };
 
 /**
@@ -410,10 +434,10 @@ export const getProductByCode = async (productCode) => {
 export const checkProductAvailability = async (productId, quantity) => {
   let product = null;
   if (mongoose.Types.ObjectId.isValid(productId)) {
-    product = await Product.findById(productId);
+    product = await Product.findById(productId).lean();
   }
   if (!product) {
-    product = await Product.findOne({ productId });
+    product = await Product.findOne({ productId }).lean();
   }
 
   if (!product) {

@@ -60,6 +60,11 @@ const userSchema = new mongoose.Schema(
       facePhoto: { type: mongoose.Schema.Types.ObjectId },
       capturedAt: { type: Date },
     },
+    // Account-level KYC review (used when a customer has registered but has no
+    // application yet). Once they apply, the application's own status takes over.
+    kycStatus: { type: String, enum: ['pending', 'approved', 'rejected', 'flagged'] },
+    kycNotes: { type: String, trim: true, maxlength: 2000 },
+    kycActionedAt: { type: Date },
     // Sign-in is by mobile number and one-time code, so accounts are created
     // without a password. The field is kept so existing records stay valid and
     // a password-based flow could be reintroduced later.
