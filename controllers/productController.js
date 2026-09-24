@@ -184,12 +184,49 @@ export const deleteProduct = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Get product category hierarchy tree from Product Hub
+ * @route   GET /api/products/hierarchy
+ * @access  Public
+ */
+export const getProductHierarchy = async (req, res, next) => {
+  try {
+    const hierarchy = await productService.fetchProductHierarchy();
+    return successResponse(res, 'Product hierarchy retrieved successfully', hierarchy);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Get product cart item by ID from Product Hub
+ * @route   GET /api/products/cart-item/:id
+ * @access  Public
+ */
+export const getProductCartItem = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const cartItem = await productService.fetchProductCartItem(id);
+    if (!cartItem) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cart product not found in Product Hub',
+      });
+    }
+    return successResponse(res, 'Cart product retrieved successfully', cartItem);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export default {
   getAllProducts,
   getProductsByCategory,
   searchProducts,
   getProductById,
   getProductByCode,
+  getProductHierarchy,
+  getProductCartItem,
   createProduct,
   updateProduct,
   deleteProduct,

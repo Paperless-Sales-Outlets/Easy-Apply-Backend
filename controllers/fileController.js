@@ -49,15 +49,18 @@ export const serveGridFsFile = async (req, res, next) => {
     const file = files[0];
     const ext = path.extname(file.filename || '').toLowerCase();
     const contentType =
+      file.contentType ||
+      file.metadata?.contentType ||
       file.metadata?.mimetype ||
       MIME_TYPES[ext] ||
-      'application/octet-stream';
+      'image/jpeg';
 
     // Stream the file directly to the HTTP response
     res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${file.filename}"`
+      `inline; filename="${file.filename || 'document'}"`
     );
 
     const downloadStream = bucket.openDownloadStream(objectId);

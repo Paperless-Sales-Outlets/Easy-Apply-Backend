@@ -1,4 +1,5 @@
 import Application from '../../models/admin/applicationModel.js';
+import User from '../../models/User.js';
 import { getSignedFileUrl } from '../../services/s3Service.js';
 
 const NAME_FIELDS = [
@@ -30,25 +31,73 @@ function pick(obj, keys) {
   return null;
 }
 
+const resolveDocUrl = async (raw) => {
+  if (!raw) return null;
+  const url = typeof raw === 'string' ? raw : raw?.url || raw?.id || raw?.fileId;
+  if (!url || typeof url !== 'string') return null;
+
+  // GridFS reference uri: gridfs://<objectId>
+  if (url.startsWith('gridfs://')) {
+    return `/api/files/${url.replace('gridfs://', '')}`;
+  }
+
+  // Raw MongoDB 24-character ObjectId
+  if (/^[0-9a-fA-F]{24}$/.test(url)) {
+    return `/api/files/${url}`;
+  }
+
+  // Base64 Data URL (e.g. data:image/jpeg;base64,...)
+  if (url.startsWith('data:image/')) {
+    return url;
+  }
+
+  // Standard absolute HTTP/HTTPS URL
+  if (/^https?:\/\//.test(url) || url.startsWith('/api/files/')) {
+    return url;
+  }
+
+  // Local uploads or S3 path
+  return await getSignedFileUrl(url);
+};
+
 async function toQueueItem(app) {
   const fd = app.formData || {};
   const docs = fd.documents && typeof fd.documents === 'object' ? fd.documents : {};
 
+  // Find linked customer profile if identity photos were captured at registration
+  let userProfile = null;
+  if (!docs.nicFront && !fd.nicFront) {
+    try {
+      userProfile = await User.findOne({
+        $or: [
+          ...(app.nic ? [{ NIC: app.nic.toUpperCase() }] : []),
+          ...(app.phone ? [{ phone: app.phone }] : []),
+        ],
+      }).lean();
+    } catch (_) {}
+  }
+
   const documents = [];
   for (const { key, label } of DOC_KEYS) {
-    const raw = docs[key] ?? fd[key];
-    const url = typeof raw === 'string' ? raw : raw?.url;
-    if (typeof url === 'string' && url) {
-      documents.push({ key, label, url: await getSignedFileUrl(url) });
+    let raw = docs[key] ?? fd[key];
+
+    // Fallback to User identityDocuments (captured during sign-up / OCR)
+    if (!raw && userProfile?.identityDocuments?.[key]) {
+      raw = userProfile.identityDocuments[key];
+    }
+
+    const resolved = await resolveDocUrl(raw);
+    if (resolved) {
+      documents.push({ key, label, url: resolved });
     }
   }
 
   return {
     id: app._id,
     referenceNumber: app.referenceNumber,
-    name: pick(fd, NAME_FIELDS) || 'Unknown',
-    nic: app.nic,
-    phone: app.phone,
+    name: pick(fd, NAME_FIELDS) || userProfile?.name || 'Unknown',
+    nic: app.nic || userProfile?.NIC,
+    phone: app.phone || userProfile?.phone,
     serviceType: app.serviceType,
     status: app.status,
     submittedAt: app.createdAt,

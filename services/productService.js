@@ -481,7 +481,9 @@ export const fetchProductDetailsFromHub = async (productId) => {
     return cached.data;
   }
 
-  const detailUrl = `https://dpdlab1.slt.lk:703/public-api/v1/integration/products/${productId}`;
+  dotenv.config({ override: true });
+  const baseUrl = process.env.PRODUCT_HUB_DETAILS_URL || 'https://dpdlab1.slt.lk:703/public-api/v1/integration/products';
+  const detailUrl = `${baseUrl}/${productId}`;
   console.log(`\x1b[36m[Product Hub Detail API]\x1b[0m Fetching specs for product \x1b[33m${productId}\x1b[0m from \x1b[35m${detailUrl}\x1b[0m ...`);
 
   try {
@@ -533,32 +535,102 @@ export const getProductDetails = async (id) => {
     return hubResult;
   }
 
-  // 2. Fallback Notice (Preserving reference fallback structure commented as requested)
-  /*
-  const FALLBACK_PRODUCT_SPEC_REFERENCE = {
-    product: {
-      id: id,
-      productName: 'SLT High-Speed Connection',
-      category: 'Broadband',
-      price: 2990,
-      monthlyPrice: 2990,
-      fixedFields: [
-        { name: 'Commitment Period', type: 'Fixed', value: '1 Year' },
-        { name: 'Applicable Tax Rate', type: 'Fixed', value: '42.02%' },
-        { name: 'Early Termination Fee', type: 'Fixed', value: '2500' }
-      ],
-      features: { 'Standard Support': '24/7' },
-      tables: []
-    }
-  };
-  */
-
   return {
     success: false,
     source: hubResult?.source || 'NOTICE',
     message: hubResult?.message || 'Network Notice: Detailed specifications currently in design or unavailable from Product Info Hub.',
     data: null,
   };
+};
+
+/**
+ * Fetches Left Sidebar Product Tree (Hierarchy) from Product Hub (/public-api/v1/products/hierarchy)
+ */
+export const fetchProductHierarchy = async () => {
+  dotenv.config({ override: true });
+  const hierarchyUrl = process.env.PRODUCT_HUB_HIERARCHY_URL || 'https://dpdlab1.slt.lk:703/public-api/v1/products/hierarchy';
+
+  const token = await getProductHubToken();
+  try {
+    console.log(`\x1b[36m[Product Hub Hierarchy]\x1b[0m Fetching hierarchy from: \x1b[33m${hierarchyUrl}\x1b[0m`);
+    const res = await fetch(hierarchyUrl, {
+      headers: {
+        Authorization: token ? `Bearer ${token}` : '',
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!res.ok) {
+      console.warn(`\x1b[31m[Product Hub Hierarchy] Failed with status ${res.status}\x1b[0m`);
+      return [];
+    }
+
+    const raw = await res.json();
+    const list = Array.isArray(raw) ? raw : raw.items || raw.data || [];
+
+    // Filter out dummy/test nodes
+    const cleanNodes = (nodes) => {
+      if (!Array.isArray(nodes)) return [];
+      return nodes
+        .filter((n) => {
+          const name = (n.name || n.productName || '').toLowerCase();
+          return !name.includes('test');
+        })
+        .map((n) => ({
+          id: n.id,
+          name: n.name || n.productName || 'Category',
+          children: cleanNodes(n.children),
+        }));
+    };
+
+    const cleaned = cleanNodes(list);
+    return cleaned;
+  } catch (err) {
+    console.warn('[Product Hub Hierarchy] Error:', err.message);
+    return [];
+  }
+};
+
+/**
+ * Fetches Product Cart metadata by ID from Product Hub (/public-api/v1/products/{id})
+ */
+export const fetchProductCartItem = async (id) => {
+  dotenv.config({ override: true });
+  const baseUrl = process.env.PRODUCT_HUB_CART_URL || 'https://dpdlab1.slt.lk:703/public-api/v1/products';
+  const cartUrl = `${baseUrl}/${id}`;
+
+  const token = await getProductHubToken();
+  try {
+    console.log(`\x1b[36m[Product Hub Cart Item]\x1b[0m Fetching cart item from: \x1b[33m${cartUrl}\x1b[0m`);
+    const res = await fetch(cartUrl, {
+      headers: {
+        Authorization: token ? `Bearer ${token}` : '',
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!res.ok) {
+      console.warn(`\x1b[31m[Product Hub Cart Item] Failed with status ${res.status}\x1b[0m`);
+      return null;
+    }
+
+    const data = await res.json();
+    return {
+      id: data.id || id,
+      productId: data.id || id,
+      productName: data.productName || data.name || 'SLT Package',
+      name: data.productName || data.name || 'SLT Package',
+      price: Number(data.price || data.monthlyPrice || 0),
+      monthlyPrice: Number(data.price || data.monthlyPrice || 0),
+      description: data.description || '',
+      source: 'LIVE_PRODUCT_HUB',
+    };
+  } catch (err) {
+    console.warn('[Product Hub Cart Item] Error:', err.message);
+    return null;
+  }
 };
 
 export default {
@@ -569,6 +641,8 @@ export default {
   getProductByCode,
   getProductDetails,
   fetchProductDetailsFromHub,
+  fetchProductHierarchy,
+  fetchProductCartItem,
   checkProductAvailability,
   createProduct,
   updateProduct,

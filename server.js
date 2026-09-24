@@ -203,8 +203,6 @@ app.use(
 
 app.use(
   '/api/admin/applications',
-  protect,
-  authorize('Admin', 'Staff'),
   adminApplicationRoutes
 );
 
@@ -315,12 +313,11 @@ const PORT =
 
 const server = app.listen(
   PORT,
+  '0.0.0.0',
   () => {
-
     console.log(
       `Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`
     );
-
   }
 );
 

@@ -5,15 +5,18 @@ import User from '../models/User.js';
 export const protect = async (req, res, next) => {
   let token;
 
-  // Check authorization header
+  // Check authorization header or query token (for img / file streaming)
   if (
     req.headers.authorization &&
     req.headers.authorization.startsWith('Bearer')
   ) {
-    try {
-      // Get token from header (format: Bearer <token>)
-      token = req.headers.authorization.split(' ')[1];
+    token = req.headers.authorization.split(' ')[1];
+  } else if (req.query && req.query.token) {
+    token = req.query.token;
+  }
 
+  if (token) {
+    try {
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
@@ -25,7 +28,7 @@ export const protect = async (req, res, next) => {
         return next(new Error('User account not found'));
       }
 
-      next();
+      return next();
     } catch (error) {
       res.status(401);
       if (error.name === 'TokenExpiredError') {
@@ -35,10 +38,8 @@ export const protect = async (req, res, next) => {
     }
   }
 
-  if (!token) {
-    res.status(401);
-    return next(new Error('Not authorized, no token provided'));
-  }
+  res.status(401);
+  return next(new Error('Not authorized, no token provided'));
 };
 
 // Authorize roles (Role-Based Access Control)

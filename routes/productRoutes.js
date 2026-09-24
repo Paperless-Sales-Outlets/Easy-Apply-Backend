@@ -33,6 +33,20 @@ router.get('/category/:category', productController.getProductsByCategory);
 router.get('/code/:code', productController.getProductByCode);
 
 /**
+ * @route   GET /api/products/hierarchy
+ * @desc    Get Left Sidebar product category tree from Product Hub
+ * @access  Public
+ */
+router.get('/hierarchy', productController.getProductHierarchy);
+
+/**
+ * @route   GET /api/products/cart-item/:id
+ * @desc    Get product cart item tariff and metadata by ID from Product Hub
+ * @access  Public
+ */
+router.get('/cart-item/:id', productController.getProductCartItem);
+
+/**
  * @route   GET /api/products/:id
  * @desc    Get a single product by ID
  * @access  Public
