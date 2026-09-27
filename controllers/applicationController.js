@@ -75,18 +75,8 @@ export const createApplication = async (req, res, next) => {
       }
     });
 
-    // Existing customer validation
-    if (
-      formData?.isExistingCustomer === 'yes' &&
-      !formData?.existingNumber?.trim()
-    ) {
-      res.status(400);
-      return next(
-        new Error(
-          'Existing Telephone / Account number is required for existing SLTMobitel customers.'
-        )
-      );
-    }
+    // Existing customer validation (temporarily bypassed for seamless flow)
+    // if (formData?.isExistingCustomer === 'yes' && !formData?.existingNumber?.trim()) { ... }
 
     // =====================================
     // New Connection Digital Workflow
