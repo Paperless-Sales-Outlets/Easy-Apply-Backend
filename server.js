@@ -17,6 +17,7 @@ import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
 import adminKycRoutes from './routes/admin/kycRoutes.js';
 import adminAnalyticsRoutes from './routes/admin/analyticsRoutes.js';
 import adminAppointmentRoutes from './routes/admin/appointmentRoutes.js';
+import adminUsersRoutes from './routes/admin/usersRoutes.js';
 import fieldAppointmentRoutes from './routes/field/fieldAppointmentRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
@@ -235,6 +236,11 @@ app.use(
 app.use(
   '/api/admin/appointments',
   adminAppointmentRoutes
+);
+
+app.use(
+  '/api/admin/users',
+  adminUsersRoutes
 );
 
 app.use(

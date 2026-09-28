@@ -422,6 +422,11 @@ export const login = async (req, res, next) => {
       return next(new Error('Invalid email or password'));
     }
 
+    if (user.isActive === false) {
+      res.status(403);
+      return next(new Error('This account has been deactivated. Contact an administrator.'));
+    }
+
     // Generate tokens
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
@@ -511,6 +516,11 @@ export const otpLogin = async (req, res, next) => {
       return next(new Error('No account is registered to this number. Please create one first.'));
     }
 
+    if (user.isActive === false) {
+      res.status(403);
+      return next(new Error('This account has been deactivated. Contact an administrator.'));
+    }
+
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
 
@@ -561,6 +571,12 @@ export const refresh = async (req, res, next) => {
     if (!user) {
       res.status(401);
       return next(new Error('User not found'));
+    }
+
+    if (user.isActive === false) {
+      await RefreshToken.deleteOne({ token: refreshToken });
+      res.status(403);
+      return next(new Error('This account has been deactivated. Contact an administrator.'));
     }
 
     // Generate new access token

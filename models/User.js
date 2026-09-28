@@ -30,8 +30,23 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['Customer', 'Staff', 'Admin'],
+      enum: ['Customer', 'Staff', 'Admin', 'Manager', 'SalesOfficer', 'CustomerCareOfficer'],
       default: 'Customer',
+    },
+    // Module keys (see admin MODULE_ACCESS) this staff account can access,
+    // assigned by an Admin when the account is created or edited.
+    permissions: {
+      type: [String],
+      default: [],
+    },
+    // Lets an Admin suspend a staff account without deleting it.
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
     },
     NIC: {
       type: String,

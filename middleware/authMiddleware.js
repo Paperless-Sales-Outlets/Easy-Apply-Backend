@@ -28,6 +28,11 @@ export const protect = async (req, res, next) => {
         return next(new Error('User account not found'));
       }
 
+      if (req.user.isActive === false) {
+        res.status(403);
+        return next(new Error('This account has been deactivated. Contact an administrator.'));
+      }
+
       return next();
     } catch (error) {
       res.status(401);
