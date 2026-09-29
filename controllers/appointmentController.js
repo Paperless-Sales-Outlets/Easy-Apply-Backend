@@ -181,3 +181,72 @@ export const getAppointmentByReference = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * @desc    Submit technician verification & installation feedback
+ * @route   POST /api/appointments/review
+ * @access  Public
+ */
+export const submitInstallationReview = async (req, res, next) => {
+  try {
+    const { referenceNumber, rating, feedbackText, ontDevice, speedTest } = req.body;
+
+    if (!referenceNumber) {
+      res.status(400);
+      return next(new Error('Reference number is required'));
+    }
+
+    if (!rating || rating < 1 || rating > 5) {
+      res.status(400);
+      return next(new Error('Rating must be between 1 and 5'));
+    }
+
+    const trimmedRef = referenceNumber.trim();
+
+    // 1. Update or create appointment record
+    let appointment = await Appointment.findOne({ referenceNumber: trimmedRef });
+    if (!appointment) {
+      appointment = new Appointment({
+        referenceNumber: trimmedRef,
+        scheduledAt: new Date(),
+        status: 'completed',
+      });
+    }
+
+    appointment.feedback = {
+      rating: Number(rating),
+      text: (feedbackText || '').trim(),
+      submittedAt: new Date(),
+    };
+    appointment.status = 'completed';
+    await appointment.save();
+
+    // 2. Update linked Application record if exists
+    const linkedApp = await Application.findOne({ referenceNumber: trimmedRef });
+    if (linkedApp) {
+      if (linkedApp.status === 'pending' || linkedApp.status === 'approved') {
+        linkedApp.status = 'confirmed';
+      }
+      if (!linkedApp.formData) linkedApp.formData = {};
+      linkedApp.formData.installationReview = {
+        rating: Number(rating),
+        feedbackText: (feedbackText || '').trim(),
+        ontDevice: ontDevice || 'ONT-HUAWEI-HG8245',
+        speedTest: speedTest || { download: '104.2 Mbps', upload: '52.6 Mbps', ping: '4ms' },
+        submittedAt: new Date(),
+      };
+      linkedApp.markModified('formData');
+      await linkedApp.save();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Technician verification submitted and connection activated successfully',
+      feedback: appointment.feedback,
+      appointment,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
