@@ -1,15 +1,11 @@
 import User from '../../models/User.js';
-
-// Roles an Admin can create/manage from the User Management screen.
-// Customers are excluded — they self-register through the public app.
-export const MANAGEABLE_ROLES = ['Admin', 'Manager', 'SalesOfficer', 'CustomerCareOfficer'];
+import StaffRole from '../../models/StaffRole.js';
 
 const sanitizeUser = (u) => ({
   id: u._id,
   name: u.name,
   email: u.email,
-  phone: u.phone,
-  NIC: u.NIC,
+  employeeNumber: u.employeeNumber,
   role: u.role,
   permissions: u.permissions || [],
   isActive: u.isActive !== false,
@@ -17,12 +13,20 @@ const sanitizeUser = (u) => ({
   updatedAt: u.updatedAt,
 });
 
+// A role name is assignable through User Management if it's either the
+// reserved 'Admin' role or a role an Admin has defined in StaffRole.
+async function isAssignableRole(role) {
+  if (role === 'Admin') return true;
+  const exists = await StaffRole.findOne({ name: new RegExp(`^${role}$`, 'i') }).select('_id');
+  return !!exists;
+}
+
 // @desc    List staff/admin accounts managed through the admin User Management screen
 // @route   GET /api/admin/users
 // @access  Private (Admin)
 export const getAdminUsers = async (req, res, next) => {
   try {
-    const users = await User.find({ role: { $in: MANAGEABLE_ROLES } })
+    const users = await User.find({ role: { $ne: 'Customer' } })
       .sort({ createdAt: -1 })
       .lean();
 
@@ -36,19 +40,20 @@ export const getAdminUsers = async (req, res, next) => {
   }
 };
 
-// @desc    Create a Manager / Sales Officer / Customer Care Officer / Admin account
+// @desc    Create a staff account (Admin picks a role it has defined and assigns privileges)
 // @route   POST /api/admin/users
 // @access  Private (Admin)
 export const createAdminUser = async (req, res, next) => {
   try {
-    const { name, email, phone, NIC, password, role, permissions } = req.body;
+    const { name, email, employeeNumber, password, role, permissions } = req.body;
 
-    if (!name || !phone || !NIC || !password || !role) {
+    if (!name || !email || !employeeNumber || !password || !role) {
       res.status(400);
-      return next(new Error('Name, phone, NIC, password and role are required'));
+      return next(new Error('Employee number, name, email, password and role are required'));
     }
 
-    if (!MANAGEABLE_ROLES.includes(role)) {
+    // Admin accounts are not created from this screen.
+    if (role === 'Admin' || !(await isAssignableRole(role))) {
       res.status(400);
       return next(new Error('Invalid role selected'));
     }
@@ -58,28 +63,22 @@ export const createAdminUser = async (req, res, next) => {
       return next(new Error('Password must be at least 6 characters'));
     }
 
-    const cleanEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
-    const cleanNic = String(NIC).trim().toUpperCase();
-    const digitsOnly = String(phone).replace(/\D/g, '');
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanEmployeeNumber = String(employeeNumber).trim();
 
     const existing = await User.findOne({
-      $or: [
-        ...(cleanEmail ? [{ email: cleanEmail }] : []),
-        { phone: digitsOnly },
-        { NIC: cleanNic },
-      ],
+      $or: [{ email: cleanEmail }, { employeeNumber: cleanEmployeeNumber }],
     }).select('_id');
 
     if (existing) {
       res.status(409);
-      return next(new Error('A user with this email, phone number, or NIC already exists'));
+      return next(new Error('A user with this email or employee number already exists'));
     }
 
     const user = await User.create({
       name,
-      ...(cleanEmail ? { email: cleanEmail } : {}),
-      phone: digitsOnly,
-      NIC: cleanNic,
+      email: cleanEmail,
+      employeeNumber: cleanEmployeeNumber,
       password,
       role,
       permissions: Array.isArray(permissions) ? permissions : [],
@@ -90,7 +89,7 @@ export const createAdminUser = async (req, res, next) => {
   } catch (error) {
     if (error.code === 11000) {
       res.status(409);
-      return next(new Error('A user with this email, phone number, or NIC already exists'));
+      return next(new Error('A user with this email or employee number already exists'));
     }
     next(error);
   }
@@ -102,19 +101,15 @@ export const createAdminUser = async (req, res, next) => {
 export const updateAdminUser = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, email, phone, NIC, role, permissions, isActive, password } = req.body;
+    const { name, email, employeeNumber, role, permissions, isActive, password } = req.body;
 
     const user = await User.findById(id);
-    if (!user || !MANAGEABLE_ROLES.includes(user.role)) {
+    if (!user || user.role === 'Customer') {
       res.status(404);
       return next(new Error('User not found'));
     }
 
     if (role !== undefined && role !== user.role) {
-      if (!MANAGEABLE_ROLES.includes(role)) {
-        res.status(400);
-        return next(new Error('Invalid role selected'));
-      }
       // Administrator accounts are not managed through this screen — changing
       // an account to or from Admin here has previously caused an admin to
       // accidentally demote their own account. Role changes here are limited
@@ -123,15 +118,30 @@ export const updateAdminUser = async (req, res, next) => {
         res.status(400);
         return next(new Error('Administrator accounts cannot be re-assigned from User Management'));
       }
+      if (!(await isAssignableRole(role))) {
+        res.status(400);
+        return next(new Error('Invalid role selected'));
+      }
       user.role = role;
     }
 
     if (name) user.name = name;
     if (email !== undefined) {
-      user.email = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
+      const cleanEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
+      if (!cleanEmail) {
+        res.status(400);
+        return next(new Error('Email address is required'));
+      }
+      user.email = cleanEmail;
     }
-    if (phone) user.phone = String(phone).replace(/\D/g, '');
-    if (NIC) user.NIC = String(NIC).trim().toUpperCase();
+    if (employeeNumber !== undefined) {
+      const cleanEmployeeNumber = String(employeeNumber).trim();
+      if (!cleanEmployeeNumber) {
+        res.status(400);
+        return next(new Error('Employee number is required'));
+      }
+      user.employeeNumber = cleanEmployeeNumber;
+    }
     if (Array.isArray(permissions)) user.permissions = permissions;
     if (typeof isActive === 'boolean') {
       if (isActive === false && String(req.user?._id) === String(user._id)) {
@@ -153,7 +163,7 @@ export const updateAdminUser = async (req, res, next) => {
   } catch (error) {
     if (error.code === 11000) {
       res.status(409);
-      return next(new Error('A user with this email, phone number, or NIC already exists'));
+      return next(new Error('A user with this email or employee number already exists'));
     }
     next(error);
   }
@@ -172,7 +182,7 @@ export const deleteAdminUser = async (req, res, next) => {
     }
 
     const user = await User.findById(id);
-    if (!user || !MANAGEABLE_ROLES.includes(user.role)) {
+    if (!user || user.role === 'Customer') {
       res.status(404);
       return next(new Error('User not found'));
     }

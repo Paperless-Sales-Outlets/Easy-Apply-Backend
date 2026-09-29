@@ -23,15 +23,29 @@ const userSchema = new mongoose.Schema(
       ],
     },
     phone: {
+      // Required for customers (enforced in the registration controller) but
+      // not collected for staff accounts created from User Management, which
+      // identify staff by employeeNumber instead. `sparse` keeps the unique
+      // index from treating every phone-less staff account as a duplicate.
       type: String,
-      required: [true, 'Phone number is required'],
       unique: true,
+      sparse: true,
       trim: true,
     },
+    // Free-form role name. 'Customer' and 'Admin' are reserved system roles;
+    // any other value is the name of a StaffRole an Admin defined and
+    // maintains from User Management.
     role: {
       type: String,
-      enum: ['Customer', 'Staff', 'Admin', 'Manager', 'SalesOfficer', 'CustomerCareOfficer'],
       default: 'Customer',
+    },
+    // Unique staff identifier, collected instead of NIC/phone when an Admin
+    // creates a Manager / Sales Officer / etc. account from User Management.
+    employeeNumber: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
     },
     // Module keys (see admin MODULE_ACCESS) this staff account can access,
     // assigned by an Admin when the account is created or edited.
@@ -49,9 +63,11 @@ const userSchema = new mongoose.Schema(
       ref: 'User',
     },
     NIC: {
+      // Required for customers (enforced in the registration controller) but
+      // not collected for staff accounts — see employeeNumber above.
       type: String,
-      required: [true, 'NIC / Passport / BR Number is required'],
       unique: true,
+      sparse: true,
       trim: true,
       uppercase: true,
     },

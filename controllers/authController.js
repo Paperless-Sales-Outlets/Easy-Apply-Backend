@@ -85,6 +85,7 @@ export const publicUser = (user) => ({
   phone: user.phone,
   role: user.role,
   NIC: user.NIC,
+  employeeNumber: user.employeeNumber,
   title: user.title,
   dob: user.dob,
   gender: user.gender,
