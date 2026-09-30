@@ -3,8 +3,7 @@ name: Deploy Backend
 on:
   push:
     branches:
-      - main
-      - main-v3
+      - new-flow
   workflow_dispatch: # Allows manual triggering from the Actions tab
 
 jobs:
@@ -17,29 +16,19 @@ jobs:
 
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          envs: BACKEND_ENV
           script: |
             set -e
 
-            # 1. Determine folder, port, and PM2 process name based on branch
-            if [ "${{ github.ref_name }}" = "main" ]; then
-              TARGET_DIR="$HOME/paperless_project/Easy-Apply-Backend"
-              PORT="5002"
-              PM2_NAME="easy-apply-backend"
-            else
-              TARGET_DIR="$HOME/paperless_project_backup/Easy-Apply-Backend"
-              PORT="5003"
-              PM2_NAME="easy-apply-backend-backup"
-            fi
+            # 1. Target directory and PM2 process name
+            TARGET_DIR="$HOME/paperless_project/Easy-Apply-Backend"
+            PM2_NAME="easy-apply-backend-backup"
 
-            echo "Starting deployment for branch: ${{ github.ref_name }} to directory: $TARGET_DIR on port: $PORT"
+            echo "Starting deployment for branch: ${{ github.ref_name }} to directory: $TARGET_DIR using PM2: $PM2_NAME"
 
             # 2. Navigate to project folder
             cd "$TARGET_DIR" || { echo "Directory $TARGET_DIR not found"; exit 1; }
