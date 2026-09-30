@@ -1,5 +1,5 @@
 import Appointment from '../../models/Appointment.js';
-import User from '../../models/User.js';
+import Customer from '../../models/Customer.js';
 
 // @desc    Get appointments — filterable by date range, technician, status
 // @route   GET /api/admin/appointments
@@ -57,7 +57,7 @@ export const getAppointments = async (req, res, next) => {
 // @access  Private (Admin / Staff only)
 export const getTechnicians = async (req, res, next) => {
   try {
-    const technicians = await User.find({ role: { $in: ['Staff', 'Admin'] } })
+    const technicians = await Customer.find({ role: { $in: ['Staff', 'Admin'] } })
       .select('name email phone role')
       .sort({ name: 1 })
       .lean();
@@ -78,7 +78,7 @@ export const assignTechnician = async (req, res, next) => {
 
     const updates = {};
     if (technicianId) {
-      const tech = await User.findById(technicianId).select('name');
+      const tech = await Customer.findById(technicianId).select('name');
       if (!tech) {
         res.status(404);
         return next(new Error('Technician not found'));

@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
-import User from '../models/User.js';
+import Customer from '../models/Customer.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
 
@@ -20,8 +20,8 @@ export const checkPhone = async (req, res, next) => {
     const digitsOnly = String(phone).replace(/\D/g, '');
     const last9 = digitsOnly.slice(-9);
 
-    // 1. Try finding in the App User database
-    const user = await User.findOne({
+    // 1. Try finding in the Customer database
+    const customer = await Customer.findOne({
       $or: [
         { phone: phone },
         { phone: digitsOnly },
@@ -32,9 +32,9 @@ export const checkPhone = async (req, res, next) => {
       ],
     }).select('_id');
     
-    let registered = !!user;
+    let registered = !!customer;
 
-    // 2. If not found in App Users, check if they are an existing SLT Customer
+    // 2. If not found in Customers, check if they are an existing SLT Customer connection/application
     if (!registered) {
       if (mongoose.connection.readyState === 1) {
         const Connection = mongoose.models.Connection || mongoose.model('Connection');
@@ -76,30 +76,33 @@ export const checkPhone = async (req, res, next) => {
 };
 
 
-// The user fields safe to return to the client. Kept in one place so
+// The customer fields safe to return to the client. Kept in one place so
 // register, login and /me all expose the same profile.
-export const publicUser = (user) => ({
-  id: user._id,
-  name: user.name,
-  email: user.email,
-  phone: user.phone,
-  role: user.role,
-  NIC: user.NIC,
-  title: user.title,
-  dob: user.dob,
-  gender: user.gender,
-  nationality: user.nationality,
-  contactNumber: user.contactNumber,
-  addressLine1: user.addressLine1,
-  addressLine2: user.addressLine2,
-  city: user.city,
-  district: user.district,
-  postalCode: user.postalCode,
-  preferredContact: user.preferredContact,
+export const publicCustomer = (customer) => ({
+  id: customer._id,
+  name: customer.name,
+  email: customer.email,
+  phone: customer.phone,
+  role: customer.role,
+  NIC: customer.NIC,
+  title: customer.title,
+  dob: customer.dob,
+  gender: customer.gender,
+  nationality: customer.nationality,
+  contactNumber: customer.contactNumber,
+  addressLine1: customer.addressLine1,
+  addressLine2: customer.addressLine2,
+  city: customer.city,
+  district: customer.district,
+  postalCode: customer.postalCode,
+  preferredContact: customer.preferredContact,
   // Ids only — the images are served admin-only via /api/files/:id.
-  identityDocuments: user.identityDocuments || null,
-  hasIdentityDocuments: !!(user.identityDocuments && user.identityDocuments.facePhoto),
+  identityDocuments: customer.identityDocuments || null,
+  hasIdentityDocuments: !!(customer.identityDocuments && customer.identityDocuments.facePhoto),
 });
+
+export const publicUser = publicCustomer;
+
 
 
 /**
@@ -153,33 +156,38 @@ const generateRefreshToken = (user) => {
   );
 };
 
-// @desc    Get all users (admin only)
-// @route   GET /api/auth/users
+// @desc    Get all customers / users (admin only)
+// @route   GET /api/auth/users, GET /api/auth/customers
 // @access  Private (Admin)
-export const getUsers = async (req, res, next) => {
+export const getCustomers = async (req, res, next) => {
   try {
-    const users = await User.find()
+    const customers = await Customer.find()
       .select('name email phone role NIC createdAt')
       .sort({ createdAt: -1 })
       .lean();
 
+    const formatted = customers.map(c => ({
+      id: c._id,
+      name: c.name,
+      email: c.email,
+      phone: c.phone,
+      role: c.role,
+      NIC: c.NIC,
+      createdAt: c.createdAt,
+    }));
+
     res.status(200).json({
       success: true,
-      count: users.length,
-      users: users.map(u => ({
-        id: u._id,
-        name: u.name,
-        email: u.email,
-        phone: u.phone,
-        role: u.role,
-        NIC: u.NIC,
-        createdAt: u.createdAt,
-      })),
+      count: formatted.length,
+      customers: formatted,
+      users: formatted,
     });
   } catch (error) {
     next(error);
   }
 };
+
+export const getUsers = getCustomers;
 
 // @desc    Send OTP to mobile number
 // @route   POST /api/auth/send-otp
@@ -263,10 +271,7 @@ export const verifyOtp = async (req, res, next) => {
   }
 };
 
-// @desc    Register a new user
-// @route   POST /api/auth/register
-// @access  Public
-// @desc    Register a new user
+// @desc    Register a new customer / user
 // @route   POST /api/auth/register
 // @access  Public
 export const register = async (req, res, next) => {
@@ -288,8 +293,8 @@ export const register = async (req, res, next) => {
     const cleanNic = String(NIC).trim().toUpperCase();
     const cleanEmail = email && typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : undefined;
 
-    // Check if user already exists by phone, last9, or NIC
-    let user = await User.findOne({
+    // Check if customer already exists by phone, last9, or NIC
+    let customer = await Customer.findOne({
       $or: [
         ...(cleanEmail ? [{ email: cleanEmail }] : []),
         { phone: digitsOnly },
@@ -301,27 +306,27 @@ export const register = async (req, res, next) => {
       ],
     });
 
-    if (user) {
-      // User exists -> Update profile details seamlessly
-      user.name = name || user.name;
-      if (cleanEmail) user.email = cleanEmail;
-      user.NIC = cleanNic;
-      user.phone = digitsOnly;
-      if (title) user.title = title;
-      if (dob) user.dob = dob;
-      if (gender) user.gender = gender;
-      if (nationality) user.nationality = nationality;
-      if (contactNumber) user.contactNumber = contactNumber;
-      if (addressLine1) user.addressLine1 = addressLine1;
-      if (addressLine2) user.addressLine2 = addressLine2;
-      if (city) user.city = city;
-      if (district) user.district = district;
-      if (postalCode) user.postalCode = postalCode;
-      if (preferredContact) user.preferredContact = preferredContact;
-      await user.save();
+    if (customer) {
+      // Customer exists -> Update profile details seamlessly
+      customer.name = name || customer.name;
+      if (cleanEmail) customer.email = cleanEmail;
+      customer.NIC = cleanNic;
+      customer.phone = digitsOnly;
+      if (title) customer.title = title;
+      if (dob) customer.dob = dob;
+      if (gender) customer.gender = gender;
+      if (nationality) customer.nationality = nationality;
+      if (contactNumber) customer.contactNumber = contactNumber;
+      if (addressLine1) customer.addressLine1 = addressLine1;
+      if (addressLine2) customer.addressLine2 = addressLine2;
+      if (city) customer.city = city;
+      if (district) customer.district = district;
+      if (postalCode) customer.postalCode = postalCode;
+      if (preferredContact) customer.preferredContact = preferredContact;
+      await customer.save();
     } else {
-      // Create new user document
-      user = await User.create({
+      // Create new customer document
+      customer = await Customer.create({
         name,
         ...(cleanEmail ? { email: cleanEmail } : {}),
         phone: digitsOnly,
@@ -345,39 +350,42 @@ export const register = async (req, res, next) => {
     // Persist identity images if provided
     try {
       const [frontId, backId, faceId] = await Promise.all([
-        storeIdentityImage(nicFront, 'nic-front', user._id),
-        storeIdentityImage(nicBack, 'nic-back', user._id),
-        storeIdentityImage(facePhoto, 'face-photo', user._id),
+        storeIdentityImage(nicFront, 'nic-front', customer._id),
+        storeIdentityImage(nicBack, 'nic-back', customer._id),
+        storeIdentityImage(facePhoto, 'face-photo', customer._id),
       ]);
 
       if (frontId || backId || faceId) {
-        user.identityDocuments = {
-          nicFront: frontId || user.identityDocuments?.nicFront,
-          nicBack: backId || user.identityDocuments?.nicBack,
-          facePhoto: faceId || user.identityDocuments?.facePhoto,
+        customer.identityDocuments = {
+          nicFront: frontId || customer.identityDocuments?.nicFront,
+          nicBack: backId || customer.identityDocuments?.nicBack,
+          facePhoto: faceId || customer.identityDocuments?.facePhoto,
           capturedAt: new Date(),
         };
-        await user.save();
+        await customer.save();
       }
     } catch (uploadErr) {
-      console.error('Identity document storage failed for', String(user._id), uploadErr.message);
+      console.error('Identity document storage failed for', String(customer._id), uploadErr.message);
     }
 
     // Generate tokens
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
+    const accessToken = generateAccessToken(customer);
+    const refreshToken = generateRefreshToken(customer);
 
     // Save refresh token to DB
     const decodedRefresh = jwt.decode(refreshToken);
     await RefreshToken.create({
-      userId: user._id,
+      userId: customer._id,
       token: refreshToken,
       expiresAt: new Date(decodedRefresh.exp * 1000),
     });
 
+    const publicProfile = publicCustomer(customer);
+
     res.status(201).json({
       success: true,
-      user: publicUser(user),
+      customer: publicProfile,
+      user: publicProfile,
       accessToken,
       refreshToken,
     });
@@ -386,7 +394,7 @@ export const register = async (req, res, next) => {
   }
 };
 
-// @desc    Login user
+// @desc    Login customer
 // @route   POST /api/auth/login
 // @access  Public
 /**
@@ -406,16 +414,16 @@ export const login = async (req, res, next) => {
   }
 
   try {
-    // Find user and explicitly select password
-    const user = await User.findOne({ email }).select('+password');
+    // Find customer and explicitly select password
+    const customer = await Customer.findOne({ email }).select('+password');
 
-    if (!user) {
+    if (!customer) {
       res.status(401);
       return next(new Error('Invalid email or password'));
     }
 
     // Check password matches
-    const isMatch = await user.matchPassword(password);
+    const isMatch = await customer.matchPassword(password);
 
     if (!isMatch) {
       res.status(401);
@@ -423,20 +431,23 @@ export const login = async (req, res, next) => {
     }
 
     // Generate tokens
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
+    const accessToken = generateAccessToken(customer);
+    const refreshToken = generateRefreshToken(customer);
 
     // Save refresh token to DB
     const decodedRefresh = jwt.decode(refreshToken);
     await RefreshToken.create({
-      userId: user._id,
+      userId: customer._id,
       token: refreshToken,
       expiresAt: new Date(decodedRefresh.exp * 1000),
     });
 
+    const publicProfile = publicCustomer(customer);
+
     res.status(200).json({
       success: true,
-      user: publicUser(user),
+      customer: publicProfile,
+      user: publicProfile,
       accessToken,
       refreshToken,
     });
@@ -495,7 +506,7 @@ export const otpLogin = async (req, res, next) => {
 
     // 2. Find the registered account. Numbers are stored in several shapes
     //    across the data set, so match on all of them.
-    const user = await User.findOne({
+    const customer = await Customer.findOne({
       $or: [
         { phone: String(phone).trim() },
         { phone: digitsOnly },
@@ -506,24 +517,27 @@ export const otpLogin = async (req, res, next) => {
       ],
     });
 
-    if (!user) {
+    if (!customer) {
       res.status(404);
       return next(new Error('No account is registered to this number. Please create one first.'));
     }
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
+    const accessToken = generateAccessToken(customer);
+    const refreshToken = generateRefreshToken(customer);
 
     const decodedRefresh = jwt.decode(refreshToken);
     await RefreshToken.create({
-      userId: user._id,
+      userId: customer._id,
       token: refreshToken,
       expiresAt: new Date(decodedRefresh.exp * 1000),
     });
 
+    const publicProfile = publicCustomer(customer);
+
     res.status(200).json({
       success: true,
-      user: publicUser(user),
+      customer: publicProfile,
+      user: publicProfile,
       accessToken,
       refreshToken,
     });
@@ -555,16 +569,16 @@ export const refresh = async (req, res, next) => {
     // Verify token validity
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
 
-    // Find the user
-    const user = await User.findById(decoded.id);
+    // Find the customer
+    const customer = await Customer.findById(decoded.id);
 
-    if (!user) {
+    if (!customer) {
       res.status(401);
-      return next(new Error('User not found'));
+      return next(new Error('Customer account not found'));
     }
 
     // Generate new access token
-    const newAccessToken = generateAccessToken(user);
+    const newAccessToken = generateAccessToken(customer);
 
     res.status(200).json({
       success: true,
@@ -577,7 +591,7 @@ export const refresh = async (req, res, next) => {
   }
 };
 
-// @desc    Logout user & invalidate refresh token
+// @desc    Logout customer & invalidate refresh token
 // @route   POST /api/auth/logout
 // @access  Public
 export const logout = async (req, res, next) => {
@@ -651,8 +665,8 @@ export const verifyEntry = async (req, res, next) => {
       });
     }
 
-    // 2. Check if customer is registered in User collection by phone or NIC
-    const user = await User.findOne({
+    // 2. Check if customer is registered in Customer collection by phone or NIC
+    const customer = await Customer.findOne({
       $or: [
         { phone: String(phone).trim() },
         { phone: digitsOnly },
@@ -664,23 +678,26 @@ export const verifyEntry = async (req, res, next) => {
       ],
     });
 
-    if (user) {
-      // Existing registered user -> direct login
-      const accessToken = generateAccessToken(user);
-      const refreshToken = generateRefreshToken(user);
+    if (customer) {
+      // Existing registered customer -> direct login
+      const accessToken = generateAccessToken(customer);
+      const refreshToken = generateRefreshToken(customer);
 
       const decodedRefresh = jwt.decode(refreshToken);
       await RefreshToken.create({
-        userId: user._id,
+        userId: customer._id,
         token: refreshToken,
         expiresAt: new Date(decodedRefresh.exp * 1000),
       });
+
+      const publicProfile = publicCustomer(customer);
 
       return res.status(200).json({
         success: true,
         existing: true,
         message: 'Existing customer authenticated',
-        user: publicUser(user),
+        customer: publicProfile,
+        user: publicProfile,
         accessToken,
         refreshToken,
       });

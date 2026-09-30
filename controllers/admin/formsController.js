@@ -1,5 +1,5 @@
 import Form from '../../models/admin/formModel.js';
-import User from '../../models/User.js';
+import Customer from '../../models/Customer.js';
 
 // GET /api/admin/forms
 export const getForms = async (req, res, next) => {
@@ -48,7 +48,8 @@ export const getFormById = async (req, res, next) => {
 export const createForm = async (req, res, next) => {
   try {
     const { formType, data, status } = req.body;
-    const form = await Form.create({ formType, data, status, createdBy: req.user && req.user._id });
+    const userObj = req.customer || req.user;
+    const form = await Form.create({ formType, data, status, createdBy: userObj && userObj._id });
     res.status(201).json({ success: true, form });
   } catch (error) {
     next(error);
@@ -96,7 +97,8 @@ export const addComment = async (req, res, next) => {
       return next(new Error('Comment text is required'));
     }
 
-    const comment = { text: text.trim(), author: req.user ? req.user._id : undefined };
+    const userObj = req.customer || req.user;
+    const comment = { text: text.trim(), author: userObj ? userObj._id : undefined };
 
     const form = await Form.findByIdAndUpdate(
       id,
