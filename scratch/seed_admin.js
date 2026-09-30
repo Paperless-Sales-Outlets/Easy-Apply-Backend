@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import path from 'path';
-import User from '../models/User.js';
+import Customer from '../models/Customer.js';
 
 // Load .env configuration
 dotenv.config({ path: path.resolve('.env') });
@@ -16,7 +16,7 @@ const seedAdmin = async () => {
     console.log('MongoDB Connected successfully.');
 
     const email = 'admin@slt.lk';
-    const exists = await User.findOne({ email });
+    const exists = await Customer.findOne({ email });
 
     if (exists) {
       exists.password = 'admin123';
@@ -25,7 +25,7 @@ const seedAdmin = async () => {
       console.log(`Email:    ${email}`);
       console.log(`Password: admin123`);
     } else {
-      await User.create({
+      await Customer.create({
         name: 'EasyApply Admin',
         email,
         phone: '0112345678',

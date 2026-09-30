@@ -7,10 +7,12 @@ import {
   refresh,
   logout,
   getUsers,
+  getCustomers,
   checkPhone,
   otpLogin,
   verifyEntry,
   publicUser,
+  publicCustomer,
 } from '../controllers/authController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
 
@@ -29,11 +31,14 @@ router.post('/check-phone', checkPhone);
 
 // Protected routes
 router.get('/users', protect, authorize('Admin'), getUsers);
+router.get('/customers', protect, authorize('Admin'), getCustomers);
 
 router.get('/me', protect, (req, res) => {
+  const profile = publicCustomer(req.customer || req.user);
   res.status(200).json({
     success: true,
-    user: publicUser(req.user),
+    customer: profile,
+    user: profile,
   });
 });
 

@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
-import User from '../models/User.js';
+import Customer from '../models/Customer.js';
 import Appointment from '../models/Appointment.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
 
@@ -44,9 +44,9 @@ export const createApplication = async (req, res, next) => {
     // Extract NIC
     let nic = formData?.nic || formData?.NIC || req.body.nic;
     if (!nic) {
-      // Try resolving NIC from existing user
+      // Try resolving NIC from existing customer
       try {
-        const existingUser = await User.findOne({
+        const existingCustomer = await Customer.findOne({
           $or: [
             { phone: digitsOnly },
             { phone: last9 },
@@ -54,7 +54,7 @@ export const createApplication = async (req, res, next) => {
             { phone: `+94${last9}` },
           ],
         }).select('NIC');
-        if (existingUser?.NIC) nic = existingUser.NIC;
+        if (existingCustomer?.NIC) nic = existingCustomer.NIC;
       } catch (_) {}
     }
 
@@ -133,9 +133,9 @@ export const createApplication = async (req, res, next) => {
 
     // MongoDB available
     if (mongoose.connection.readyState === 1) {
-      // 1. Ensure User document exists in database
+      // 1. Ensure Customer document exists in database
       try {
-        let userRecord = await User.findOne({
+        let customerRecord = await Customer.findOne({
           $or: [
             { phone: digitsOnly },
             { phone: last9 },
@@ -155,8 +155,8 @@ export const createApplication = async (req, res, next) => {
 
         const addressLine = formData.installAddress || formData.address || formData.addressLine1 || '';
 
-        if (!userRecord) {
-          userRecord = await User.create({
+        if (!customerRecord) {
+          customerRecord = await Customer.create({
             name: customerName,
             phone: digitsOnly,
             role: 'Customer',
@@ -174,27 +174,27 @@ export const createApplication = async (req, res, next) => {
           });
         } else {
           // Update address or name if empty
-          if (!userRecord.addressLine1 && addressLine) userRecord.addressLine1 = addressLine;
-          if (!userRecord.city && formData.city) userRecord.city = formData.city;
-          if (!userRecord.district && formData.district) userRecord.district = formData.district;
-          if (!userRecord.postalCode && formData.postalCode) userRecord.postalCode = formData.postalCode;
-          await userRecord.save();
+          if (!customerRecord.addressLine1 && addressLine) customerRecord.addressLine1 = addressLine;
+          if (!customerRecord.city && formData.city) customerRecord.city = formData.city;
+          if (!customerRecord.district && formData.district) customerRecord.district = formData.district;
+          if (!customerRecord.postalCode && formData.postalCode) customerRecord.postalCode = formData.postalCode;
+          await customerRecord.save();
         }
 
-        // Attach user identity documents if not directly provided in current form
-        if (userRecord?.identityDocuments) {
-          if (!formData.documents.nicFront && userRecord.identityDocuments.nicFront) {
-            formData.documents.nicFront = userRecord.identityDocuments.nicFront;
+        // Attach customer identity documents if not directly provided in current form
+        if (customerRecord?.identityDocuments) {
+          if (!formData.documents.nicFront && customerRecord.identityDocuments.nicFront) {
+            formData.documents.nicFront = customerRecord.identityDocuments.nicFront;
           }
-          if (!formData.documents.nicBack && userRecord.identityDocuments.nicBack) {
-            formData.documents.nicBack = userRecord.identityDocuments.nicBack;
+          if (!formData.documents.nicBack && customerRecord.identityDocuments.nicBack) {
+            formData.documents.nicBack = customerRecord.identityDocuments.nicBack;
           }
-          if (!formData.documents.facePhoto && userRecord.identityDocuments.facePhoto) {
-            formData.documents.facePhoto = userRecord.identityDocuments.facePhoto;
+          if (!formData.documents.facePhoto && customerRecord.identityDocuments.facePhoto) {
+            formData.documents.facePhoto = customerRecord.identityDocuments.facePhoto;
           }
         }
-      } catch (userErr) {
-        console.warn('Auto User persistence notice:', userErr.message);
+      } catch (customerErr) {
+        console.warn('Auto Customer persistence notice:', customerErr.message);
       }
 
       // 2. Create Application document

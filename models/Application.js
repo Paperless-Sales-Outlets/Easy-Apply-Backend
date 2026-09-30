@@ -54,9 +54,10 @@ const applicationSchema = new mongoose.Schema(
     },
     actionedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'Customer',
       default: null,
     },
+
     actionedAt: {
       type: Date,
       default: null,
