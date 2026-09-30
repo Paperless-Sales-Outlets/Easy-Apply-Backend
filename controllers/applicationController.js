@@ -2,7 +2,9 @@ import mongoose from 'mongoose';
 import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
 import User from '../models/User.js';
+import Appointment from '../models/Appointment.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
+
 
 // @desc    Submit a new service application
 // @route   POST /api/applications
@@ -371,9 +373,15 @@ export const checkApplicationStatus = async (req, res, next) => {
       );
     }
 
+    // Look up any scheduled installation appointment
+    const appointment = await Appointment.findOne({
+      $or: [
+        { referenceNumber: application.referenceNumber },
+        { applicationId: application._id },
+      ],
+    }).lean();
 
     res.status(200).json({
-
       success: true,
       referenceNumber: application.referenceNumber,
       status: application.status,
@@ -381,6 +389,27 @@ export const checkApplicationStatus = async (req, res, next) => {
       customerName: application.formData?.nameFull || application.formData?.contactName || application.formData?.fullName || '',
       telephone: application.phone || '',
       notes: application.notes || '',
+      formData: application.formData || {},
+      officeFields: application.officeFields || {},
+      appointment: appointment
+        ? {
+            scheduledAt: appointment.scheduledAt,
+            timeSlot: appointment.timeSlot,
+            dispatchId: appointment.dispatchId,
+            status: appointment.status,
+            landmarkNotes: appointment.landmarkNotes,
+            feedback: appointment.feedback || null,
+          }
+        : application.officeFields?.appointmentDate
+        ? {
+            scheduledAt: application.officeFields.appointmentDate,
+            timeSlot: 'Morning (08.30 AM - 12.00 PM)',
+            dispatchId: 'OPMC-JOB-DISPATCH',
+            status: 'scheduled',
+          }
+        : null,
+
+      feedback: application.formData?.installationReview || appointment?.feedback || null,
       actionedBy: application.actionedBy
         ? {
             _id: application.actionedBy._id,
@@ -391,15 +420,11 @@ export const checkApplicationStatus = async (req, res, next) => {
         : null,
       actionedAt: application.actionedAt || null,
       createdAt: application.createdAt,
-
     });
-
-
   } catch (error) {
-
     next(error);
-
   }
+
 
 };
 

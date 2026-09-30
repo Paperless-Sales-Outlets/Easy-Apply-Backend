@@ -50,8 +50,9 @@ const appointmentSchema = new mongoose.Schema(
     timeSlot: {
       type: String,
       trim: true,
-      default: 'Morning (9:00 AM - 12:00 PM)',
+      default: 'Morning (08.30 AM - 12.00 PM)',
     },
+
     landmarkNotes: {
       type: String,
       trim: true,

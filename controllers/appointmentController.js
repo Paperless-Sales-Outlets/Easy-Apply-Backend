@@ -77,7 +77,7 @@ export const scheduleInstallation = async (req, res, next) => {
 
     if (appointment) {
       appointment.scheduledAt = parsedDate;
-      appointment.timeSlot = timeSlot || appointment.timeSlot || 'Morning (9:00 AM - 12:00 PM)';
+      appointment.timeSlot = timeSlot || appointment.timeSlot || 'Morning (08.30 AM - 12.00 PM)';
       appointment.landmarkNotes = landmarkNotes || appointment.landmarkNotes || '';
       if (!appointment.dispatchId) appointment.dispatchId = dispatchId;
       if (finalCustomerName) appointment.customerName = finalCustomerName;
@@ -94,12 +94,13 @@ export const scheduleInstallation = async (req, res, next) => {
         address: finalAddress || 'Service Address',
         serviceType: finalServiceType,
         scheduledAt: parsedDate,
-        timeSlot: timeSlot || 'Morning (9:00 AM - 12:00 PM)',
+        timeSlot: timeSlot || 'Morning (08.30 AM - 12.00 PM)',
         landmarkNotes: landmarkNotes || '',
         dispatchId,
         status: 'scheduled',
       });
     }
+
 
     res.status(200).json({
       success: true,
