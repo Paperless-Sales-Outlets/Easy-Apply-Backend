@@ -57,6 +57,7 @@ const applicationSchema = new mongoose.Schema(
       ref: 'User',
       default: null,
     },
+
     actionedAt: {
       type: Date,
       default: null,

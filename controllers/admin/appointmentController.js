@@ -57,7 +57,7 @@ export const getAppointments = async (req, res, next) => {
 // @access  Private (Admin / Staff only)
 export const getTechnicians = async (req, res, next) => {
   try {
-    const technicians = await User.find({ role: { $in: ['Staff', 'Admin'] } })
+    const technicians = await User.find({ isActive: { $ne: false } })
       .select('name email phone role')
       .sort({ name: 1 })
       .lean();

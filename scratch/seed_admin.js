@@ -28,8 +28,6 @@ const seedAdmin = async () => {
       await User.create({
         name: 'EasyApply Admin',
         email,
-        phone: '0112345678',
-        NIC: '990000000V',
         password: 'admin123',
         role: 'Admin',
       });
