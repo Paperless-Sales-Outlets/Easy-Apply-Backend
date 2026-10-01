@@ -406,7 +406,12 @@ export const register = async (req, res, next) => {
  * one, and so existing integrations don't 404.
  */
 export const login = async (req, res, next) => {
-  const { email, password } = req.body;
+  const { password } = req.body;
+
+  // Addresses are stored lower-cased by the schema, but Mongo compares strings
+  // case-sensitively, so an unnormalised lookup would reject a legitimate
+  // account the moment someone typed "Admin@SLT.lk".
+  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
 
   if (!email || !password) {
     res.status(400);
