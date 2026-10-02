@@ -1,7 +1,19 @@
 import StaffRole from '../../models/StaffRole.js';
 import User from '../../models/User.js';
+import Privilege from '../../models/Privilege.js';
 
 const RESERVED_NAMES = new Set(['admin', 'customer']);
+
+// Built-in module keys the admin sidebar understands. They are seeded into the
+// Privileges collection on its first listing, so accept them even before that.
+const BUILT_IN_KEYS = ['dashboard', 'kyc', 'appointments', 'technician', 'forms', 'analytics'];
+
+// Returns the first key that is not a privilege defined in the Privileges tab.
+async function findUnknownPrivilege(permissions) {
+  if (!Array.isArray(permissions) || permissions.length === 0) return null;
+  const known = new Set((await Privilege.find({ key: { $in: permissions } }).select('key').lean()).map((p) => p.key));
+  return permissions.find((k) => !known.has(k) && !BUILT_IN_KEYS.includes(k)) || null;
+}
 
 const sanitizeRole = (r, userCount = 0) => ({
   id: r._id,
@@ -57,6 +69,12 @@ export const createStaffRole = async (req, res, next) => {
       return next(new Error('A role with this name already exists'));
     }
 
+    const unknown = await findUnknownPrivilege(permissions);
+    if (unknown) {
+      res.status(400);
+      return next(new Error(`Unknown privilege "${unknown}"`));
+    }
+
     const role = await StaffRole.create({
       name: cleanName,
       permissions: Array.isArray(permissions) ? permissions : [],
@@ -110,7 +128,14 @@ export const updateStaffRole = async (req, res, next) => {
       role.name = cleanName;
     }
 
-    if (Array.isArray(permissions)) role.permissions = permissions;
+    if (Array.isArray(permissions)) {
+      const unknown = await findUnknownPrivilege(permissions);
+      if (unknown) {
+        res.status(400);
+        return next(new Error(`Unknown privilege "${unknown}"`));
+      }
+      role.permissions = permissions;
+    }
 
     await role.save();
 
