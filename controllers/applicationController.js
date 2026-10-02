@@ -213,6 +213,33 @@ export const createApplication = async (req, res, next) => {
             }
           : undefined,
       });
+
+      // 3. Auto-create Appointment if installation scheduling details are provided in formData
+      const schedDate = formData.installationDate || formData.appointmentDate;
+      if (schedDate) {
+        try {
+          const apptDate = new Date(schedDate);
+          const dispatchId = `OPMC-JOB-${Math.floor(10000 + Math.random() * 90000)}`;
+          const customerName = formData.nameFull || formData.fullName || 'Customer';
+          const installAddress = formData.installAddress || formData.address || 'Installation Address';
+
+          await Appointment.create({
+            applicationId: application._id,
+            referenceNumber: application.referenceNumber,
+            customerName,
+            phone: verifiedPhone,
+            address: installAddress,
+            serviceType,
+            scheduledAt: apptDate,
+            timeSlot: formData.installationTimeSlot || formData.timeSlot || 'Morning (08.30 AM - 12.00 PM)',
+            landmarkNotes: formData.landmarkNotes || '',
+            dispatchId,
+            status: 'scheduled',
+          });
+        } catch (apptErr) {
+          console.warn('Auto-create appointment notice:', apptErr.message);
+        }
+      }
     }
 
     // Offline fallback mode
