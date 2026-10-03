@@ -1,5 +1,5 @@
+import 'dotenv/config';
 import express from 'express';
-import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -33,8 +33,6 @@ import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
 import { protect, authorize } from './middleware/authMiddleware.js';
 
 
-// Load environmental variables
-dotenv.config();
 
 
 // Connect Database
