@@ -320,26 +320,20 @@ export const createPayHerePayment = async (req, res, next) => {
       merchantSecret
     );
 
-    // Create or update status in DB (Appointment / Application) if MongoDB is connected
+    // Create or update status in DB (Application first) if MongoDB is connected
     if (mongoose.connection.readyState === 1) {
-      let appointment = await Appointment.findOne({ referenceNumber: finalOrderId });
-      if (!appointment) {
-        const app = await Application.findOne({ referenceNumber: finalOrderId });
-        if (app) {
-          app.paymentStatus = 'pending';
-          app.status = 'pending payment';
-          app.paymentDetails = {
-            orderId: finalOrderId,
-            amount: parseFloat(formattedAmount),
-            currency: String(currency).toUpperCase(),
-          };
-          await app.save();
-        }
-      } else {
-        // Appointment model does not have amount, paymentStatus, etc. fields natively but we might just ignore this or update what is valid.
-        // Actually, Appointment model only has status: ['scheduled', 'in-progress', 'completed', 'cancelled']
-        // It does not have paymentStatus, amount, etc.
-        // So we probably shouldn't do anything here, or just let it pass.
+      const app = await Application.findOne({
+        $or: [{ referenceNumber: finalOrderId }, { 'paymentDetails.orderId': finalOrderId }],
+      });
+      if (app) {
+        app.paymentStatus = 'pending';
+        app.status = 'pending payment';
+        app.paymentDetails = {
+          orderId: finalOrderId,
+          amount: parseFloat(formattedAmount),
+          currency: String(currency).toUpperCase(),
+        };
+        await app.save();
       }
     } else {
       console.warn('⚠️ MongoDB is not connected. Generating PayHere hash without DB persistence.');
@@ -419,30 +413,7 @@ export const handlePayHereNotify = async (req, res, next) => {
       let emailPaidAt = new Date();
 
       if (mongoose.connection.readyState === 1) {
-        // 1. Update Appointment
-        const appointment = await Appointment.findOne({ referenceNumber: order_id });
-        if (appointment) {
-          appointment.paymentStatus = 'paid';
-          appointment.status = 'confirmed';
-          appointment.payherePaymentId = paymentId;
-          appointment.paidAt = emailPaidAt;
-          await appointment.save();
-          console.log(`   Updated Appointment ${order_id}: paymentStatus=paid, status=confirmed`);
-
-          // Collect email data from appointment
-          if (appointment.email) emailTo = appointment.email;
-          if (appointment.customerName) emailCustomerName = appointment.customerName;
-          emailAmount = appointment.amount ?? emailAmount;
-          emailCurrency = appointment.currency ?? emailCurrency;
-          emailServiceType = appointment.serviceType;
-          appointment.status = 'scheduled'; // Valid enum for Appointment instead of 'confirmed'
-          // Optionally save notes about payment if needed, since other payment fields don't exist
-          appointment.notes = appointment.notes ? appointment.notes + ` | Paid via PayHere: ${paymentId}` : `Paid via PayHere: ${paymentId}`;
-          await appointment.save();
-          console.log(`   Updated Appointment ${order_id}: status=scheduled`);
-        }
-
-        // 2. Update Application
+        // 1. Update Application first
         const application = await Application.findOne({
           $or: [{ referenceNumber: order_id }, { 'paymentDetails.orderId': order_id }],
         });
@@ -484,6 +455,21 @@ export const handlePayHereNotify = async (req, res, next) => {
               if (connection.email) emailTo = connection.email;
               if (!emailCustomerName && connection.fullName) emailCustomerName = connection.fullName;
             }
+          }
+        } else {
+          // 2. Fallback to Appointment if no application matches
+          const appointment = await Appointment.findOne({ referenceNumber: order_id });
+          if (appointment) {
+            appointment.status = 'scheduled';
+            appointment.notes = appointment.notes ? appointment.notes + ` | Paid via PayHere: ${paymentId}` : `Paid via PayHere: ${paymentId}`;
+            await appointment.save();
+            console.log(`   Updated Appointment ${order_id}: status=scheduled`);
+
+            if (appointment.email) emailTo = appointment.email;
+            if (appointment.customerName) emailCustomerName = appointment.customerName;
+            emailAmount = appointment.amount ?? emailAmount;
+            emailCurrency = appointment.currency ?? emailCurrency;
+            emailServiceType = appointment.serviceType;
           }
         }
 
@@ -558,23 +544,25 @@ export const getOrderByOrderId = async (req, res, next) => {
         { 'paymentDetails.orderId': orderId },
         { referenceNumber: orderId },
       ],
-    }).select('referenceNumber paymentStatus');
+    }).select('referenceNumber serviceType paymentStatus');
 
     if (application) {
       return res.status(200).json({
         success: true,
         referenceNumber: application.referenceNumber,
+        serviceType: application.serviceType,
         paymentStatus: application.paymentStatus,
       });
     }
 
     // 2. Fallback to Appointment
-    const appointment = await Appointment.findOne({ referenceNumber: orderId }).select('referenceNumber status');
+    const appointment = await Appointment.findOne({ referenceNumber: orderId }).select('referenceNumber serviceType status');
     if (appointment) {
       return res.status(200).json({
         success: true,
         referenceNumber: appointment.referenceNumber,
-        paymentStatus: appointment.status === 'scheduled' ? 'paid' : 'pending', // Hacky fallback since no paymentStatus natively
+        serviceType: appointment.serviceType,
+        paymentStatus: appointment.status === 'scheduled' ? 'paid' : 'pending',
       });
     }
 
