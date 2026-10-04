@@ -619,11 +619,11 @@ export const logout = async (req, res, next) => {
 // @route   POST /api/auth/verify-entry
 // @access  Public
 export const verifyEntry = async (req, res, next) => {
-  const { phone, nic, otp } = req.body;
+  const { phone, nic, email, otp } = req.body;
 
-  if (!phone || !nic || !otp) {
+  if (!phone || !nic || !email || !otp) {
     res.status(400);
-    return next(new Error('Phone number, NIC number, and verification code are required'));
+    return next(new Error('Phone number, NIC number, email address, and verification code are required'));
   }
 
   try {
@@ -631,13 +631,21 @@ export const verifyEntry = async (req, res, next) => {
     const last9 = digitsOnly.slice(-9);
     const cleanNic = String(nic).trim().toUpperCase();
     const cleanOtp = String(otp).trim();
+    const cleanEmail = String(email).trim().toLowerCase();
+
+    // 1. Email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      res.status(400);
+      return next(new Error('Please provide a valid email address (e.g. name@example.com)'));
+    }
 
     if (last9.length !== 9) {
       res.status(400);
       return next(new Error('Please provide a valid 9-digit Sri Lankan mobile number'));
     }
 
-    // 1. Verify OTP (accept demo codes 000000 / 123456)
+    // 2. Verify OTP (accept demo codes 000000 / 123456)
     const isDemoCode = cleanOtp === '000000' || cleanOtp === '123456';
 
     if (!isDemoCode) {
@@ -665,8 +673,8 @@ export const verifyEntry = async (req, res, next) => {
       });
     }
 
-    // 2. Check if customer is registered in Customer collection by phone or NIC
-    const customer = await Customer.findOne({
+    // 3. Check if customer is registered in Customer collection by phone or NIC or email
+    let customer = await Customer.findOne({
       $or: [
         { phone: String(phone).trim() },
         { phone: digitsOnly },
@@ -675,10 +683,25 @@ export const verifyEntry = async (req, res, next) => {
         { phone: `+94${last9}` },
         { phone: `94${last9}` },
         { NIC: cleanNic },
+        { email: cleanEmail },
       ],
     });
 
     if (customer) {
+      // Sync/update email on customer record if missing or if updated
+      if (!customer.email || (customer.email !== cleanEmail)) {
+        try {
+          // Check if another customer already has this email
+          const existingWithEmail = await Customer.findOne({ email: cleanEmail, _id: { $ne: customer._id } });
+          if (!existingWithEmail) {
+            customer.email = cleanEmail;
+            await customer.save();
+          }
+        } catch (saveErr) {
+          console.warn('[verifyEntry] Could not update customer email:', saveErr.message);
+        }
+      }
+
       // Existing registered customer -> direct login
       const accessToken = generateAccessToken(customer);
       const refreshToken = generateRefreshToken(customer);
@@ -703,13 +726,14 @@ export const verifyEntry = async (req, res, next) => {
       });
     }
 
-    // 3. New Customer (not yet registered) -> proceed to NIC uploading step
+    // 4. New Customer (not yet registered) -> proceed to NIC uploading step
     return res.status(200).json({
       success: true,
       existing: false,
       message: 'New customer verified. Please proceed with identity upload.',
       phone: last9,
       nic: cleanNic,
+      email: cleanEmail,
     });
   } catch (error) {
     next(error);
