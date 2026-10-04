@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
-const userSchema = new mongoose.Schema(
+const customerSchema = new mongoose.Schema(
   {
     name: {
       type: String,
@@ -10,9 +10,6 @@ const userSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      // Optional: registration no longer collects an email address, so an
-      // account may exist without one. `sparse` keeps the unique index from
-      // treating every address-less account as a duplicate null.
       unique: true,
       sparse: true,
       trim: true,
@@ -27,11 +24,6 @@ const userSchema = new mongoose.Schema(
       required: [true, 'Phone number is required'],
       unique: true,
       trim: true,
-    },
-    role: {
-      type: String,
-      enum: ['Staff', 'Admin', 'Manager'],
-      required: [true, 'User role is required'],
     },
     NIC: {
       type: String,
@@ -51,33 +43,25 @@ const userSchema = new mongoose.Schema(
     district: { type: String },
     postalCode: { type: String },
     preferredContact: { type: String, default: 'SMS' },
-    // KYC images captured at registration. Only GridFS file ids are stored —
-    // keeping base64 on the user document would bloat every record and risk
-    // the 16MB document ceiling.
     identityDocuments: {
       nicFront: { type: mongoose.Schema.Types.ObjectId },
       nicBack: { type: mongoose.Schema.Types.ObjectId },
       facePhoto: { type: mongoose.Schema.Types.ObjectId },
       capturedAt: { type: Date },
     },
-    // Sign-in is by mobile number and one-time code, so accounts are created
-    // without a password. The field is kept so existing records stay valid and
-    // a password-based flow could be reintroduced later.
     password: {
       type: String,
       minlength: [6, 'Password must be at least 6 characters'],
-      select: false, // Don't return password in user queries by default
+      select: false,
     },
   },
   {
     timestamps: true,
+    collection: 'customers',
   }
 );
 
-// Encrypt password using bcrypt pre-save
-userSchema.pre('save', async function (next) {
-  // Accounts created through the OTP flow have no password at all, and the
-  // original guard fell through to hashing even when nothing had changed.
+customerSchema.pre('save', async function (next) {
   if (!this.password || !this.isModified('password')) return next();
 
   const salt = await bcrypt.genSalt(10);
@@ -85,13 +69,11 @@ userSchema.pre('save', async function (next) {
   return next();
 });
 
-// Match user entered password to hashed password in database
-userSchema.methods.matchPassword = async function (enteredPassword) {
-  // No password set means password sign-in is not available for this account.
+customerSchema.methods.matchPassword = async function (enteredPassword) {
   if (!this.password) return false;
-  return await bcrypt.compare(enteredPassword, this.password);
+  return bcrypt.compare(enteredPassword, this.password);
 };
 
-const User = mongoose.model('User', userSchema);
+const Customer = mongoose.model('Customer', customerSchema);
 
-export default User;
+export default Customer;

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import Customer from '../models/Customer.js';
 
 // Protect private routes
 export const protect = async (req, res, next) => {
@@ -17,8 +18,9 @@ export const protect = async (req, res, next) => {
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
-      // Find user and attach to request object
-      req.user = await User.findById(decoded.id);
+      // Resolve the token against the account collection that issued it.
+      const AccountModel = decoded.accountType === 'Customer' ? Customer : User;
+      req.user = await AccountModel.findById(decoded.id);
 
       if (!req.user) {
         res.status(401);

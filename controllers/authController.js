@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import User from '../models/User.js';
+import Customer from '../models/Customer.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
 
@@ -20,8 +21,8 @@ export const checkPhone = async (req, res, next) => {
     const digitsOnly = String(phone).replace(/\D/g, '');
     const last9 = digitsOnly.slice(-9);
 
-    // 1. Try finding in the App User database
-    const user = await User.findOne({
+    // 1. Try finding in the customer profile database
+    const customer = await Customer.findOne({
       $or: [
         { phone: phone },
         { phone: digitsOnly },
@@ -32,7 +33,7 @@ export const checkPhone = async (req, res, next) => {
       ],
     }).select('_id');
     
-    let registered = !!user;
+    let registered = !!customer;
 
     // 2. If not found in App Users, check if they are an existing SLT Customer
     if (!registered) {
@@ -78,27 +79,27 @@ export const checkPhone = async (req, res, next) => {
 
 // The user fields safe to return to the client. Kept in one place so
 // register, login and /me all expose the same profile.
-export const publicUser = (user) => ({
-  id: user._id,
-  name: user.name,
-  email: user.email,
-  phone: user.phone,
-  role: user.role,
-  NIC: user.NIC,
-  title: user.title,
-  dob: user.dob,
-  gender: user.gender,
-  nationality: user.nationality,
-  contactNumber: user.contactNumber,
-  addressLine1: user.addressLine1,
-  addressLine2: user.addressLine2,
-  city: user.city,
-  district: user.district,
-  postalCode: user.postalCode,
-  preferredContact: user.preferredContact,
+export const publicUser = (account) => ({
+  id: account._id,
+  name: account.name,
+  email: account.email,
+  phone: account.phone,
+  role: account.role || 'Customer',
+  NIC: account.NIC,
+  title: account.title,
+  dob: account.dob,
+  gender: account.gender,
+  nationality: account.nationality,
+  contactNumber: account.contactNumber,
+  addressLine1: account.addressLine1,
+  addressLine2: account.addressLine2,
+  city: account.city,
+  district: account.district,
+  postalCode: account.postalCode,
+  preferredContact: account.preferredContact,
   // Ids only — the images are served admin-only via /api/files/:id.
-  identityDocuments: user.identityDocuments || null,
-  hasIdentityDocuments: !!(user.identityDocuments && user.identityDocuments.facePhoto),
+  identityDocuments: account.identityDocuments || null,
+  hasIdentityDocuments: !!(account.identityDocuments && account.identityDocuments.facePhoto),
 });
 
 
@@ -136,18 +137,17 @@ const storeIdentityImage = async (dataUrl, label, userId) => {
 };
 
 // Helper to generate access token
-const generateAccessToken = (user) => {
+const generateAccessToken = (account, accountType = 'User') => {
   return jwt.sign(
-    { id: user._id, role: user.role },
+    { id: account._id, role: account.role || 'Customer', accountType },
     process.env.JWT_ACCESS_SECRET,
     { expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m' }
   );
 };
 
-// Helper to generate refresh token
-const generateRefreshToken = (user) => {
+const generateRefreshToken = (account, accountType = 'User') => {
   return jwt.sign(
-    { id: user._id, jti: crypto.randomUUID() },
+    { id: account._id, jti: crypto.randomUUID(), accountType },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d' }
   );
@@ -268,7 +268,7 @@ export const verifyOtp = async (req, res, next) => {
 // @access  Public
 export const register = async (req, res, next) => {
   const {
-    name, email, phone, role, NIC, password,
+    name, email, phone, NIC, password,
     title, dob, gender, nationality, contactNumber,
     addressLine1, addressLine2, city, district, postalCode, preferredContact,
     nicFront, nicBack, facePhoto
@@ -283,23 +283,23 @@ export const register = async (req, res, next) => {
   }
 
   try {
-    // Check if user already exists
-    const userExists = await User.findOne({
+    // Customer registration must never create an admin/staff account.
+    const customerExists = await Customer.findOne({
       $or: [...(email ? [{ email }] : []), { phone }, { NIC }],
     });
 
-    if (userExists) {
+    if (customerExists) {
       res.status(400);
       let duplicateField = 'Email, phone number, or NIC';
-      if (email && userExists.email === email.toLowerCase()) duplicateField = 'Email';
-      else if (userExists.phone === phone) duplicateField = 'Phone number';
-      else if (userExists.NIC === NIC.toUpperCase()) duplicateField = 'NIC';
+      if (email && customerExists.email === email.toLowerCase()) duplicateField = 'Email';
+      else if (customerExists.phone === phone) duplicateField = 'Phone number';
+      else if (customerExists.NIC === NIC.toUpperCase()) duplicateField = 'NIC';
       return next(new Error(`${duplicateField} is already registered`));
     }
 
-    // Create user (password will be hashed in model pre-save hook)
-    const user = await User.create({
-      name, email, phone, role: role || 'Customer', NIC,
+    // Create customer (password will be hashed in the customer model hook).
+    const customer = await Customer.create({
+      name, email, phone, NIC,
       ...(password ? { password } : {}),
       title, dob, gender, nationality, contactNumber,
       addressLine1, addressLine2, city, district, postalCode, preferredContact
@@ -310,39 +310,40 @@ export const register = async (req, res, next) => {
     // registration is allowed to succeed either way.
     try {
       const [frontId, backId, faceId] = await Promise.all([
-        storeIdentityImage(nicFront, 'nic-front', user._id),
-        storeIdentityImage(nicBack, 'nic-back', user._id),
-        storeIdentityImage(facePhoto, 'face-photo', user._id),
+        storeIdentityImage(nicFront, 'nic-front', customer._id),
+        storeIdentityImage(nicBack, 'nic-back', customer._id),
+        storeIdentityImage(facePhoto, 'face-photo', customer._id),
       ]);
 
       if (frontId || backId || faceId) {
-        user.identityDocuments = {
+        customer.identityDocuments = {
           nicFront: frontId,
           nicBack: backId,
           facePhoto: faceId,
           capturedAt: new Date(),
         };
-        await user.save();
+        await customer.save();
       }
     } catch (uploadErr) {
-      console.error('Identity document storage failed for', String(user._id), uploadErr.message);
+      console.error('Identity document storage failed for', String(customer._id), uploadErr.message);
     }
 
     // Generate tokens
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
+    const accessToken = generateAccessToken(customer, 'Customer');
+    const refreshToken = generateRefreshToken(customer, 'Customer');
 
     // Save refresh token to DB
     const decodedRefresh = jwt.decode(refreshToken);
     await RefreshToken.create({
-      userId: user._id,
+      userId: customer._id,
+      accountType: 'Customer',
       token: refreshToken,
       expiresAt: new Date(decodedRefresh.exp * 1000),
     });
 
     res.status(201).json({
       success: true,
-      user: publicUser(user),
+      user: publicUser(customer),
       accessToken,
       refreshToken,
     });
@@ -388,13 +389,14 @@ export const login = async (req, res, next) => {
     }
 
     // Generate tokens
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
+    const accessToken = generateAccessToken(user, 'User');
+    const refreshToken = generateRefreshToken(user, 'User');
 
     // Save refresh token to DB
     const decodedRefresh = jwt.decode(refreshToken);
     await RefreshToken.create({
       userId: user._id,
+      accountType: 'User',
       token: refreshToken,
       expiresAt: new Date(decodedRefresh.exp * 1000),
     });
@@ -460,7 +462,7 @@ export const otpLogin = async (req, res, next) => {
 
     // 2. Find the registered account. Numbers are stored in several shapes
     //    across the data set, so match on all of them.
-    const user = await User.findOne({
+    const customer = await Customer.findOne({
       $or: [
         { phone: String(phone).trim() },
         { phone: digitsOnly },
@@ -471,24 +473,25 @@ export const otpLogin = async (req, res, next) => {
       ],
     });
 
-    if (!user) {
+    if (!customer) {
       res.status(404);
       return next(new Error('No account is registered to this number. Please create one first.'));
     }
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
+    const accessToken = generateAccessToken(customer, 'Customer');
+    const refreshToken = generateRefreshToken(customer, 'Customer');
 
     const decodedRefresh = jwt.decode(refreshToken);
     await RefreshToken.create({
-      userId: user._id,
+      userId: customer._id,
+      accountType: 'Customer',
       token: refreshToken,
       expiresAt: new Date(decodedRefresh.exp * 1000),
     });
 
     res.status(200).json({
       success: true,
-      user: publicUser(user),
+      user: publicUser(customer),
       accessToken,
       refreshToken,
     });
@@ -520,8 +523,9 @@ export const refresh = async (req, res, next) => {
     // Verify token validity
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
 
-    // Find the user
-    const user = await User.findById(decoded.id);
+    const accountType = decoded.accountType || savedToken.accountType || 'User';
+    const AccountModel = accountType === 'Customer' ? Customer : User;
+    const user = await AccountModel.findById(decoded.id);
 
     if (!user) {
       res.status(401);
@@ -529,7 +533,7 @@ export const refresh = async (req, res, next) => {
     }
 
     // Generate new access token
-    const newAccessToken = generateAccessToken(user);
+    const newAccessToken = generateAccessToken(user, accountType);
 
     res.status(200).json({
       success: true,
