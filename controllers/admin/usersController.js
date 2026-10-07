@@ -1,5 +1,6 @@
 import User from '../../models/User.js';
 import StaffRole from '../../models/StaffRole.js';
+import { recordAudit } from '../../services/auditService.js';
 
 const sanitizeUser = (u) => ({
   id: u._id,
@@ -85,6 +86,14 @@ export const createAdminUser = async (req, res, next) => {
       createdBy: req.user?._id,
     });
 
+    await recordAudit({
+      req,
+      action: 'CREATE',
+      module: 'User Management',
+      targetId: user._id,
+      description: `Created staff user ${user.name}`,
+      metadata: { role: user.role, employeeNumber: user.employeeNumber },
+    });
     res.status(201).json({ success: true, user: sanitizeUser(user) });
   } catch (error) {
     if (error.code === 11000) {
@@ -108,6 +117,14 @@ export const updateAdminUser = async (req, res, next) => {
       res.status(404);
       return next(new Error('User not found'));
     }
+    const previous = {
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      permissions: [...(user.permissions || [])],
+      isActive: user.isActive,
+      employeeNumber: user.employeeNumber,
+    };
 
     if (role !== undefined && role !== user.role) {
       // Administrator accounts are not managed through this screen — changing
@@ -159,6 +176,14 @@ export const updateAdminUser = async (req, res, next) => {
     }
 
     await user.save();
+    await recordAudit({
+      req,
+      action: 'UPDATE',
+      module: 'User Management',
+      targetId: user._id,
+      description: `Updated staff user ${user.name}`,
+      metadata: { before: previous, after: { ...previous, name: user.name, email: user.email, role: user.role, permissions: user.permissions, isActive: user.isActive, employeeNumber: user.employeeNumber } },
+    });
     res.status(200).json({ success: true, user: sanitizeUser(user) });
   } catch (error) {
     if (error.code === 11000) {
@@ -188,6 +213,13 @@ export const deleteAdminUser = async (req, res, next) => {
     }
 
     await User.deleteOne({ _id: id });
+    await recordAudit({
+      req,
+      action: 'DELETE',
+      module: 'User Management',
+      targetId: user._id,
+      description: `Deleted staff user ${user.name}`,
+    });
     res.status(200).json({ success: true, message: 'User removed' });
   } catch (error) {
     next(error);

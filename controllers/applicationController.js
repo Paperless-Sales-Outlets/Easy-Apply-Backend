@@ -4,6 +4,7 @@ import Connection from '../models/Connection.js';
 import Customer from '../models/Customer.js';
 import Appointment from '../models/Appointment.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
+import { recordAudit } from '../services/auditService.js';
 
 
 // @desc    Submit a new service application
@@ -241,6 +242,16 @@ export const createApplication = async (req, res, next) => {
 
     }
 
+    if (mongoose.connection.readyState === 1) {
+      await recordAudit({
+        req,
+        action: 'CREATE',
+        module: 'Forms/Requests',
+        targetId: application.referenceNumber,
+        description: `Submitted ${serviceType} request`,
+        metadata: { serviceType, status: application.status },
+      });
+    }
 
     // ─────────────────────────────────────────────────────────
     // Send application submitted email (non-blocking)

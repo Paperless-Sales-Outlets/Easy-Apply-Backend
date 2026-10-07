@@ -1,6 +1,7 @@
 import StaffRole from '../../models/StaffRole.js';
 import User from '../../models/User.js';
 import Privilege from '../../models/Privilege.js';
+import { recordAudit } from '../../services/auditService.js';
 
 const RESERVED_NAMES = new Set(['admin', 'customer']);
 
@@ -81,6 +82,7 @@ export const createStaffRole = async (req, res, next) => {
       createdBy: req.user?._id,
     });
 
+    await recordAudit({ req, action: 'CREATE', module: 'User Management', targetId: role._id, description: `Created staff role ${role.name}` });
     res.status(201).json({ success: true, role: sanitizeRole(role, 0) });
   } catch (error) {
     if (error.code === 11000) {
@@ -143,6 +145,7 @@ export const updateStaffRole = async (req, res, next) => {
       await User.updateMany({ role: oldName }, { $set: { role: role.name } });
     }
 
+    await recordAudit({ req, action: 'UPDATE', module: 'User Management', targetId: role._id, description: `Updated staff role ${role.name}` });
     const userCount = await User.countDocuments({ role: role.name });
     res.status(200).json({ success: true, role: sanitizeRole(role, userCount) });
   } catch (error) {
@@ -174,6 +177,7 @@ export const deleteStaffRole = async (req, res, next) => {
     }
 
     await StaffRole.deleteOne({ _id: id });
+    await recordAudit({ req, action: 'DELETE', module: 'User Management', targetId: role._id, description: `Deleted staff role ${role.name}` });
     res.status(200).json({ success: true, message: 'Role removed' });
   } catch (error) {
     next(error);

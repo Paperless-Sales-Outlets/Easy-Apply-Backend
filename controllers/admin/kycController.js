@@ -1,6 +1,7 @@
 import Application from '../../models/admin/applicationModel.js';
 import Customer from '../../models/Customer.js';
 import { getSignedFileUrl } from '../../services/s3Service.js';
+import { recordAudit } from '../../services/auditService.js';
 
 const NAME_FIELDS = [
   'nameFull',
@@ -198,6 +199,7 @@ export const reviewKycApplication = async (req, res, next) => {
       updates.actionedAt = new Date();
     }
 
+    const previousApplication = await Application.findById(id).select('status referenceNumber');
     const application = await Application.findByIdAndUpdate(
       id,
       { $set: updates },
@@ -207,10 +209,19 @@ export const reviewKycApplication = async (req, res, next) => {
       .lean();
 
     if (application) {
+      await recordAudit({
+        req,
+        action: 'STATUS_UPDATE',
+        module: 'KYC',
+        targetId: application.referenceNumber || id,
+        description: `Changed KYC status from ${previousApplication?.status || 'pending'} to ${application.status}`,
+        metadata: { previousStatus: previousApplication?.status, newStatus: application.status },
+      });
       return res.status(200).json({ success: true, application: await toQueueItem(application) });
     }
 
     // Not an application id — a registered customer's account-level KYC
+    const previousCustomer = await Customer.findById(id).select('kycStatus NIC');
     const customer = await Customer.findByIdAndUpdate(
       id,
       {
@@ -228,6 +239,14 @@ export const reviewKycApplication = async (req, res, next) => {
       return next(new Error('Application not found'));
     }
 
+    await recordAudit({
+      req,
+      action: 'STATUS_UPDATE',
+      module: 'KYC',
+      targetId: customer._id,
+      description: `Changed KYC status from ${previousCustomer?.kycStatus || 'pending'} to ${customer.kycStatus}`,
+      metadata: { previousStatus: previousCustomer?.kycStatus, newStatus: customer.kycStatus },
+    });
     res.status(200).json({ success: true, application: await customerToQueueItem(customer) });
   } catch (error) {
     next(error);
