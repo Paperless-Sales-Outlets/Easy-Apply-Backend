@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs';
 
 import connectDB, { isDbConnected } from './config/db.js';
+import { startKycAutoReviewScheduler } from './services/kycAutoReviewService.js';
 import mongoose from 'mongoose';
 
 import applicationRoutes from './routes/applicationRoutes.js';
@@ -42,6 +43,9 @@ dotenv.config();
 
 // Connect Database
 connectDB();
+
+// Automated KYC review (set KYC_AUTO_REVIEW=off to disable)
+startKycAutoReviewScheduler();
 
 // Drop legacy orderId index once connected
 mongoose.connection.once('open', async () => {
