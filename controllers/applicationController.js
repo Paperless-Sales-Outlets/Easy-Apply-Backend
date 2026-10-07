@@ -122,6 +122,7 @@ export const createApplication = async (req, res, next) => {
       ...uploadedDocuments,
       nicFront: uploadedDocuments.nicFront || formData.nicFront || null,
       nicBack: uploadedDocuments.nicBack || formData.nicBack || null,
+      facePhoto: uploadedDocuments.facePhoto || formData.facePhoto || null,
       passportDoc: uploadedDocuments.passportDoc || formData.passportDoc || null,
       brcDoc: uploadedDocuments.brcDoc || formData.brcDoc || null,
       vatDoc: uploadedDocuments.vatDoc || formData.vatDoc || null,
