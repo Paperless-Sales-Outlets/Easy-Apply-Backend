@@ -81,14 +81,13 @@ const customerSchema = new mongoose.Schema(
 );
 
 // Encrypt password using bcrypt pre-save
-customerSchema.pre('save', async function (next) {
+customerSchema.pre('save', async function () {
   // Accounts created through the OTP flow have no password at all, and the
   // original guard fell through to hashing even when nothing had changed.
-  if (!this.password || !this.isModified('password')) return next();
+  if (!this.password || !this.isModified('password')) return;
 
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
-  return next();
 });
 
 // Match customer entered password to hashed password in database

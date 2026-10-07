@@ -134,11 +134,10 @@ cartSchema.methods.clearCart = function () {
 };
 
 // Pre-save hook to ensure total is calculated
-cartSchema.pre('save', function (next) {
+cartSchema.pre('save', function () {
   if (this.isModified('items')) {
     this.calculateTotal();
   }
-  next();
 });
 
 const Cart = mongoose.model('Cart', cartSchema);

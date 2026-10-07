@@ -85,7 +85,7 @@ const applicationSchema = new mongoose.Schema(
 );
 
 // Pre-validate hook to generate unique reference number if not set
-applicationSchema.pre('validate', async function (next) {
+applicationSchema.pre('validate', async function () {
   if (!this.referenceNumber) {
     let isUnique = false;
     let ref = '';
@@ -106,7 +106,6 @@ applicationSchema.pre('validate', async function (next) {
     
     this.referenceNumber = ref;
   }
-  next();
 });
 
 const Application = mongoose.model('Application', applicationSchema);
