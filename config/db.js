@@ -1,4 +1,13 @@
+import 'dotenv/config';
 import mongoose from 'mongoose';
+import dns from 'node:dns';
+
+// Configure DNS to use reliable public resolvers (resolves querySrv ECONNREFUSED from ISP/IPv6 DNS)
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch (err) {
+  console.warn('⚠️ Could not set custom DNS servers:', err.message);
+}
 
 const RETRY_DELAY_MS = 15000;
 const LOCAL_FALLBACK_URI = 'mongodb://127.0.0.1:27017/paperlessoutlet';
