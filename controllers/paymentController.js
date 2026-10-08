@@ -300,13 +300,8 @@ export const createPayHerePayment = async (req, res, next) => {
       return next(new Error('Valid payment amount is required'));
     }
 
-    const merchantId = (process.env.PAYHERE_MERCHANT_ID || '').trim();
-    const merchantSecret = (process.env.PAYHERE_MERCHANT_SECRET || '').trim();
-
-    if (!merchantId || !merchantSecret) {
-      res.status(500);
-      return next(new Error('PayHere merchant credentials are not configured on server'));
-    }
+    const merchantId = (process.env.PAYHERE_MERCHANT_ID || '1237114').trim();
+    const merchantSecret = (process.env.PAYHERE_MERCHANT_SECRET || 'MTA0ODE1MjY4MDQyNDI4MjAwNTUxNTU5NDAwOTUwMjg2MTUwMzA4Mg==').trim();
 
     const finalOrderId = orderId ? String(orderId).trim() : `ORD-${Date.now()}`;
     const formattedAmount = formatPayHereAmount(amount);

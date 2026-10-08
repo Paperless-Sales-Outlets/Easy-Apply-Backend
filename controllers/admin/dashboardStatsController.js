@@ -7,7 +7,7 @@ const FORM_TYPES = [
   { id: 'relocation', label: 'Relocation' },
   { id: 'termination', label: 'Termination' },
   { id: 'transfer', label: 'Transfer' },
-  { id: 'package-migration', label: 'Package Migration' },
+  { id: 'package-migration', label: 'Service Upgradation' },
   { id: 'service-vacation', label: 'Service Vacation' },
   { id: 'refund-request', label: 'Refund Request' },
   { id: 'customer-request-acceptance', label: 'Customer Request Acceptance' },

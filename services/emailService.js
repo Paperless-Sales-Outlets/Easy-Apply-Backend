@@ -50,7 +50,7 @@ function formatServiceLabel(serviceType) {
     'relocation': 'Relocation',
     'termination': 'Service Termination',
     'transfer': 'Ownership Transfer',
-    'package-migration': 'Package Migration',
+    'package-migration': 'Service Upgradation',
     'service-vacation': 'Service Vacation',
     'refund-request': 'Refund Request',
     'customer-request-acceptance': 'Customer Request',
