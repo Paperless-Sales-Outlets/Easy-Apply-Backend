@@ -26,6 +26,7 @@ const DOC_KEYS = [
   { key: 'nicBack',           label: 'NIC Back' },
   { key: 'facePhoto',         label: 'Live Face Photo' },
   { key: 'signature',         label: 'Digital Signature' },
+  { key: 'signatureDoc',      label: 'Digital Signature' },
   { key: 'customerSignature', label: 'Customer Signature' },
   { key: 'brcDoc',            label: 'Business Registration' },
   { key: 'vatDoc',            label: 'VAT Certificate' },
@@ -137,6 +138,7 @@ async function customerToQueueItem(customer, review) {
     actionedAt: customer.kycActionedAt || null,
     actionedBy: null,
     locked: false,
+    signatureMode: null,
     ...reviewView(review, customer.kycActionedAt && customer.kycStatus && customer.kycStatus !== 'pending'
       ? { by: 'admin', name: '', at: customer.kycActionedAt }
       : null),
@@ -194,6 +196,7 @@ async function toQueueItem(app, review) {
       ? { name: app.actionedBy.name, email: app.actionedBy.email, role: app.actionedBy.role }
       : null,
     locked: app.status === LOCKED_STATUS,
+    signatureMode: [docs.signature, fd.signature].includes('DIGITALLY_VERIFIED_OTP') ? 'otp' : null,
     ...reviewView(review, app.actionedBy
       ? { by: 'admin', name: app.actionedBy.name || app.actionedBy.email || '', at: app.actionedAt }
       : null),
@@ -375,7 +378,9 @@ export const reviewKycApplication = async (req, res, next) => {
       action: 'STATUS_UPDATE',
       module: 'KYC',
       targetId: subject.type === 'application' ? subject.doc.referenceNumber || id : subject.doc._id,
-      description: `Changed KYC status from ${before} to ${status}`,
+      description: before === status
+        ? `Confirmed KYC decision (${status})`
+        : `Changed KYC status from ${before} to ${status}`,
       metadata: {
         previousStatus: before,
         newStatus: status,
