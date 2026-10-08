@@ -179,6 +179,14 @@ export const createApplication = async (req, res, next) => {
           if (!customerRecord.city && formData.city) customerRecord.city = formData.city;
           if (!customerRecord.district && formData.district) customerRecord.district = formData.district;
           if (!customerRecord.postalCode && formData.postalCode) customerRecord.postalCode = formData.postalCode;
+          if (!customerRecord.identityDocuments) {
+            customerRecord.identityDocuments = {};
+          }
+          if (formData.documents?.nicFront) customerRecord.identityDocuments.nicFront = formData.documents.nicFront;
+          if (formData.documents?.nicBack) customerRecord.identityDocuments.nicBack = formData.documents.nicBack;
+          if (formData.documents?.facePhoto) customerRecord.identityDocuments.facePhoto = formData.documents.facePhoto;
+          customerRecord.identityDocuments.capturedAt = new Date();
+
           await customerRecord.save();
         }
 
@@ -203,6 +211,7 @@ export const createApplication = async (req, res, next) => {
         phone: verifiedPhone,
         serviceType,
         formData,
+        documents: formData.documents || {},
         nic: cleanNic,
         status: 'pending',
         paymentStatus: formData.paymentReference ? 'paid' : 'pending',

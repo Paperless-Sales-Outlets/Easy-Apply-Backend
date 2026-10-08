@@ -72,6 +72,10 @@ const applicationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       required: true,
     },
+    documents: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
     officeFields: {
       crNumber: { type: String, trim: true, default: '' },
       amountPaid: { type: Number, default: null },

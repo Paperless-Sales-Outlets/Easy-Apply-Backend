@@ -112,7 +112,7 @@ export const publicUser = publicCustomer;
  * three base64 images would add roughly a megabyte to every record and are
  * already served admin-only through /api/files/:id.
  */
-const storeIdentityImage = async (dataUrl, label, userId) => {
+export const storeIdentityImage = async (dataUrl, label, userId) => {
   if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
 
   const [meta, base64] = dataUrl.split(',');

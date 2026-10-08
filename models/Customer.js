@@ -51,14 +51,10 @@ const customerSchema = new mongoose.Schema(
     district: { type: String },
     postalCode: { type: String },
     preferredContact: { type: String, default: 'SMS' },
-    // KYC images captured at registration. Only GridFS file ids are stored —
-    // keeping base64 on the customer document would bloat every record and risk
-    // the 16MB document ceiling.
+    // KYC images captured at registration or application submission
     identityDocuments: {
-      nicFront: { type: mongoose.Schema.Types.ObjectId },
-      nicBack: { type: mongoose.Schema.Types.ObjectId },
-      facePhoto: { type: mongoose.Schema.Types.ObjectId },
-      capturedAt: { type: Date },
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
     // Account-level KYC review (used when a customer has registered but has no
     // application yet). Once they apply, the application's own status takes over.
