@@ -7,6 +7,7 @@ import User from '../models/User.js';
 import { findAccountById } from '../middleware/authMiddleware.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
+import { recordAudit } from '../services/auditService.js';
 
 // @desc    Check if a phone number is registered (used by login flow to decide
 //          whether to send OTP or redirect to sign-up)
@@ -397,6 +398,14 @@ export const register = async (req, res, next) => {
     });
 
     const publicProfile = publicCustomer(customer);
+    await recordAudit({
+      req,
+      actor: customer,
+      action: 'CREATE',
+      module: 'Authentication',
+      targetId: customer._id,
+      description: 'Registered customer account',
+    });
 
     res.status(201).json({
       success: true,
@@ -474,6 +483,14 @@ export const login = async (req, res, next) => {
     });
 
     const publicProfile = publicUser(account);
+    await recordAudit({
+      req,
+      actor: account,
+      action: 'LOGIN',
+      module: 'Authentication',
+      targetId: account._id,
+      description: 'Successful password login',
+    });
 
     res.status(200).json({
       success: true,
@@ -564,6 +581,14 @@ export const otpLogin = async (req, res, next) => {
     });
 
     const publicProfile = publicCustomer(customer);
+    await recordAudit({
+      req,
+      actor: customer,
+      action: 'LOGIN',
+      module: 'Authentication',
+      targetId: customer._id,
+      description: 'Successful OTP login',
+    });
 
     res.status(200).json({
       success: true,
@@ -641,7 +666,17 @@ export const logout = async (req, res, next) => {
 
   try {
     // Delete refresh token from DB to invalidate it
+    const savedToken = await RefreshToken.findOne({ token: refreshToken }).select('userId');
     await RefreshToken.deleteOne({ token: refreshToken });
+    const account = savedToken ? await findAccountById(savedToken.userId) : null;
+    await recordAudit({
+      req,
+      actor: account,
+      action: 'LOGOUT',
+      module: 'Authentication',
+      targetId: savedToken?.userId,
+      description: 'Successful logout',
+    });
 
     res.status(200).json({
       success: true,
@@ -752,4 +787,3 @@ export const verifyEntry = async (req, res, next) => {
     next(error);
   }
 };
-

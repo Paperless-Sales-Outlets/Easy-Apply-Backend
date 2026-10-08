@@ -1,6 +1,7 @@
 import Privilege from '../../models/Privilege.js';
 import StaffRole from '../../models/StaffRole.js';
 import User from '../../models/User.js';
+import { recordAudit } from '../../services/auditService.js';
 
 // Built-in module privileges. Their keys match the admin sidebar modules.
 const SYSTEM_PRIVILEGES = [
@@ -109,6 +110,7 @@ export const createPrivilege = async (req, res, next) => {
     for (let i = 2; await Privilege.exists({ key }); i += 1) key = `${base}-${i}`;
 
     const privilege = await Privilege.create({ key, name, description, createdBy: req.user?._id });
+    await recordAudit({ req, action: 'CREATE', module: 'User Management', targetId: privilege._id, description: `Created privilege ${privilege.name}` });
     res.status(201).json({ success: true, privilege: sanitizePrivilege(privilege) });
   } catch (error) {
     if (error.name === 'ValidationError') {
@@ -152,6 +154,7 @@ export const updatePrivilege = async (req, res, next) => {
     }
 
     await privilege.save();
+    await recordAudit({ req, action: 'UPDATE', module: 'User Management', targetId: privilege._id, description: `Updated privilege ${privilege.name}` });
     res.status(200).json({ success: true, privilege: sanitizePrivilege(privilege, await usageFor(privilege.key)) });
   } catch (error) {
     if (error.name === 'ValidationError') {
@@ -185,6 +188,7 @@ export const deletePrivilege = async (req, res, next) => {
     }
 
     await Privilege.deleteOne({ _id: privilege._id });
+    await recordAudit({ req, action: 'DELETE', module: 'User Management', targetId: privilege._id, description: `Deleted privilege ${privilege.name}` });
     res.status(200).json({ success: true, message: 'Privilege removed' });
   } catch (error) {
     next(error);

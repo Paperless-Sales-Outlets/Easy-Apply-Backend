@@ -4,6 +4,7 @@ import Customer from '../models/Customer.js';
 import KycReview from '../models/admin/kycReviewModel.js';
 import { isDbConnected } from '../config/db.js';
 import { cleanNic, parseNic, toNewFormat } from '../utils/sriLankaNic.js';
+import { recordAudit } from './auditService.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Automated KYC review
@@ -396,6 +397,31 @@ export async function evaluateAccount(customer) {
 
 // ── Applying a decision ──────────────────────────────────────────────────────
 
+// Automated decisions appear in the admin audit log as "Automated KYC", next to
+// the manual ones. A logging failure must never undo a saved decision.
+async function auditAutomatedDecision({ subjectType, target, from, decision, remark, kind, requestedBy }) {
+  try {
+    await recordAudit({
+      actor: { name: SYSTEM_ACTOR_NAME, role: 'system' },
+      action: 'STATUS_UPDATE',
+      module: 'KYC',
+      targetId: target,
+      description: `Automated KYC changed status from ${from} to ${decision}`,
+      metadata: {
+        previousStatus: from,
+        newStatus: decision,
+        remark,
+        automated: true,
+        kind,
+        subjectType,
+        ...(requestedBy ? { requestedBy } : {}),
+      },
+    });
+  } catch (err) {
+    console.error('[kyc-auto] audit log failed:', err.message);
+  }
+}
+
 async function recordReview({ subjectType, subjectId, evaluation, statusChange, kind, requestedBy }) {
   const now = new Date();
   const set = {
@@ -452,6 +478,10 @@ export async function reviewApplicationAuto(app, { kind = 'auto', requestedBy = 
   const review = await recordReview({
     subjectType: 'application', subjectId: app._id, evaluation, statusChange: { from: app.status }, kind, requestedBy,
   });
+  await auditAutomatedDecision({
+    subjectType: 'application', target: app.referenceNumber || app._id, from: app.status,
+    decision: evaluation.decision, remark, kind, requestedBy,
+  });
   return { applied: true, decision: evaluation.decision, review };
 }
 
@@ -483,6 +513,10 @@ export async function reviewAccountAuto(customer, { kind = 'auto', requestedBy =
 
   const review = await recordReview({
     subjectType: 'account', subjectId: customer._id, evaluation, statusChange: { from: current }, kind, requestedBy,
+  });
+  await auditAutomatedDecision({
+    subjectType: 'account', target: customer._id, from: current,
+    decision: evaluation.decision, remark, kind, requestedBy,
   });
   return { applied: true, decision: evaluation.decision, review };
 }

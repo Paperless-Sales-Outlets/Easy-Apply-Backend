@@ -8,6 +8,7 @@ import {
   reviewAccountAuto,
   runKycAutoReview,
 } from '../../services/kycAutoReviewService.js';
+import { recordAudit } from '../../services/auditService.js';
 
 const NAME_FIELDS = [
   'nameFull',
@@ -207,6 +208,15 @@ async function reviewsFor(subjectType, ids) {
   return new Map(reviews.map((r) => [String(r.subjectId), r]));
 }
 
+// Audit-log entries must never turn an already-saved decision into an error.
+async function audit(payload) {
+  try {
+    await recordAudit(payload);
+  } catch (err) {
+    console.error('[kyc] audit log failed:', err.message);
+  }
+}
+
 const reviewerOf = (req) => {
   const user = req.customer || req.user;
   return { id: user?._id || null, name: user?.name || user?.email || 'Admin' };
@@ -359,6 +369,20 @@ export const reviewKycApplication = async (req, res, next) => {
       },
       { upsert: true }
     );
+
+    await audit({
+      req,
+      action: 'STATUS_UPDATE',
+      module: 'KYC',
+      targetId: subject.type === 'application' ? subject.doc.referenceNumber || id : subject.doc._id,
+      description: `Changed KYC status from ${before} to ${status}`,
+      metadata: {
+        previousStatus: before,
+        newStatus: status,
+        remark: remark || '',
+        overrodeAutomatedDecision: existing?.decidedBy === 'system',
+      },
+    });
 
     res.status(200).json({ success: true, application: await itemFor(subject) });
   } catch (error) {

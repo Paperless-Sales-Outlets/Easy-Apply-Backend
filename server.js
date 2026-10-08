@@ -21,6 +21,7 @@ import adminAppointmentRoutes from './routes/admin/appointmentRoutes.js';
 import adminUsersRoutes from './routes/admin/usersRoutes.js';
 import adminRolesRoutes from './routes/admin/rolesRoutes.js';
 import adminPrivilegesRoutes from './routes/admin/privilegesRoutes.js';
+import adminAuditRoutes from './routes/admin/auditRoutes.js';
 import fieldAppointmentRoutes from './routes/field/fieldAppointmentRoutes.js';
 import appointmentRoutes from './routes/appointmentRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
@@ -258,6 +259,11 @@ app.use(
 app.use(
   '/api/admin/privileges',
   adminPrivilegesRoutes
+);
+
+app.use(
+  '/api/admin/audit-logs',
+  adminAuditRoutes
 );
 
 app.use(
