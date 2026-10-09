@@ -35,8 +35,8 @@ const customerSchema = new mongoose.Schema(
     },
     NIC: {
       type: String,
-      required: [true, 'NIC / Passport / BR Number is required'],
       unique: true,
+      sparse: true,
       trim: true,
       uppercase: true,
     },

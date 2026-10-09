@@ -333,7 +333,7 @@ export const syncCustomerOcr = async (req, res, next) => {
         name: resolvedName || 'Customer',
         ...(cleanEmail ? { email: cleanEmail } : {}),
         phone: digitsOnly || (cleanNic ? `07${cleanNic.slice(-7)}` : '0770000000'),
-        NIC: cleanNic || `NIC-${Date.now()}`,
+        ...(cleanNic ? { NIC: cleanNic } : {}),
         dob: dob || '',
         gender: gender || 'Male',
         title: title || 'Mr.',
@@ -434,8 +434,11 @@ export const getCustomerProfile = async (req, res, next) => {
     }
 
     // 2. Fallback to Connection model
-    if (mongoose.connection.readyState === 1 && (phoneStr || cleanEmail)) {
+    if (mongoose.connection.readyState === 1 && (phoneStr || cleanEmail || cleanNic)) {
       const connQuery = [];
+      if (cleanNic) {
+        connQuery.push({ nic: cleanNic }, { nic: cleanNic.toLowerCase() });
+      }
       if (phoneStr) {
         connQuery.push(
           { telephone: phoneStr },

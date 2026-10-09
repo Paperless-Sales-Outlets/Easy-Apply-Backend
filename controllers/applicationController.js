@@ -58,10 +58,10 @@ export const createApplication = async (req, res, next) => {
       } catch (_) {}
     }
 
-    if (!nic) {
-      nic = `NIC-${last9}`;
+    if (nic && String(nic).startsWith('NIC-')) {
+      nic = '';
     }
-    const cleanNic = String(nic).trim().toUpperCase();
+    const cleanNic = nic ? String(nic).trim().toUpperCase() : '';
 
     // Process uploaded files
     const uploadedDocuments = {};

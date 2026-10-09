@@ -78,28 +78,32 @@ export const checkPhone = async (req, res, next) => {
 
 // The customer fields safe to return to the client. Kept in one place so
 // register, login and /me all expose the same profile.
-export const publicCustomer = (customer) => ({
-  id: customer._id,
-  name: customer.name,
-  email: customer.email,
-  phone: customer.phone,
-  role: customer.role,
-  NIC: customer.NIC,
-  title: customer.title,
-  dob: customer.dob,
-  gender: customer.gender,
-  nationality: customer.nationality,
-  contactNumber: customer.contactNumber,
-  addressLine1: customer.addressLine1,
-  addressLine2: customer.addressLine2,
-  city: customer.city,
-  district: customer.district,
-  postalCode: customer.postalCode,
-  preferredContact: customer.preferredContact,
-  // Ids only — the images are served admin-only via /api/files/:id.
-  identityDocuments: customer.identityDocuments || null,
-  hasIdentityDocuments: !!(customer.identityDocuments && customer.identityDocuments.facePhoto),
-});
+export const publicCustomer = (customer) => {
+  const rawNic = customer.NIC || '';
+  const cleanNicVal = rawNic.startsWith('NIC-') ? '' : rawNic;
+  return {
+    id: customer._id,
+    name: customer.name,
+    email: customer.email,
+    phone: customer.phone,
+    role: customer.role,
+    NIC: cleanNicVal,
+    title: customer.title,
+    dob: customer.dob,
+    gender: customer.gender,
+    nationality: customer.nationality,
+    contactNumber: customer.contactNumber,
+    addressLine1: customer.addressLine1,
+    addressLine2: customer.addressLine2,
+    city: customer.city,
+    district: customer.district,
+    postalCode: customer.postalCode,
+    preferredContact: customer.preferredContact,
+    // Ids only — the images are served admin-only via /api/files/:id.
+    identityDocuments: customer.identityDocuments || null,
+    hasIdentityDocuments: !!(customer.identityDocuments && customer.identityDocuments.facePhoto),
+  };
+};
 
 export const publicUser = publicCustomer;
 
