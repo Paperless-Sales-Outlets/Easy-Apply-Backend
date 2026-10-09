@@ -71,8 +71,12 @@ cartSchema.methods.calculateTotal = function () {
 
 // Method to add item to cart
 cartSchema.methods.addItem = function (product, quantity) {
+  const prodId = String(product.productId || (product._id ? product._id.toString() : ''));
   const existingItemIndex = this.items.findIndex(
-    (item) => item.productId === product.productId
+    (item) =>
+      (item.productId && item.productId.toString() === prodId) ||
+      (item._id && item._id.toString() === prodId) ||
+      (item.id && item.id.toString() === prodId)
   );
 
   if (existingItemIndex !== -1) {
@@ -97,8 +101,12 @@ cartSchema.methods.addItem = function (product, quantity) {
 
 // Method to update item quantity
 cartSchema.methods.updateItemQuantity = function (productId, quantity) {
+  const target = String(productId);
   const itemIndex = this.items.findIndex(
-    (item) => item.productId === productId
+    (item) =>
+      (item.productId && item.productId.toString() === target) ||
+      (item._id && item._id.toString() === target) ||
+      (item.id && item.id.toString() === target)
   );
 
   if (itemIndex === -1) {
@@ -113,16 +121,18 @@ cartSchema.methods.updateItemQuantity = function (productId, quantity) {
 
 // Method to remove item from cart
 cartSchema.methods.removeItem = function (productId) {
+  const target = String(productId);
   const itemIndex = this.items.findIndex(
-    (item) => item.productId === productId
+    (item) =>
+      (item.productId && item.productId.toString() === target) ||
+      (item._id && item._id.toString() === target) ||
+      (item.id && item.id.toString() === target)
   );
 
-  if (itemIndex === -1) {
-    throw new Error('Item not found in cart');
+  if (itemIndex !== -1) {
+    this.items.splice(itemIndex, 1);
+    this.calculateTotal();
   }
-
-  this.items.splice(itemIndex, 1);
-  this.calculateTotal();
   return this.save();
 };
 
