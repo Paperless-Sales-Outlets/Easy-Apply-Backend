@@ -100,6 +100,4 @@ customerSchema.methods.matchPassword = async function (enteredPassword) {
 
 const Customer = mongoose.model('Customer', customerSchema, 'customers');
 
-// Re-export User as alias for backward compatibility
-export const User = Customer;
 export default Customer;

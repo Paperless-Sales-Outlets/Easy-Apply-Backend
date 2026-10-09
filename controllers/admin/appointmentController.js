@@ -1,5 +1,6 @@
 import Appointment from '../../models/Appointment.js';
-import Customer from '../../models/Customer.js';
+import { recordAudit } from '../../services/auditService.js';
+import User from '../../models/User.js';
 
 // @desc    Get appointments — filterable by date range, technician, status
 // @route   GET /api/admin/appointments
@@ -57,7 +58,7 @@ export const getAppointments = async (req, res, next) => {
 // @access  Private (Admin / Staff only)
 export const getTechnicians = async (req, res, next) => {
   try {
-    const technicians = await Customer.find({ role: { $in: ['Staff', 'Admin'] } })
+    const technicians = await User.find({ isActive: { $ne: false } })
       .select('name email phone role')
       .sort({ name: 1 })
       .lean();
@@ -78,7 +79,7 @@ export const assignTechnician = async (req, res, next) => {
 
     const updates = {};
     if (technicianId) {
-      const tech = await Customer.findById(technicianId).select('name');
+      const tech = await User.findById(technicianId).select('name');
       if (!tech) {
         res.status(404);
         return next(new Error('Technician not found'));
@@ -88,6 +89,7 @@ export const assignTechnician = async (req, res, next) => {
       updates.technicianId = null;
     }
 
+    const previous = await Appointment.findById(id).select('technicianId referenceNumber');
     const appointment = await Appointment.findByIdAndUpdate(
       id,
       { $set: updates },
@@ -101,6 +103,14 @@ export const assignTechnician = async (req, res, next) => {
       return next(new Error('Appointment not found'));
     }
 
+    await recordAudit({
+      req,
+      action: 'UPDATE',
+      module: 'Appointments',
+      targetId: appointment.referenceNumber || id,
+      description: `Updated appointment technician assignment`,
+      metadata: { previousTechnicianId: previous?.technicianId || null, technicianId: appointment.technicianId?._id || null },
+    });
     res.status(200).json({
       success: true,
       appointment: {
@@ -136,6 +146,7 @@ export const updateAppointmentStatus = async (req, res, next) => {
       return next(new Error('Status is required'));
     }
 
+    const previous = await Appointment.findById(id).select('status referenceNumber');
     const appointment = await Appointment.findByIdAndUpdate(
       id,
       { $set: { status } },
@@ -149,6 +160,14 @@ export const updateAppointmentStatus = async (req, res, next) => {
       return next(new Error('Appointment not found'));
     }
 
+    await recordAudit({
+      req,
+      action: 'STATUS_UPDATE',
+      module: 'Appointments',
+      targetId: appointment.referenceNumber || id,
+      description: `Changed appointment status from ${previous?.status || 'unknown'} to ${appointment.status}`,
+      metadata: { previousStatus: previous?.status, newStatus: appointment.status },
+    });
     res.status(200).json({
       success: true,
       appointment: {
@@ -195,6 +214,13 @@ export const createAppointment = async (req, res, next) => {
       notes: notes || '',
     });
 
+    await recordAudit({
+      req,
+      action: 'CREATE',
+      module: 'Appointments',
+      targetId: appointment.referenceNumber || appointment._id,
+      description: 'Created appointment',
+    });
     res.status(201).json({ success: true, appointment: { id: appointment._id } });
   } catch (error) {
     next(error);

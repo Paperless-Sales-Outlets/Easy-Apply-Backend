@@ -47,3 +47,16 @@ npm run dev
 ```
 The server will start running on `http://localhost:5000`.
 
+## Audit logs
+
+Successful authentication, user-management, KYC, application/request, form,
+comment, and appointment actions are stored in the `audit_logs` MongoDB
+collection. Administrators can retrieve them with:
+
+```text
+GET /api/admin/audit-logs?page=1&limit=25&search=REQ-1024&action=STATUS_UPDATE&module=Application&from=2026-01-01&to=2026-01-31
+```
+
+The endpoint requires an administrator Bearer token. `search`, `action`,
+`module`, `from`/`startDate`, and `to`/`endDate` are optional; results are
+sorted newest first and include pagination metadata.

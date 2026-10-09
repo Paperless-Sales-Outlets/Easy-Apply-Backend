@@ -66,7 +66,7 @@ const appointmentSchema = new mongoose.Schema(
     },
     technicianId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Customer',
+      ref: 'User',
       default: null,
     },
 

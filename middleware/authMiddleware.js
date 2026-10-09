@@ -1,5 +1,18 @@
 import jwt from 'jsonwebtoken';
-import Customer, { User } from '../models/Customer.js';
+import Customer from '../models/Customer.js';
+import User from '../models/User.js';
+
+// Resolve a token's account id to a staff User or a Customer. `role` is the
+// role recorded in the token (if any) and only decides which collection is
+// tried first.
+export const findAccountById = async (id, role) => {
+  const order = role === 'Customer' ? [Customer, User] : [User, Customer];
+  for (const Model of order) {
+    const account = await Model.findById(id);
+    if (account) return account;
+  }
+  return null;
+};
 
 // Protect private routes
 export const protect = async (req, res, next) => {
@@ -20,16 +33,23 @@ export const protect = async (req, res, next) => {
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
-      // Find customer and attach to request object
-      const customer = await Customer.findById(decoded.id);
+      // Admin and staff accounts live in `users`, customers in `customers`.
+      // The token carries the role, so look in the matching collection first
+      // and fall back to the other for tokens issued before the split.
+      const account = await findAccountById(decoded.id, decoded.role);
 
-      if (!customer) {
+      if (!account) {
         res.status(401);
-        return next(new Error('Customer account not found'));
+        return next(new Error('User account not found'));
       }
 
-      req.customer = customer;
-      req.user = customer; // backward compatibility
+      if (account.isActive === false) {
+        res.status(403);
+        return next(new Error('This account has been deactivated. Contact an administrator.'));
+      }
+
+      req.user = account;
+      if (account instanceof Customer) req.customer = account;
 
       return next();
     } catch (error) {

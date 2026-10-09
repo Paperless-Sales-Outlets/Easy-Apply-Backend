@@ -1,5 +1,6 @@
 import Form from '../../models/admin/formModel.js';
 import Customer from '../../models/Customer.js';
+import { recordAudit } from '../../services/auditService.js';
 
 // GET /api/admin/forms
 export const getForms = async (req, res, next) => {
@@ -50,6 +51,7 @@ export const createForm = async (req, res, next) => {
     const { formType, data, status } = req.body;
     const userObj = req.customer || req.user;
     const form = await Form.create({ formType, data, status, createdBy: userObj && userObj._id });
+    await recordAudit({ req, action: 'CREATE', module: 'Forms', targetId: form._id, description: `Created ${formType || 'form'}` });
     res.status(201).json({ success: true, form });
   } catch (error) {
     next(error);
@@ -66,6 +68,7 @@ export const updateForm = async (req, res, next) => {
       res.status(404);
       return next(new Error('Form not found'));
     }
+    await recordAudit({ req, action: 'UPDATE', module: 'Forms', targetId: id, description: 'Updated form details' });
     res.status(200).json({ success: true, form });
   } catch (error) {
     next(error);
@@ -81,6 +84,7 @@ export const deleteForm = async (req, res, next) => {
       res.status(404);
       return next(new Error('Form not found'));
     }
+    await recordAudit({ req, action: 'DELETE', module: 'Forms', targetId: id, description: 'Deleted form' });
     res.status(200).json({ success: true, message: 'Form deleted' });
   } catch (error) {
     next(error);
@@ -110,6 +114,7 @@ export const addComment = async (req, res, next) => {
       res.status(404);
       return next(new Error('Form not found'));
     }
+    await recordAudit({ req, action: 'ADD_COMMENT', module: 'Forms', targetId: id, description: 'Added a form comment' });
 
     // Populate the newly added comment author for response
     const populated = await Form.findById(form._id).populate('comments.author', 'name email').lean();

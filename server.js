@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs';
 
 import connectDB, { isDbConnected } from './config/db.js';
+import { startKycAutoReviewScheduler } from './services/kycAutoReviewService.js';
 import mongoose from 'mongoose';
 
 import applicationRoutes from './routes/applicationRoutes.js';
@@ -17,6 +18,10 @@ import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
 import adminKycRoutes from './routes/admin/kycRoutes.js';
 import adminAnalyticsRoutes from './routes/admin/analyticsRoutes.js';
 import adminAppointmentRoutes from './routes/admin/appointmentRoutes.js';
+import adminUsersRoutes from './routes/admin/usersRoutes.js';
+import adminRolesRoutes from './routes/admin/rolesRoutes.js';
+import adminPrivilegesRoutes from './routes/admin/privilegesRoutes.js';
+import adminAuditRoutes from './routes/admin/auditRoutes.js';
 import fieldAppointmentRoutes from './routes/field/fieldAppointmentRoutes.js';
 import appointmentRoutes from './routes/appointmentRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
@@ -37,6 +42,9 @@ import { protect, authorize } from './middleware/authMiddleware.js';
 
 // Connect Database
 connectDB();
+
+// Automated KYC review (set KYC_AUTO_REVIEW=off to disable)
+startKycAutoReviewScheduler();
 
 // Drop legacy orderId index once connected
 mongoose.connection.once('open', async () => {
@@ -234,6 +242,26 @@ app.use(
 app.use(
   '/api/admin/appointments',
   adminAppointmentRoutes
+);
+
+app.use(
+  '/api/admin/users',
+  adminUsersRoutes
+);
+
+app.use(
+  '/api/admin/roles',
+  adminRolesRoutes
+);
+
+app.use(
+  '/api/admin/privileges',
+  adminPrivilegesRoutes
+);
+
+app.use(
+  '/api/admin/audit-logs',
+  adminAuditRoutes
 );
 
 app.use(

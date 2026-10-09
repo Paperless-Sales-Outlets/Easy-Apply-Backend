@@ -34,7 +34,7 @@ router.get('/users', protect, authorize('Admin'), getUsers);
 router.get('/customers', protect, authorize('Admin'), getCustomers);
 
 router.get('/me', protect, (req, res) => {
-  const profile = publicCustomer(req.customer || req.user);
+  const profile = publicUser(req.user);
   res.status(200).json({
     success: true,
     customer: profile,

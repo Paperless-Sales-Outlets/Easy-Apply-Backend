@@ -3,8 +3,11 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import Customer from '../models/Customer.js';
+import User from '../models/User.js';
+import { findAccountById } from '../middleware/authMiddleware.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
+import { recordAudit } from '../services/auditService.js';
 
 // @desc    Check if a phone number is registered (used by login flow to decide
 //          whether to send OTP or redirect to sign-up)
@@ -101,7 +104,21 @@ export const publicCustomer = (customer) => ({
   hasIdentityDocuments: !!(customer.identityDocuments && customer.identityDocuments.facePhoto),
 });
 
-export const publicUser = publicCustomer;
+// The staff (users collection) fields safe to return to the client.
+export const publicStaff = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  role: user.role,
+  employeeNumber: user.employeeNumber,
+  permissions: user.permissions || [],
+  isActive: user.isActive !== false,
+});
+
+// Profile for either kind of account, picked by the collection it came from.
+export const publicUser = (account) =>
+  account instanceof User ? publicStaff(account) : publicCustomer(account);
 
 
 
@@ -381,6 +398,14 @@ export const register = async (req, res, next) => {
     });
 
     const publicProfile = publicCustomer(customer);
+    await recordAudit({
+      req,
+      actor: customer,
+      action: 'CREATE',
+      module: 'Authentication',
+      targetId: customer._id,
+      description: 'Registered customer account',
+    });
 
     res.status(201).json({
       success: true,
@@ -406,7 +431,12 @@ export const register = async (req, res, next) => {
  * one, and so existing integrations don't 404.
  */
 export const login = async (req, res, next) => {
-  const { email, password } = req.body;
+  const { password } = req.body;
+
+  // Addresses are stored lower-cased by the schema, but Mongo compares strings
+  // case-sensitively, so an unnormalised lookup would reject a legitimate
+  // account the moment someone typed "Admin@SLT.lk".
+  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
 
   if (!email || !password) {
     res.status(400);
@@ -414,39 +444,57 @@ export const login = async (req, res, next) => {
   }
 
   try {
-    // Find customer and explicitly select password
-    const customer = await Customer.findOne({ email }).select('+password');
+    // Admin and staff accounts (users collection) sign in here from the admin
+    // portal; fall back to customers for older accounts that still have a
+    // password. Staff are checked first so an address held in both resolves
+    // to the staff account.
+    const account =
+      (await User.findOne({ email }).select('+password')) ||
+      (await Customer.findOne({ email }).select('+password'));
 
-    if (!customer) {
+    if (!account) {
       res.status(401);
       return next(new Error('Invalid email or password'));
     }
 
     // Check password matches
-    const isMatch = await customer.matchPassword(password);
+    const isMatch = await account.matchPassword(password);
 
     if (!isMatch) {
       res.status(401);
       return next(new Error('Invalid email or password'));
     }
 
+    if (account.isActive === false) {
+      res.status(403);
+      return next(new Error('This account has been deactivated. Contact an administrator.'));
+    }
+
     // Generate tokens
-    const accessToken = generateAccessToken(customer);
-    const refreshToken = generateRefreshToken(customer);
+    const accessToken = generateAccessToken(account);
+    const refreshToken = generateRefreshToken(account);
 
     // Save refresh token to DB
     const decodedRefresh = jwt.decode(refreshToken);
     await RefreshToken.create({
-      userId: customer._id,
+      userId: account._id,
       token: refreshToken,
       expiresAt: new Date(decodedRefresh.exp * 1000),
     });
 
-    const publicProfile = publicCustomer(customer);
+    const publicProfile = publicUser(account);
+    await recordAudit({
+      req,
+      actor: account,
+      action: 'LOGIN',
+      module: 'Authentication',
+      targetId: account._id,
+      description: 'Successful password login',
+    });
 
     res.status(200).json({
       success: true,
-      customer: publicProfile,
+      ...(account instanceof Customer ? { customer: publicProfile } : {}),
       user: publicProfile,
       accessToken,
       refreshToken,
@@ -533,6 +581,14 @@ export const otpLogin = async (req, res, next) => {
     });
 
     const publicProfile = publicCustomer(customer);
+    await recordAudit({
+      req,
+      actor: customer,
+      action: 'LOGIN',
+      module: 'Authentication',
+      targetId: customer._id,
+      description: 'Successful OTP login',
+    });
 
     res.status(200).json({
       success: true,
@@ -569,16 +625,22 @@ export const refresh = async (req, res, next) => {
     // Verify token validity
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
 
-    // Find the customer
-    const customer = await Customer.findById(decoded.id);
+    // Find the account — staff (users) or customer (customers)
+    const account = await findAccountById(decoded.id);
 
-    if (!customer) {
+    if (!account) {
       res.status(401);
-      return next(new Error('Customer account not found'));
+      return next(new Error('User account not found'));
+    }
+
+    if (account.isActive === false) {
+      await RefreshToken.deleteOne({ token: refreshToken });
+      res.status(403);
+      return next(new Error('This account has been deactivated. Contact an administrator.'));
     }
 
     // Generate new access token
-    const newAccessToken = generateAccessToken(customer);
+    const newAccessToken = generateAccessToken(account);
 
     res.status(200).json({
       success: true,
@@ -604,7 +666,17 @@ export const logout = async (req, res, next) => {
 
   try {
     // Delete refresh token from DB to invalidate it
+    const savedToken = await RefreshToken.findOne({ token: refreshToken }).select('userId');
     await RefreshToken.deleteOne({ token: refreshToken });
+    const account = savedToken ? await findAccountById(savedToken.userId) : null;
+    await recordAudit({
+      req,
+      actor: account,
+      action: 'LOGOUT',
+      module: 'Authentication',
+      targetId: savedToken?.userId,
+      description: 'Successful logout',
+    });
 
     res.status(200).json({
       success: true,
@@ -715,4 +787,3 @@ export const verifyEntry = async (req, res, next) => {
     next(error);
   }
 };
-
