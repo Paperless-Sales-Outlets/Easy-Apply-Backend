@@ -471,6 +471,11 @@ export const getCustomerProfile = async (req, res, next) => {
             city: '',
             district: '',
             postalCode: '',
+            identityDocuments: null,
+            hasIdentityDocuments: false,
+            hasNicFront: false,
+            hasNicBack: false,
+            hasNicDocuments: false,
           },
         });
       }

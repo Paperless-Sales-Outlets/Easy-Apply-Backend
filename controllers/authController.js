@@ -81,6 +81,11 @@ export const checkPhone = async (req, res, next) => {
 export const publicCustomer = (customer) => {
   const rawNic = customer.NIC || '';
   const cleanNicVal = rawNic.startsWith('NIC-') ? '' : rawNic;
+  const hasNicFront = Boolean(customer.identityDocuments?.nicFront && String(customer.identityDocuments.nicFront).trim());
+  const hasNicBack = Boolean(customer.identityDocuments?.nicBack && String(customer.identityDocuments.nicBack).trim());
+  const hasFacePhoto = Boolean(customer.identityDocuments?.facePhoto && String(customer.identityDocuments.facePhoto).trim());
+  const hasNicDocuments = hasNicFront && hasNicBack;
+
   return {
     id: customer._id,
     name: customer.name,
@@ -101,7 +106,10 @@ export const publicCustomer = (customer) => {
     preferredContact: customer.preferredContact,
     // Ids only — the images are served admin-only via /api/files/:id.
     identityDocuments: customer.identityDocuments || null,
-    hasIdentityDocuments: !!(customer.identityDocuments && customer.identityDocuments.facePhoto),
+    hasIdentityDocuments: hasFacePhoto,
+    hasNicFront,
+    hasNicBack,
+    hasNicDocuments,
   };
 };
 
