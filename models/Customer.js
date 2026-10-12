@@ -35,8 +35,8 @@ const customerSchema = new mongoose.Schema(
     },
     NIC: {
       type: String,
-      required: [true, 'NIC / Passport / BR Number is required'],
       unique: true,
+      sparse: true,
       trim: true,
       uppercase: true,
     },
@@ -51,14 +51,10 @@ const customerSchema = new mongoose.Schema(
     district: { type: String },
     postalCode: { type: String },
     preferredContact: { type: String, default: 'SMS' },
-    // KYC images captured at registration. Only GridFS file ids are stored —
-    // keeping base64 on the customer document would bloat every record and risk
-    // the 16MB document ceiling.
+    // KYC images captured at registration or application submission
     identityDocuments: {
-      nicFront: { type: mongoose.Schema.Types.ObjectId },
-      nicBack: { type: mongoose.Schema.Types.ObjectId },
-      facePhoto: { type: mongoose.Schema.Types.ObjectId },
-      capturedAt: { type: Date },
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
     // Account-level KYC review (used when a customer has registered but has no
     // application yet). Once they apply, the application's own status takes over.
@@ -81,14 +77,13 @@ const customerSchema = new mongoose.Schema(
 );
 
 // Encrypt password using bcrypt pre-save
-customerSchema.pre('save', async function (next) {
+customerSchema.pre('save', async function () {
   // Accounts created through the OTP flow have no password at all, and the
   // original guard fell through to hashing even when nothing had changed.
-  if (!this.password || !this.isModified('password')) return next();
+  if (!this.password || !this.isModified('password')) return;
 
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
-  return next();
 });
 
 // Match customer entered password to hashed password in database

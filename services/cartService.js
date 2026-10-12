@@ -53,7 +53,13 @@ export const addItemToCart = async (userId, productId, quantity) => {
   const cart = await getOrCreateCart(userId);
 
   // Check if item already exists in cart
-  const existingItem = cart.items.find((item) => item.productId === productId);
+  const target = String(productId);
+  const existingItem = cart.items.find(
+    (item) =>
+      (item.productId && item.productId.toString() === target) ||
+      (item._id && item._id.toString() === target) ||
+      (item.id && item.id.toString() === target)
+  );
 
   if (existingItem) {
     // Calculate new total quantity
@@ -67,7 +73,7 @@ export const addItemToCart = async (userId, productId, quantity) => {
     }
 
     // Update existing item
-    await cart.updateItemQuantity(productId, newQuantity);
+    await cart.updateItemQuantity(target, newQuantity);
   } else {
     // Add new item
     await cart.addItem(product, quantity);
@@ -88,19 +94,26 @@ export const updateCartItemQuantity = async (userId, productId, quantity) => {
   // Get cart — must be a real document (not getCart's .lean() result) since
   // updateItemQuantity below is a Mongoose instance method.
   const cart = await getOrCreateCart(userId);
+  const target = String(productId);
 
   // Check if item exists in cart
-  const existingItem = cart.items.find((item) => item.productId === productId);
+  const existingItem = cart.items.find(
+    (item) =>
+      (item.productId && item.productId.toString() === target) ||
+      (item._id && item._id.toString() === target) ||
+      (item.id && item.id.toString() === target)
+  );
 
   if (!existingItem) {
     throw new Error('Item not found in cart');
   }
 
   // Check product availability
-  const product = await productService.checkProductAvailability(productId, quantity);
+  const actualProdId = existingItem.productId || existingItem._id;
+  await productService.checkProductAvailability(actualProdId, quantity);
 
   // Update quantity
-  await cart.updateItemQuantity(productId, quantity);
+  await cart.updateItemQuantity(target, quantity);
 
   return await Cart.findOne({ userId }).lean();
 };
@@ -111,16 +124,10 @@ export const updateCartItemQuantity = async (userId, productId, quantity) => {
 export const removeItemFromCart = async (userId, productId) => {
   // Get cart — must be a real document, see updateCartItemQuantity above.
   const cart = await getOrCreateCart(userId);
+  const target = String(productId);
 
-  // Check if item exists in cart
-  const existingItem = cart.items.find((item) => item.productId === productId);
-
-  if (!existingItem) {
-    throw new Error('Item not found in cart');
-  }
-
-  // Remove item
-  await cart.removeItem(productId);
+  // Remove item (idempotent, checks productId, _id, or id without throwing 500)
+  await cart.removeItem(target);
 
   return await Cart.findOne({ userId }).lean();
 };

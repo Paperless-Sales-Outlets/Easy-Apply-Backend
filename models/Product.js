@@ -95,14 +95,13 @@ productSchema.virtual('inStock').get(function () {
 });
 
 // Pre-save hook to ensure productId is set
-productSchema.pre('save', function (next) {
+productSchema.pre('save', function () {
   if (!this.productId) {
     this.productId = this._id.toString();
   }
   if (!this.productCode) {
     this.productCode = `PRD-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
   }
-  next();
 });
 
 const Product = mongoose.model('Product', productSchema);

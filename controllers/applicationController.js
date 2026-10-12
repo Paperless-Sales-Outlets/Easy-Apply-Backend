@@ -59,10 +59,10 @@ export const createApplication = async (req, res, next) => {
       } catch (_) {}
     }
 
-    if (!nic) {
-      nic = `NIC-${last9}`;
+    if (nic && String(nic).startsWith('NIC-')) {
+      nic = '';
     }
-    const cleanNic = String(nic).trim().toUpperCase();
+    const cleanNic = nic ? String(nic).trim().toUpperCase() : '';
 
     // Process uploaded files
     const uploadedDocuments = {};
@@ -123,6 +123,7 @@ export const createApplication = async (req, res, next) => {
       ...uploadedDocuments,
       nicFront: uploadedDocuments.nicFront || formData.nicFront || null,
       nicBack: uploadedDocuments.nicBack || formData.nicBack || null,
+      facePhoto: uploadedDocuments.facePhoto || formData.facePhoto || null,
       passportDoc: uploadedDocuments.passportDoc || formData.passportDoc || null,
       brcDoc: uploadedDocuments.brcDoc || formData.brcDoc || null,
       vatDoc: uploadedDocuments.vatDoc || formData.vatDoc || null,
@@ -179,6 +180,14 @@ export const createApplication = async (req, res, next) => {
           if (!customerRecord.city && formData.city) customerRecord.city = formData.city;
           if (!customerRecord.district && formData.district) customerRecord.district = formData.district;
           if (!customerRecord.postalCode && formData.postalCode) customerRecord.postalCode = formData.postalCode;
+          if (!customerRecord.identityDocuments) {
+            customerRecord.identityDocuments = {};
+          }
+          if (formData.documents?.nicFront) customerRecord.identityDocuments.nicFront = formData.documents.nicFront;
+          if (formData.documents?.nicBack) customerRecord.identityDocuments.nicBack = formData.documents.nicBack;
+          if (formData.documents?.facePhoto) customerRecord.identityDocuments.facePhoto = formData.documents.facePhoto;
+          customerRecord.identityDocuments.capturedAt = new Date();
+
           await customerRecord.save();
         }
 
@@ -203,6 +212,7 @@ export const createApplication = async (req, res, next) => {
         phone: verifiedPhone,
         serviceType,
         formData,
+        documents: formData.documents || {},
         nic: cleanNic,
         status: 'pending',
         paymentStatus: formData.paymentReference ? 'paid' : 'pending',

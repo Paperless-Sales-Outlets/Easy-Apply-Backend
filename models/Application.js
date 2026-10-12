@@ -72,6 +72,10 @@ const applicationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       required: true,
     },
+    documents: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
     officeFields: {
       crNumber: { type: String, trim: true, default: '' },
       amountPaid: { type: Number, default: null },
@@ -85,7 +89,7 @@ const applicationSchema = new mongoose.Schema(
 );
 
 // Pre-validate hook to generate unique reference number if not set
-applicationSchema.pre('validate', async function (next) {
+applicationSchema.pre('validate', async function () {
   if (!this.referenceNumber) {
     let isUnique = false;
     let ref = '';
@@ -106,7 +110,6 @@ applicationSchema.pre('validate', async function (next) {
     
     this.referenceNumber = ref;
   }
-  next();
 });
 
 const Application = mongoose.model('Application', applicationSchema);
