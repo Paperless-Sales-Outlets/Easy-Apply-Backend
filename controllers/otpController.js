@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Otp from '../models/Otp.js';
+import { issueDraftToken } from '../utils/draftToken.js';
 
 // In-memory fallback store when MongoDB is offline
 const inMemoryOtpStore = new Map();
@@ -77,6 +78,9 @@ export const verifyOtp = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         message: 'Phone number verified successfully',
+        // A demo code proves nothing about who owns the number, so it never
+        // unlocks saved applications outside development.
+        draftToken: process.env.NODE_ENV === 'production' ? undefined : issueDraftToken(cleanPhone),
       });
     }
 
@@ -123,6 +127,8 @@ export const verifyOtp = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: 'Phone number verified successfully',
+      // Lets this customer save and resume their New Connection application.
+      draftToken: issueDraftToken(cleanPhone),
     });
   } catch (error) {
     next(error);

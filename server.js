@@ -32,6 +32,7 @@ import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
 import nicRoutes from './routes/nicRoutes.js';
+import draftRoutes from './routes/draftRoutes.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -98,7 +99,7 @@ app.use(cors({
     }
   },
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id', 'x-draft-token'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   optionsSuccessStatus: 204,
 }));
@@ -310,6 +311,12 @@ app.use(
 app.use(
   '/api/nic',
   nicRoutes
+);
+
+// Saved progress on the New Connection application (signed-in customers only)
+app.use(
+  '/api/drafts',
+  draftRoutes
 );
 
 
