@@ -8,6 +8,7 @@ import fs from 'fs';
 
 import connectDB, { isDbConnected } from './config/db.js';
 import { startKycAutoReviewScheduler } from './services/kycAutoReviewService.js';
+import { startDraftExpiryScheduler } from './services/draftExpiryService.js';
 import mongoose from 'mongoose';
 
 import applicationRoutes from './routes/applicationRoutes.js';
@@ -46,6 +47,10 @@ connectDB();
 
 // Automated KYC review (set KYC_AUTO_REVIEW=off to disable)
 startKycAutoReviewScheduler();
+
+// Unfinished New Connection applications: hide them from the customer after
+// 30 days (kept in the database, marked expired). Checked hourly.
+startDraftExpiryScheduler();
 
 // Drop legacy orderId index once connected
 mongoose.connection.once('open', async () => {
