@@ -9,6 +9,13 @@ import {
   runKycAutoReview,
 } from '../../services/kycAutoReviewService.js';
 import { recordAudit } from '../../services/auditService.js';
+import {
+  FRESH_CAPTURE_HOURS,
+  docRef,
+  gridfsInfo,
+  capturedAtOf,
+  captureSource,
+} from '../../services/kycIdentityImages.js';
 
 const NAME_FIELDS = [
   'nameFull',
@@ -81,7 +88,8 @@ const resolveDocUrl = async (raw) => {
   return await getSignedFileUrl(url);
 };
 
-const USER_DOC_KEYS = DOC_KEYS.filter(({ key }) => ['nicFront', 'nicBack', 'facePhoto'].includes(key));
+const IDENTITY_KEYS = ['nicFront', 'nicBack', 'facePhoto'];
+const USER_DOC_KEYS = DOC_KEYS.filter(({ key }) => IDENTITY_KEYS.includes(key));
 
 // Customer who registered (NIC + live photo captured) but has no application yet.
 // The audit fields every queue item carries: who decided, the automated
@@ -96,6 +104,7 @@ function reviewView(review, legacy) {
       autoCheckedAt: null,
       checks: [],
       history: [],
+      caseInfo: null,
     };
   }
   return {
@@ -105,6 +114,7 @@ function reviewView(review, legacy) {
     autoDecision: review.autoDecision || null,
     autoCheckedAt: review.autoCheckedAt || null,
     checks: (review.checks || []).map((c) => ({ key: c.key, label: c.label, result: c.result, detail: c.detail })),
+    caseInfo: review.caseInfo || null,
     history: (review.history || []).map((h) => ({
       at: h.at,
       actor: h.actor,
@@ -119,11 +129,18 @@ function reviewView(review, legacy) {
 
 async function customerToQueueItem(customer, review) {
   const documents = [];
+  const identityRaw = {};
   for (const { key, label } of USER_DOC_KEYS) {
-    const url = await resolveDocUrl(customer.identityDocuments?.[key]);
-    if (url) documents.push({ key, label, url });
+    const raw = customer.identityDocuments?.[key];
+    const url = await resolveDocUrl(raw);
+    if (url) {
+      documents.push({ key, label, url });
+      identityRaw[key] = raw;
+    }
   }
   return {
+    _identityRaw: identityRaw,
+    _accountCreatedAt: customer.createdAt || null,
     id: customer._id,
     kind: 'account',
     referenceNumber: 'ACCOUNT',
@@ -163,8 +180,9 @@ async function toQueueItem(app, review) {
   } catch (_) {}
 
   const documents = [];
+  const identityRaw = {};
   for (const { key, label } of DOC_KEYS) {
-    let raw = docs[key] ?? fd[key];
+    let raw = docs[key] ?? app.documents?.[key] ?? fd[key];
 
     // Fallback for signature from root form data
     if (key === 'signature' && !raw) raw = fd.signature;
@@ -177,10 +195,13 @@ async function toQueueItem(app, review) {
     const resolved = await resolveDocUrl(raw);
     if (resolved) {
       documents.push({ key, label, url: resolved });
+      if (IDENTITY_KEYS.includes(key)) identityRaw[key] = raw;
     }
   }
 
   return {
+    _identityRaw: identityRaw,
+    _accountCreatedAt: customerProfile?.createdAt || null,
     id: app._id,
     referenceNumber: app.referenceNumber,
     name: pick(fd, NAME_FIELDS) || customerProfile?.name || 'Unknown',
@@ -202,6 +223,60 @@ async function toQueueItem(app, review) {
       : null),
     documents,
   };
+}
+
+// Adds, for every queue item: when each identity photo was captured, whether it
+// came with this request or was already on file, the customer type (new or
+// returning) and — when the face check used one — the selfie a staff member
+// verified earlier. One GridFS lookup serves the whole list.
+async function annotateIdentity(items) {
+  const refsByItem = items.map((item) => Object.fromEntries(
+    Object.entries(item._identityRaw || {}).map(([k, raw]) => [k, docRef(raw)])
+  ));
+  const info = await gridfsInfo(refsByItem.flatMap((r) => Object.values(r)));
+
+  const referenceIds = [...new Set(items
+    .map((i) => i.caseInfo?.face?.against === 'selfie' && i.caseInfo.face.referenceId)
+    .filter((id) => id && mongoose.isValidObjectId(id)))];
+  const referenceApps = referenceIds.length
+    ? await Application.find({ _id: { $in: referenceIds } }).select('referenceNumber createdAt formData.documents documents').lean()
+    : [];
+  const referenceUrl = new Map();
+  for (const ref of referenceApps) {
+    const docs = { ...(ref.formData?.documents || {}), ...(ref.documents || {}) };
+    const url = await resolveDocUrl(docs.facePhoto);
+    if (url) referenceUrl.set(String(ref._id), { url, referenceNumber: ref.referenceNumber, capturedAt: ref.createdAt });
+  }
+
+  return items.map((item, idx) => {
+    const { _identityRaw, _accountCreatedAt, ...rest } = item;
+    const stored = item.caseInfo?.images || {};
+    const refs = refsByItem[idx];
+    const live = {};
+    Object.entries(refs).forEach(([key, ref]) => {
+      // The automated run also dates inline / path images by earlier requests,
+      // so its answer wins when it has one for this same image.
+      const capturedAt = stored[key]?.capturedAt || capturedAtOf(ref, info, item.submittedAt);
+      live[key] = { capturedAt, source: stored[key]?.source || captureSource(capturedAt, item.submittedAt) };
+    });
+
+    let customerType = item.caseInfo?.customerType || null;
+    if (!customerType) {
+      if (item.kind === 'account') customerType = 'new';
+      else if (live.nicFront?.source === 'on-file') customerType = 'returning';
+      else if (live.nicFront?.source === 'request') {
+        const age = _accountCreatedAt ? new Date(item.submittedAt) - new Date(_accountCreatedAt) : 0;
+        customerType = age > FRESH_CAPTURE_HOURS * 3600 * 1000 ? 'existing-new-nic' : 'new';
+      } else customerType = 'unknown';
+    }
+
+    return {
+      ...rest,
+      customerType,
+      documents: rest.documents.map((d) => (live[d.key] ? { ...d, ...live[d.key] } : d)),
+      referenceSelfie: referenceUrl.get(String(item.caseInfo?.face?.referenceId)) || null,
+    };
+  });
 }
 
 // Reviews for a batch of subjects, keyed by id.
@@ -275,7 +350,7 @@ export const getKycQueue = async (req, res, next) => {
     const accountReviews = await reviewsFor('account', accountCustomers.map((c) => c._id));
     const accounts = await Promise.all(accountCustomers.map((c) => customerToQueueItem(c, accountReviews.get(String(c._id)))));
 
-    const all = [...queue, ...accounts];
+    const all = await annotateIdentity([...queue, ...accounts]);
     res.status(200).json({ success: true, count: all.length, queue: all });
   } catch (error) {
     next(error);
@@ -294,11 +369,11 @@ async function itemFor(subject) {
   if (subject.type === 'application') {
     const app = await Application.findById(subject.doc._id).populate('actionedBy', 'name email role').lean();
     const review = await KycReview.findOne({ subjectType: 'application', subjectId: app._id }).lean();
-    return toQueueItem(app, review);
+    return (await annotateIdentity([await toQueueItem(app, review)]))[0];
   }
   const customer = await Customer.findById(subject.doc._id).lean();
   const review = await KycReview.findOne({ subjectType: 'account', subjectId: customer._id }).lean();
-  return customerToQueueItem(customer, review);
+  return (await annotateIdentity([await customerToQueueItem(customer, review)]))[0];
 }
 
 // @desc    Manually decide a KYC case (approve / reject / flag / reopen) with a
@@ -342,7 +417,7 @@ export const reviewKycApplication = async (req, res, next) => {
             actionedAt: new Date(),
           },
         },
-        { new: true, runValidators: true }
+        { returnDocument: 'after', runValidators: true }
       );
       if (!updated) {
         res.status(409);
