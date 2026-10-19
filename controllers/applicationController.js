@@ -4,7 +4,10 @@ import Connection from '../models/Connection.js';
 import Customer from '../models/Customer.js';
 import Appointment from '../models/Appointment.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
-import { recordAudit } from '../services/auditService.js';
+import {
+  recordAudit,
+  recordLoopCheckAudit,
+} from '../services/auditService.js';
 
 
 // @desc    Submit a new service application
@@ -573,7 +576,7 @@ export const checkLoopAvailability = async (req, res, next) => {
     const isAvailable = !isExplicitlyUnavailable && (searchString.trim().length > 0);
 
     if (isAvailable) {
-      return res.status(200).json({
+      const response = {
         success: true,
         available: true,
         message: 'Service loop is available in your area.',
@@ -582,9 +585,20 @@ export const checkLoopAvailability = async (req, res, next) => {
           loopStatus: 'AVAILABLE',
           estimatedProvisionDays: 3,
         },
+      };
+      await recordLoopCheckAudit({
+        req,
+        targetId: req.body?.connectionReference || req.body?.targetId || req.body?.accountNo,
+        status: 'SUCCESS',
+        result: {
+          available: response.available,
+          loopStatus: response.coverage.loopStatus,
+          area: response.coverage.area,
+        },
       });
+      return res.status(200).json(response);
     } else {
-      return res.status(200).json({
+      const response = {
         success: true,
         available: false,
         message: 'No service loop available in this area. Please contact your nearest SLTMobitel branch.',
@@ -593,9 +607,30 @@ export const checkLoopAvailability = async (req, res, next) => {
           loopStatus: 'UNAVAILABLE',
           recommendedAction: 'CONTACT_NEAREST_BRANCH',
         },
+      };
+      await recordLoopCheckAudit({
+        req,
+        targetId: req.body?.connectionReference || req.body?.targetId || req.body?.accountNo,
+        status: 'SUCCESS',
+        result: {
+          available: response.available,
+          loopStatus: response.coverage.loopStatus,
+          area: response.coverage.area,
+        },
       });
+      return res.status(200).json(response);
     }
   } catch (error) {
+    await recordLoopCheckAudit({
+      req,
+      targetId: req.body?.connectionReference || req.body?.targetId || req.body?.accountNo,
+      status: 'FAILED',
+      result: {
+        available: null,
+        loopStatus: 'FAILED',
+      },
+      error,
+    });
     next(error);
   }
-};
+};
