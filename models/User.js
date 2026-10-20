@@ -46,8 +46,8 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Role is required'],
     },
-    // Unique staff identifier, auto-generated when an Admin creates an
-    // account from User Management.
+    // Unique staff identifier, entered by the Admin when creating an account
+    // from User Management.
     employeeNumber: {
       type: String,
       trim: true,
