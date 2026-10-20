@@ -86,7 +86,7 @@ const rawAllowedOrigins = (process.env.FRONTEND_URL || '')
 
 // Always permit localhost Vite dev server in non-production environments
 if (process.env.NODE_ENV !== 'production') {
-  ['http://localhost:5173', 'http://localhost:3000'].forEach((devOrigin) => {
+  ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'].forEach((devOrigin) => {
     if (!rawAllowedOrigins.includes(devOrigin)) {
       rawAllowedOrigins.push(devOrigin);
     }
