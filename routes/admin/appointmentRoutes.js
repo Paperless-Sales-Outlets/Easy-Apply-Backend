@@ -4,7 +4,6 @@ import {
   getTechnicians,
   assignTechnician,
   createAppointment,
-  updateAppointmentStatus,
 } from '../../controllers/admin/appointmentController.js';
 import { protect, authorize } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
@@ -22,7 +21,6 @@ router.get('/', getAppointments);
 
 // Create appointment
 router.post('/', createAppointment);
-router.patch('/:id/status', updateAppointmentStatus);
 
 // Assign technician
 router.patch('/:id/assign', assignTechnician);

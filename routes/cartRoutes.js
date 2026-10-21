@@ -20,14 +20,6 @@ router.get('/', cartController.getCart);
  * @access  Public (session-based)
  */
 router.post('/', cartController.addToCart);
-router.post('/add', cartController.addToCart);
-
-/**
- * @route   PUT /api/cart/update
- * @desc    Update item quantity in cart
- * @access  Public (session-based)
- */
-router.put('/update', cartController.updateCart);
 
 /**
  * @route   DELETE /api/cart/clear
@@ -47,14 +39,6 @@ router.delete('/clear', cartController.clearCart);
  * @access  Public (session-based)
  */
 router.delete('/:id', cartController.removeFromCart);
-router.delete('/remove/:id', cartController.removeFromCart);
-
-/**
- * @route   GET /api/cart/validate
- * @desc    Validate cart for checkout
- * @access  Public (session-based)
- */
-router.get('/validate', cartController.validateCart);
 
 export default router;
 

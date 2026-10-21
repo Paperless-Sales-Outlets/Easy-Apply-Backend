@@ -1,5 +1,5 @@
 import express from 'express';
-import { serveGridFsFile, deleteGridFsFile } from '../controllers/fileController.js';
+import { serveGridFsFile } from '../controllers/fileController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -11,8 +11,5 @@ router.use(protect, authorize('Admin', 'Staff'));
 
 // Stream a file stored in GridFS
 router.get('/:id', serveGridFsFile);
-
-// Delete a file from GridFS (admin clean-up only)
-router.delete('/:id', authorize('Admin'), deleteGridFsFile);
 
 export default router;

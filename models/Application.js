@@ -16,6 +16,7 @@ const applicationSchema = new mongoose.Schema(
     serviceType: {
       type: String,
       required: true,
+      // Only new-connection is created now; the rest stay so older records still validate.
       enum: [
         'new-connection',
         'reconnection',
@@ -94,8 +95,7 @@ applicationSchema.pre('validate', async function () {
     let isUnique = false;
     let ref = '';
     
-    // Determine prefix based on service type (BRD 5.9.6)
-    const prefix = this.serviceType === 'customer-request-acceptance' ? 'SR' : 'REQ';
+    const prefix = 'REQ';
 
     // Retry generation until a unique one is found
     while (!isUnique) {
