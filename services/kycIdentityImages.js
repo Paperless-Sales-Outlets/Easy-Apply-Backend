@@ -134,7 +134,7 @@ async function readPath(value) {
   const rel = value.replace(/^\/+/, '').split(/[?#]/)[0];
   const local = path.resolve(BACKEND_ROOT, rel);
   if (local.startsWith(path.join(BACKEND_ROOT, 'uploads'))) {
-    try { return await fs.readFile(local); } catch (_) { /* not on this disk */ }
+    try { return await fs.readFile(local); } catch { /* not on this disk */ }
   }
   const signed = await getSignedFileUrl(value);
   return /^https?:\/\//.test(signed) ? fetchBytes(signed) : null;
@@ -161,7 +161,7 @@ export async function readImage(ref) {
     } else if (ref.kind === 'path') buffer = await readPath(ref.value);
     if (!buffer || !buffer.length || buffer.length > MAX_BYTES) return null;
     return { buffer, hash: crypto.createHash('sha256').update(buffer).digest('hex') };
-  } catch (err) {
+  } catch {
     return null;
   }
 }

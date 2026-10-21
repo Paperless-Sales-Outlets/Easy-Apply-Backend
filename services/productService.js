@@ -52,7 +52,7 @@ export const getProductHubToken = async (forceRefresh = false) => {
       try {
         const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
         tokenExpiresAt = payload.exp ? payload.exp * 1000 : now + 24 * 60 * 60 * 1000;
-      } catch (e) {
+      } catch {
         tokenExpiresAt = now + 24 * 60 * 60 * 1000;
       }
       console.log(`\x1b[32m[Product Hub Auth] Token retrieved & cached successfully!\x1b[0m (Valid until ${new Date(tokenExpiresAt).toLocaleTimeString()})`);
@@ -272,7 +272,6 @@ export const getAllProducts = async (options = {}) => {
     sortBy = 'createdAt',
     sortOrder = 'desc',
     search,
-    speed,
     maxPrice,
   } = options;
 
@@ -354,51 +353,6 @@ export const getAllProducts = async (options = {}) => {
 };
 
 /**
- * Get products by category
- */
-export const getProductsByCategory = async (category) => {
-  const query = { status: 'active' };
-  if (category && category !== 'All Products') {
-    const formattedCategory = category.replace('-', ' ');
-    query.category = { $regex: new RegExp(`^${formattedCategory}`, 'i') };
-  }
-  const products = await Product.find(query).lean();
-  return products;
-};
-
-/**
- * Search products supporting category, speed, price, and keyword
- */
-export const searchProducts = async (params = {}) => {
-  const { category, speed, price, keyword, maxPrice } = params;
-  const query = { status: 'active' };
-
-  if (category && category !== 'All Products') {
-    query.category = { $regex: new RegExp(`^${category.replace('-', ' ')}`, 'i') };
-  }
-
-  if (keyword) {
-    query.$or = [
-      { name: { $regex: keyword, $options: 'i' } },
-      { description: { $regex: keyword, $options: 'i' } },
-      { speed: { $regex: keyword, $options: 'i' } },
-    ];
-  }
-
-  if (speed) {
-    query.speed = { $regex: speed, $options: 'i' };
-  }
-
-  const targetPrice = price || maxPrice;
-  if (targetPrice) {
-    query.monthlyPrice = { $lte: Number(targetPrice) };
-  }
-
-  const products = await Product.find(query).lean();
-  return products;
-};
-
-/**
  * Get a single product by ID
  */
 export const getProductById = async (id) => {
@@ -412,19 +366,6 @@ export const getProductById = async (id) => {
   if (!product) {
     throw new Error('Product not found');
   }
-  return product;
-};
-
-/**
- * Get a single product by product code
- */
-export const getProductByCode = async (productCode) => {
-  const product = await Product.findOne({ productCode }).lean();
-
-  if (!product) {
-    throw new Error('Product not found');
-  }
-
   return product;
 };
 
@@ -446,44 +387,6 @@ export const checkProductAvailability = async (productId, quantity) => {
 
   if (product.status !== 'active') {
     throw new Error('Product is not available');
-  }
-
-  return product;
-};
-
-/**
- * Create a new product (Admin)
- */
-export const createProduct = async (productData) => {
-  const product = await Product.create(productData);
-  return product;
-};
-
-/**
- * Update a product (Admin)
- */
-export const updateProduct = async (productId, updateData) => {
-  const product = await Product.findByIdAndUpdate(
-    productId,
-    updateData,
-    { new: true, runValidators: true }
-  );
-
-  if (!product) {
-    throw new Error('Product not found');
-  }
-
-  return product;
-};
-
-/**
- * Delete a product (Admin)
- */
-export const deleteProduct = async (productId) => {
-  const product = await Product.findByIdAndDelete(productId);
-
-  if (!product) {
-    throw new Error('Product not found');
   }
 
   return product;
@@ -656,21 +559,3 @@ export const fetchProductCartItem = async (id) => {
     return null;
   }
 };
-
-export default {
-  getAllProducts,
-  getProductsByCategory,
-  searchProducts,
-  getProductById,
-  getProductByCode,
-  getProductDetails,
-  fetchProductDetailsFromHub,
-  fetchProductHierarchy,
-  fetchProductCartItem,
-  checkProductAvailability,
-  createProduct,
-  updateProduct,
-  deleteProduct,
-};
-
-

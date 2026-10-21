@@ -48,7 +48,7 @@ const VERIFIED_STATUSES = ['approved', 'confirmed'];
 const check = (key, label, result, detail) => ({ key, label, result, detail });
 
 const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-const docsOf = (app) => ({ ...(app?.formData?.documents || {}), ...(app?.documents || {}) });
+const docsOf = (app) => ({ ...app?.formData?.documents, ...app?.documents });
 const sameIdentity = (a, b) => {
   const x = toNewFormat(a) || cleanNic(a);
   const y = toNewFormat(b) || cleanNic(b);

@@ -25,24 +25,6 @@ export const addToCart = async (req, res, next) => {
 };
 
 /**
- * @desc    Update item quantity in cart
- * @route   PUT /api/cart/update
- * @access  Private
- */
-export const updateCart = async (req, res, next) => {
-  try {
-    const { productId, quantity } = req.body;
-    const userId = req.sessionId;
-
-    const cart = await cartService.updateCartItemQuantity(userId, productId, quantity);
-
-    return successResponse(res, 'Cart updated successfully', cart);
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
  * @desc    Remove an item from cart
  * @route   DELETE /api/cart/remove/:id
  * @access  Private
@@ -92,30 +74,4 @@ export const clearCart = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-};
-
-/**
- * @desc    Validate cart for checkout
- * @route   GET /api/cart/validate
- * @access  Private
- */
-export const validateCart = async (req, res, next) => {
-  try {
-    const userId = req.sessionId;
-
-    const cart = await cartService.validateCartForCheckout(userId);
-
-    return successResponse(res, 'Cart validated successfully', cart);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export default {
-  addToCart,
-  updateCart,
-  removeFromCart,
-  getCart,
-  clearCart,
-  validateCart,
 };
