@@ -16,11 +16,15 @@ import {
 } from '../controllers/authController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
 
+import { getOtpStatus } from '../controllers/otpController.js';
+
 const router = express.Router();
 
 // Public routes
 router.post('/send-otp', sendOtp);
 router.post('/verify-otp', verifyOtp);
+router.get('/otp-status', getOtpStatus);
+router.post('/otp-status', getOtpStatus);
 router.post('/verify-entry', verifyEntry);
 router.post('/register', register);
 router.post('/login', login);

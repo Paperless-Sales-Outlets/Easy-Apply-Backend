@@ -13,7 +13,20 @@ const otpSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now,
-    expires: 300, // Expires and automatically deletes after 5 minutes (300 seconds)
+    expires: 600, // 10-minute TTL cleanup in MongoDB background
+  },
+  expiresAt: {
+    type: Date,
+    required: true,
+    default: () => new Date(Date.now() + 5 * 60 * 1000), // Exactly 5 minutes validity
+  },
+  lastSentAt: {
+    type: Date,
+    default: Date.now,
+  },
+  failedAttempts: {
+    type: Number,
+    default: 0,
   },
 });
 

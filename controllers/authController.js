@@ -8,6 +8,7 @@ import { findAccountById } from '../middleware/authMiddleware.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
 import { recordAudit } from '../services/auditService.js';
+import { requestOtp, validateOtp } from '../services/otpService.js';
 
 // @desc    Check if a phone number is registered (used by login flow to decide
 //          whether to send OTP or redirect to sign-up)
@@ -225,38 +226,27 @@ export const sendOtp = async (req, res, next) => {
   const { phone } = req.body;
 
   if (!phone) {
-    res.status(400);
-    return next(new Error('Phone number is required'));
+    return res.status(400).json({
+      success: false,
+      code: 'PHONE_REQUIRED',
+      message: 'Phone number is required',
+    });
   }
 
   try {
-    // Generate 6-digit numeric OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Hash the OTP using bcryptjs
-    const salt = await bcrypt.genSalt(10);
-    const hashedOtp = await bcrypt.hash(otp, salt);
-
-    // Delete any existing OTP for this phone number
-    await Otp.deleteMany({ phone });
-
-    // Store the new OTP
-    await Otp.create({
-      phone,
-      otp: hashedOtp,
-    });
-
-    // Mock SMS delivery - Log to console
-    console.log('\n=======================================');
-    console.log(`[SMS MOCK] Sent OTP: ${otp} to +94${phone}`);
-    console.log('=======================================\n');
-
-    res.status(200).json({
-      success: true,
-      message: 'OTP sent successfully (Logged to console)',
-    });
+    const result = await requestOtp(phone);
+    return res.status(200).json(result);
   } catch (error) {
-    next(error);
+    const status = error.status || 400;
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'BAD_REQUEST',
+      message: error.message,
+      cooldownRemaining: error.cooldownRemaining,
+      resendAvailableAt: error.resendAvailableAt,
+      lockoutRemaining: error.lockoutRemaining,
+      lockedUntil: error.lockedUntil,
+    });
   }
 };
 
@@ -267,36 +257,26 @@ export const verifyOtp = async (req, res, next) => {
   const { phone, otp } = req.body;
 
   if (!phone || !otp) {
-    res.status(400);
-    return next(new Error('Phone number and OTP code are required'));
+    return res.status(400).json({
+      success: false,
+      code: 'INPUT_REQUIRED',
+      message: 'Phone number and OTP code are required',
+    });
   }
 
   try {
-    // Check if OTP record exists
-    const otpRecord = await Otp.findOne({ phone });
-
-    if (!otpRecord) {
-      res.status(400);
-      return next(new Error('OTP has expired or was not requested'));
-    }
-
-    // Verify OTP matches
-    const isMatch = await bcrypt.compare(otp, otpRecord.otp);
-
-    if (!isMatch) {
-      res.status(400);
-      return next(new Error('Invalid OTP code'));
-    }
-
-    // OTP is valid - delete it so it cannot be reused
-    await Otp.deleteOne({ _id: otpRecord._id });
-
-    res.status(200).json({
-      success: true,
-      message: 'OTP verified successfully',
-    });
+    const result = await validateOtp(phone, otp);
+    return res.status(200).json(result);
   } catch (error) {
-    next(error);
+    const status = error.status || 400;
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'OTP_INVALID',
+      message: error.message,
+      attemptsRemaining: error.attemptsRemaining,
+      lockoutRemaining: error.lockoutRemaining,
+      lockedUntil: error.lockedUntil,
+    });
   }
 };
 
@@ -535,34 +515,8 @@ export const otpLogin = async (req, res, next) => {
     const last9 = digitsOnly.slice(-9);
     const cleanOtp = String(otp).trim();
 
-    // 1. Confirm the code, accepting the same demo bypass as /api/otp/verify
-    //    so the two paths behave identically in development.
-    const isDemoCode = cleanOtp === '000000' || cleanOtp === '123456';
-
-    if (!isDemoCode) {
-      const record = await Otp.findOne({
-        $or: [
-          { phone: last9, otp: cleanOtp },
-          { phone: `0${last9}`, otp: cleanOtp },
-          { phone: `94${last9}`, otp: cleanOtp },
-          { phone: String(phone).trim(), otp: cleanOtp },
-        ],
-      });
-
-      if (!record) {
-        res.status(400);
-        return next(new Error('Invalid or expired verification code'));
-      }
-
-      await Otp.deleteMany({
-        $or: [
-          { phone: last9 },
-          { phone: `0${last9}` },
-          { phone: `94${last9}` },
-          { phone: String(phone).trim() },
-        ],
-      });
-    }
+    // 1. Validate OTP with 5-minute expiry enforcement
+    await validateOtp(phone, otp);
 
     // 2. Find the registered account. Numbers are stored in several shapes
     //    across the data set, so match on all of them.
@@ -721,33 +675,8 @@ export const verifyEntry = async (req, res, next) => {
       return next(new Error('Please provide a valid 9-digit Sri Lankan mobile number'));
     }
 
-    // 1. Verify OTP (accept demo codes 000000 / 123456)
-    const isDemoCode = cleanOtp === '000000' || cleanOtp === '123456';
-
-    if (!isDemoCode) {
-      const record = await Otp.findOne({
-        $or: [
-          { phone: last9, otp: cleanOtp },
-          { phone: `0${last9}`, otp: cleanOtp },
-          { phone: `94${last9}`, otp: cleanOtp },
-          { phone: String(phone).trim(), otp: cleanOtp },
-        ],
-      });
-
-      if (!record) {
-        res.status(400);
-        return next(new Error('Invalid or expired verification code'));
-      }
-
-      await Otp.deleteMany({
-        $or: [
-          { phone: last9 },
-          { phone: `0${last9}` },
-          { phone: `94${last9}` },
-          { phone: String(phone).trim() },
-        ],
-      });
-    }
+    // 1. Verify OTP with 5-minute expiry enforcement
+    await validateOtp(phone, otp);
 
     // 2. Check if customer is registered in Customer collection by phone or NIC
     const customer = await Customer.findOne({
