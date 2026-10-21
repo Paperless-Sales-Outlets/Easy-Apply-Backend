@@ -245,8 +245,34 @@ function documentChecks(docs, account) {
   return out;
 }
 
-const faceCheck = () => check('face_match', 'Live photo vs NIC photo', 'manual',
-  'Not machine-verified: ID images are never sent to outside services. Compare the live photo with the NIC photo yourself.');
+const faceCheck = () => check(
+  'face_match',
+  'Live photo vs NIC photo',
+  'manual',
+  'Auto verification incomplete / Photo verification required by admin: No automated face matching model active. Compare live selfie with NIC photo.'
+);
+
+function ocrCompletenessCheck(formData = {}) {
+  const ocrExtraction = formData.ocrExtraction || {};
+  const isPartial = ocrExtraction.isPartial || ocrExtraction.extractionStatus === 'PARTIAL';
+  const missing = ocrExtraction.missingFields || [];
+
+  if (isPartial || missing.length > 0) {
+    return check(
+      'data_completeness',
+      'Document data completeness',
+      'unsure',
+      `Auto KYC incomplete: Partial data fetched from document (${missing.join(', ') || 'fields missing in OCR'}). Queued for manual admin verification.`
+    );
+  }
+
+  return check(
+    'data_completeness',
+    'Document data completeness',
+    'pass',
+    'Complete identity details were successfully fetched and verified against document.'
+  );
+}
 
 /** pass/fail/unsure → approved / rejected / flagged. 'manual' never blocks. */
 export function decide(checks) {
@@ -259,7 +285,7 @@ export function buildRemark(decision, checks) {
   if (decision === 'approved') {
     const labels = checks.filter((c) => c.result === 'pass').map((c) => c.label.toLowerCase());
     return `Auto-approved: every automated check passed (${labels.join(', ')}). `
-      + 'The live photo was not compared with the NIC photo by the system — worth a quick visual check.';
+      + 'Live selfie vs NIC photo requires visual review by admin before final signoff.';
   }
   if (decision === 'rejected') {
     return `Auto-rejected: ${checks.filter((c) => c.result === 'fail').map((c) => c.detail).join(' ')}`;
@@ -371,6 +397,7 @@ export async function evaluateApplication(app) {
     ? check('duplicate_identity', 'No conflicting use elsewhere', 'unsure', `Possible identity reuse — ${uniqueConflicts.join('; ')}.`)
     : check('duplicate_identity', 'No conflicting use elsewhere', 'pass', 'This NIC and phone number are not used with any conflicting details on other requests.'));
 
+  checks.push(ocrCompletenessCheck(fd));
   checks.push(faceCheck());
   const decision = decide(checks);
   return { decision, checks, remark: buildRemark(decision, checks) };

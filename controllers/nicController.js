@@ -28,17 +28,27 @@ export async function scanNIC(req, res) {
     }
 
     const extractedData = await scanSriLankanNIC({ nicFront, nicBack });
+    const isPartial = extractedData.extractionStatus === 'PARTIAL';
 
     return res.status(200).json({
       success: true,
-      message: 'NIC details extracted successfully',
+      message: isPartial
+        ? 'NIC partially scanned. Missing details queued for manual verification.'
+        : 'NIC details extracted successfully',
+      extractionStatus: extractedData.extractionStatus,
+      isPartial,
+      manualReviewRequired: isPartial,
+      reviewReason: isPartial ? 'Auto KYC Incomplete: Partial data fetched from document' : null,
       data: extractedData,
     });
   } catch (err) {
     console.error('Error scanning NIC with Gemini Vision:', err.message);
     return res.status(500).json({
       success: false,
-      message: err.message || 'Failed to scan NIC image. Please try fallback OCR.',
+      extractionStatus: 'FAILED',
+      manualReviewRequired: true,
+      reviewReason: 'Auto verification failed: OCR scanning error',
+      message: err.message || 'Failed to scan NIC image. Please enter details manually.',
     });
   }
 }

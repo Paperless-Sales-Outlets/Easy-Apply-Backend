@@ -145,17 +145,49 @@ Do not invent or hallucinate missing data.
 
   try {
     const parsed = JSON.parse(cleanedJson);
+    const nicNumber = (parsed.nicNumber || '').trim().toUpperCase();
+    const fullName = (parsed.fullName || '').trim();
+    const address = (parsed.address || '').trim();
+    const city = (parsed.city || '').trim();
+    const district = (parsed.district || '').trim();
+    const dob = (parsed.dob || '').trim();
+    const gender = (parsed.gender || '').trim();
+    const cardType = parsed.cardType || 'NEW_NIC';
+
+    // Evaluate completeness and exceptions
+    const missingFields = [];
+    if (!nicNumber) missingFields.push('nicNumber');
+    if (!fullName) missingFields.push('fullName');
+    if (!address) missingFields.push('address');
+
+    let extractionStatus = 'COMPLETE';
+    const exceptionFlags = [];
+
+    if (!nicNumber) {
+      extractionStatus = 'FAILED';
+      exceptionFlags.push('NIC_NUMBER_NOT_DETECTED');
+    } else if (missingFields.length > 0) {
+      extractionStatus = 'PARTIAL';
+      exceptionFlags.push('PARTIAL_DATA_FETCHED');
+      if (!fullName) exceptionFlags.push('NAME_MISSING_IN_OCR');
+      if (!address) exceptionFlags.push('ADDRESS_MISSING_IN_OCR');
+    }
+
     return {
       success: true,
-      nicNumber: (parsed.nicNumber || '').trim().toUpperCase(),
-      fullName: (parsed.fullName || '').trim(),
-      address: (parsed.address || '').trim(),
-      city: (parsed.city || '').trim(),
-      district: (parsed.district || '').trim(),
-      dob: (parsed.dob || '').trim(),
-      gender: (parsed.gender || '').trim(),
-      cardType: parsed.cardType || 'NEW_NIC',
+      nicNumber,
+      fullName,
+      address,
+      city,
+      district,
+      dob,
+      gender,
+      cardType,
       engine: 'GEMINI_FLASH_VISION',
+      extractionStatus,
+      isPartial: extractionStatus === 'PARTIAL',
+      missingFields,
+      exceptionFlags,
     };
   } catch (parseErr) {
     console.error('Failed to parse Gemini OCR JSON response:', rawResponseText);
