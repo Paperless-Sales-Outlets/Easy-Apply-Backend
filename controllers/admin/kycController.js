@@ -262,13 +262,15 @@ async function annotateIdentity(items) {
       live[key] = { capturedAt, source: stored[key]?.source || captureSource(capturedAt, item.submittedAt) };
     });
 
+    // 'new' = registering now; 'registered' = the account existed before this request.
+    // Older automated runs stored 'returning' / 'existing-new-nic' — both are registered customers.
     let customerType = item.caseInfo?.customerType || null;
+    if (customerType === 'returning' || customerType === 'existing-new-nic') customerType = 'registered';
     if (!customerType) {
       if (item.kind === 'account') customerType = 'new';
-      else if (live.nicFront?.source === 'on-file') customerType = 'returning';
-      else if (live.nicFront?.source === 'request') {
-        const age = _accountCreatedAt ? new Date(item.submittedAt) - new Date(_accountCreatedAt) : 0;
-        customerType = age > FRESH_CAPTURE_HOURS * 3600 * 1000 ? 'existing-new-nic' : 'new';
+      else if (_accountCreatedAt) {
+        const age = new Date(item.submittedAt) - new Date(_accountCreatedAt);
+        customerType = age > FRESH_CAPTURE_HOURS * 3600 * 1000 ? 'registered' : 'new';
       } else customerType = 'unknown';
     }
 

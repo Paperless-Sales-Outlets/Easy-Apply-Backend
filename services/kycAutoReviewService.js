@@ -15,10 +15,10 @@ import { identityChecks } from './kycIdentityChecks.js';
 //              registered for the customer)
 //   flagged  – anything missing, ambiguous or suspicious → a person decides
 //
-// Identity photos follow the customer flow (new customer: NIC front + back +
-// live selfie; returning customer with NIC photos on file: a new live selfie
-// only) — see kycIdentityChecks.js. The selfie is compared with the NIC photo
-// by local face matching on this server; no ID image is sent anywhere.
+// Identity checks follow the customer flow (new customer: NIC front + back,
+// live selfie and signature, selfie compared with the NIC photo; registered
+// customer: live selfie and signature, details checked only) — see
+// kycIdentityChecks.js. Face matching runs locally; no image is sent anywhere.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SYSTEM_ACTOR_NAME = 'Automated KYC';
@@ -278,8 +278,10 @@ export async function evaluateApplication(app) {
     subjectKind: 'application',
     submittedAt: app.createdAt || new Date(),
     formDocs: { ...fd.documents, ...app.documents },
+    formSignature: fd.signature,
     account,
     rawNic,
+    phone: app.phone,
     related: others,
   });
   checks.push(...identity.checks);
@@ -305,6 +307,7 @@ export async function evaluateAccount(customer) {
     formDocs: null,
     account: customer,
     rawNic,
+    phone: customer.phone,
     related: await relatedApplications(rawNic, customer.phone, null),
   });
   checks.push(...identity.checks);
