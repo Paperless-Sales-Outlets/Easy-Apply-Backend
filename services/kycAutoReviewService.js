@@ -494,6 +494,98 @@ export async function runKycAutoReview({ limit = 25 } = {}) {
   return summary;
 }
 
+// ── Re-check all open cases (admin-requested) ────────────────────────────────
+
+// Statuses a bulk re-check covers. A case whose current decision a *person*
+// made is always left alone — bulk automation never overrides a staff member.
+const RECHECK_STATUSES = ['pending', 'flagged'];
+
+let recheckJob = null;
+
+export const getRecheckJob = () => recheckJob;
+
+/** Every open case a bulk re-check would cover → { applications, accounts, skipped }. */
+async function openCasesToRecheck() {
+  const [apps, personApps] = await Promise.all([
+    Application.find({ status: { $in: RECHECK_STATUSES } }).sort({ createdAt: 1 }),
+    KycReview.find({ subjectType: 'application', decidedBy: 'admin' }).distinct('subjectId'),
+  ]);
+  const personAppIds = new Set(personApps.map(String));
+
+  const appNics = new Set((await Application.distinct('nic')).map((n) => String(n).toUpperCase()));
+  const [customers, personAccounts] = await Promise.all([
+    Customer.find({
+      'identityDocuments.nicFront': { $exists: true },
+      $or: [{ kycStatus: { $exists: false } }, { kycStatus: { $in: RECHECK_STATUSES } }],
+    }).sort({ 'identityDocuments.capturedAt': 1 }),
+    KycReview.find({ subjectType: 'account', decidedBy: 'admin' }).distinct('subjectId'),
+  ]);
+  const personAccountIds = new Set(personAccounts.map(String));
+  const accounts = customers.filter((c) => !appNics.has(String(c.NIC).toUpperCase()));
+
+  return {
+    applications: apps.filter((a) => !personAppIds.has(String(a._id))),
+    accounts: accounts.filter((c) => !personAccountIds.has(String(c._id))),
+    skipped: apps.filter((a) => personAppIds.has(String(a._id))).length
+      + accounts.filter((c) => personAccountIds.has(String(c._id))).length,
+  };
+}
+
+/**
+ * Starts re-checking every open (pending / flagged) case with the current rules,
+ * in the background. Returns the job; only one job runs at a time.
+ */
+export async function startRecheckAll({ requestedBy }) {
+  if (recheckJob?.running) return { job: recheckJob, started: false };
+
+  const { applications, accounts, skipped } = await openCasesToRecheck();
+  const job = {
+    running: true,
+    requestedBy,
+    startedAt: new Date(),
+    finishedAt: null,
+    total: applications.length + accounts.length,
+    done: 0,
+    approved: 0,
+    rejected: 0,
+    flagged: 0,
+    unchanged: 0,
+    failed: 0,
+    skippedByPerson: skipped,
+  };
+  recheckJob = job;
+
+  const tally = (r) => {
+    job.done += 1;
+    if (!r.applied) job.unchanged += 1;
+    else job[r.decision] += 1;
+  };
+  const options = { kind: 'rerun', requestedBy };
+
+  (async () => {
+    try {
+      for (const app of applications) {
+        try { tally(await reviewApplicationAuto(app, options)); } catch (err) {
+          job.done += 1; job.failed += 1;
+          console.error(`[kyc-recheck] ${app.referenceNumber} failed:`, err.message);
+        }
+      }
+      for (const customer of accounts) {
+        try { tally(await reviewAccountAuto(customer, options)); } catch (err) {
+          job.done += 1; job.failed += 1;
+          console.error(`[kyc-recheck] account ${customer._id} failed:`, err.message);
+        }
+      }
+    } finally {
+      job.running = false;
+      job.finishedAt = new Date();
+      console.log(`[kyc-recheck] re-checked ${job.done}/${job.total}: ${job.approved} approved, ${job.rejected} rejected, ${job.flagged} flagged, ${job.unchanged} unchanged, ${job.failed} failed`);
+    }
+  })();
+
+  return { job, started: true };
+}
+
 /** Starts the background sweep. Set KYC_AUTO_REVIEW=off to disable. */
 export function startKycAutoReviewScheduler(intervalMs = 60 * 1000) {
   if (String(process.env.KYC_AUTO_REVIEW || '').toLowerCase() === 'off') {

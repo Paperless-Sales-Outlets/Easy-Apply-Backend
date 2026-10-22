@@ -7,6 +7,8 @@ import {
   reviewApplicationAuto,
   reviewAccountAuto,
   runKycAutoReview,
+  startRecheckAll,
+  getRecheckJob,
 } from '../../services/kycAutoReviewService.js';
 import { recordAudit } from '../../services/auditService.js';
 import {
@@ -506,4 +508,36 @@ export const sweepKycAutoReview = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+};
+
+// @desc    Re-check every open (pending / flagged) case with the current rules.
+//          Runs in the background; poll GET /api/admin/kyc/recheck-all for progress.
+//          Cases whose current decision a person made are skipped.
+// @route   POST /api/admin/kyc/recheck-all
+// @access  Private (Admin / Staff only)
+export const recheckAllKyc = async (req, res, next) => {
+  try {
+    const reviewer = reviewerOf(req);
+    const { job, started } = await startRecheckAll({ requestedBy: reviewer.name });
+    if (started) {
+      await audit({
+        req,
+        action: 'STATUS_UPDATE',
+        module: 'KYC',
+        targetId: 'ALL_OPEN_CASES',
+        description: `Started re-check of all open KYC cases (${job.total} case${job.total === 1 ? '' : 's'})`,
+        metadata: { total: job.total, skippedByPerson: job.skippedByPerson },
+      });
+    }
+    res.status(started ? 202 : 200).json({ success: true, started, job });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Progress of the latest "re-check all" run (null when none has run)
+// @route   GET /api/admin/kyc/recheck-all
+// @access  Private (Admin / Staff only)
+export const getRecheckAllStatus = (req, res) => {
+  res.status(200).json({ success: true, job: getRecheckJob() });
 };
