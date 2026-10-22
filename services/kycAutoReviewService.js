@@ -277,7 +277,7 @@ export async function evaluateApplication(app) {
   const identity = await identityChecks({
     subjectKind: 'application',
     submittedAt: app.createdAt || new Date(),
-    formDocs: { ...(fd.documents || {}), ...(app.documents || {}) },
+    formDocs: { ...fd.documents, ...app.documents },
     account,
     rawNic,
     related: others,

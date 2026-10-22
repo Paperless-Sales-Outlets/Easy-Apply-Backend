@@ -177,7 +177,7 @@ async function toQueueItem(app, review) {
         ...(last9 ? [{ phone: new RegExp(`${last9}$`) }] : []),
       ],
     }).lean();
-  } catch (_) {}
+  } catch {}
 
   const documents = [];
   const identityRaw = {};
@@ -243,7 +243,7 @@ async function annotateIdentity(items) {
     : [];
   const referenceUrl = new Map();
   for (const ref of referenceApps) {
-    const docs = { ...(ref.formData?.documents || {}), ...(ref.documents || {}) };
+    const docs = { ...ref.formData?.documents, ...ref.documents };
     const url = await resolveDocUrl(docs.facePhoto);
     if (url) referenceUrl.set(String(ref._id), { url, referenceNumber: ref.referenceNumber, capturedAt: ref.createdAt });
   }

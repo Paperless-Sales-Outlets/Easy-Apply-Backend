@@ -3,7 +3,6 @@
  * Catches and formats all errors in a consistent manner
  */
 
-import { errorResponse } from '../utils/responseHandler.js';
 
 /**
  * Custom error class for operational errors
@@ -83,10 +82,4 @@ export const errorHandler = (err, req, res, next) => {
 export const notFound = (req, res, next) => {
   const error = new AppError(`Route not found: ${req.originalUrl}`, 404);
   next(error);
-};
-
-export default {
-  AppError,
-  errorHandler,
-  notFound,
 };

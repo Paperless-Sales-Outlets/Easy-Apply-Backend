@@ -19,7 +19,7 @@ export const createApplication = async (req, res, next) => {
     if (typeof formData === 'string') {
       try {
         formData = JSON.parse(formData);
-      } catch (err) {
+      } catch {
         res.status(400);
         return next(new Error('Invalid JSON structure in formData'));
       }
@@ -56,7 +56,7 @@ export const createApplication = async (req, res, next) => {
           ],
         }).select('NIC');
         if (existingCustomer?.NIC) nic = existingCustomer.NIC;
-      } catch (_) {}
+      } catch {}
     }
 
     if (nic && String(nic).startsWith('NIC-')) {
@@ -78,44 +78,11 @@ export const createApplication = async (req, res, next) => {
       }
     });
 
-    // Existing customer validation (temporarily bypassed for seamless flow)
-    // if (formData?.isExistingCustomer === 'yes' && !formData?.existingNumber?.trim()) { ... }
-
-    // =====================================
-    // New Connection Digital Workflow
-    // =====================================
-    if (serviceType === 'new-connection') {
-      if (formData.declarationAccepted === undefined) {
-        formData.declarationAccepted = true;
-      }
-      if (!formData.signature) {
-        formData.signature = 'DIGITALLY_VERIFIED_OTP';
-      }
+    if (formData.declarationAccepted === undefined) {
+      formData.declarationAccepted = true;
     }
-
-    // =====================================
-    // Package Migration BRD 5.6 Validations
-    // =====================================
-    if (serviceType === 'package-migration') {
-      const effectiveDate = formData.effectiveDate;
-      if (!effectiveDate) {
-        res.status(400);
-        return next(new Error('Effective Date is required for package migration (BRD 5.6).'));
-      }
-
-      const todayStr = new Date().toISOString().split('T')[0];
-      if (effectiveDate < todayStr) {
-        res.status(400);
-        return next(new Error('Effective Date must be today or a future date. Past dates are not allowed (BRD 5.6).'));
-      }
-
-      const currentPkg = (formData.currentPackage || formData.existingPackage || '').trim().toLowerCase();
-      const reqPkg = (formData.requiredPackage || formData.requestedPackage || '').trim().toLowerCase();
-
-      if (currentPkg && reqPkg && currentPkg === reqPkg) {
-        res.status(400);
-        return next(new Error('Requested package cannot be the same as your current package (BRD 5.6).'));
-      }
+    if (!formData.signature) {
+      formData.signature = 'DIGITALLY_VERIFIED_OTP';
     }
 
     // Merge document references
@@ -233,11 +200,9 @@ export const createApplication = async (req, res, next) => {
         10000000 + Math.random() * 90000000
       ).toString();
 
-      const prefix = serviceType === 'customer-request-acceptance' ? 'SR' : 'REQ';
-
       application = {
         _id: `mock_app_${refDigits}`,
-        referenceNumber: `${prefix}-${refDigits}`,
+        referenceNumber: `REQ-${refDigits}`,
         serviceType,
         status: 'pending',
         nic,
@@ -451,124 +416,12 @@ export const checkApplicationStatus = async (req, res, next) => {
 
 
 
-// @desc    Lookup connection by phone number
-// @route   GET /api/applications/lookup-connection
-// @access  Public
-export const lookupConnection = async (req, res, next) => {
-
-  const { phone } = req.query;
-
-  const digitsOnly = String(phone || '').replace(/\D/g, '');
-  const last9 = digitsOnly.slice(-9);
-
-  try {
-    const connections = await Connection.find({
-      $or: [
-        { telephone: phone },
-        { telephone: digitsOnly },
-        { telephone: `0${last9}` },
-        { accountNo: phone },
-        { contactNo: phone },
-        { contactNo: digitsOnly },
-        { contactNo: `0${last9}` },
-      ]
-    });
-
-    if (connections && connections.length > 0) {
-      return res.status(200).json({
-        success: true,
-        data: connections,
-      });
-    }
-
-
-    res.status(404);
-
-    return next(
-      new Error(
-        'Connection not found for this telephone number.'
-      )
-    );
-
-
-  } catch (error) {
-
-    next(error);
-
-  }
-
-};
-
-
-
-// @desc    Lookup customer current package information by phone number (BRD 5.6)
-// @route   GET /api/applications/lookup-package?phone=
-// @access  Public
-export const lookupPackage = async (req, res, next) => {
-  const { phone } = req.query;
-
-  if (!phone) {
-    res.status(400);
-    return next(new Error('Telephone number (phone) parameter is required.'));
-  }
-
-  const cleanPhone = phone.replace(/\D/g, '');
-  const last9 = cleanPhone.slice(-9);
-
-  try {
-    let connection = null;
-
-    if (mongoose.connection.readyState === 1) {
-      connection = await Connection.findOne({
-        $or: [
-          { telephone: phone },
-          { telephone: cleanPhone },
-          { telephone: `0${last9}` },
-          { accountNo: phone },
-          { contactNo: phone },
-          { contactNo: cleanPhone },
-          { contactNo: `0${last9}` },
-        ],
-      });
-    }
-
-    if (connection) {
-      return res.status(200).json({
-        success: true,
-        data: {
-          telephone: connection.telephone,
-          accountNo: connection.accountNo,
-          customerName: connection.fullName,
-          nic: connection.nic,
-          contactNo: connection.contactNo,
-          packageName: connection.packageName,
-          currentPackage: connection.packageName,
-          speed: connection.speed,
-          monthlyPrice: connection.monthlyPrice,
-          activationDate: connection.createdAt
-            ? connection.createdAt.toISOString().split('T')[0]
-            : null,
-          status: connection.status,
-        },
-      });
-    }
-
-    return res.status(200).json({
-      success: false,
-      data: null,
-      message: 'No customer found for this telephone number.',
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 // @desc    Check loop availability for installation address/city
 // @route   POST /api/applications/check-loop
 // @access  Public
 export const checkLoopAvailability = async (req, res, next) => {
   try {
-    const { address, city, district, latitude, longitude } = req.body;
+    const { address, city, district } = req.body;
     const searchString = `${address || ''} ${city || ''} ${district || ''}`.toLowerCase();
 
     // Check if explicitly unserviced or marked unavailable for testing/demo
@@ -608,4 +461,4 @@ export const checkLoopAvailability = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
-};
+};

@@ -41,7 +41,6 @@ const NIC_DETECT_CONFIDENCE = 0.35; // NIC portraits are small and printed
 const CACHE_LIMIT = 200;
 
 let enginePromise = null;
-let engineError = null;
 
 export const faceMatchingEnabled = () => String(process.env.KYC_FACE_MATCH || '').toLowerCase() !== 'off';
 
@@ -70,15 +69,12 @@ export async function getFaceEngine() {
   if (!faceMatchingEnabled()) return null;
   if (!enginePromise) {
     enginePromise = loadEngine().catch((err) => {
-      engineError = err;
       console.error('[kyc-face] face matching unavailable:', err.message);
       return null;
     });
   }
   return enginePromise;
 }
-
-export const faceEngineError = () => engineError;
 
 // One image at a time: face detection is CPU-heavy and must not starve the API.
 let queue = Promise.resolve();
@@ -122,7 +118,7 @@ export async function analyseFace(buffer, { kind = 'selfie', hash = null } = {})
         .toColourspace('srgb')
         .raw()
         .toBuffer({ resolveWithObject: true });
-    } catch (err) {
+    } catch {
       return remember(cacheKey, { ok: false, reason: 'unreadable' });
     }
 

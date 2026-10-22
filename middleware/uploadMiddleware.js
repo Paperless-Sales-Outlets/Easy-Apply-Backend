@@ -127,6 +127,3 @@ export const handleFileUploads = (req, res, next) => {
     next();
   });
 };
-
-// Legacy named export kept for any existing imports
-export const uploadApplicationDocuments = handleFileUploads;

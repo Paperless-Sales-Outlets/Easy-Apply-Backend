@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 import { GridFSBucket } from 'mongodb';
 import { ObjectId } from 'bson';
 import path from 'path';
-import fs from 'fs';
 
 // MIME type map for common document extensions
 const MIME_TYPES = {
@@ -74,37 +73,6 @@ export const serveGridFsFile = async (req, res, next) => {
 
     downloadStream.pipe(res);
 
-  } catch (error) {
-    next(error);
-  }
-};
-
-// ---------------------------------------------------------------------------
-// @desc  Delete a file from GridFS by its ObjectId (admin clean-up)
-// @route DELETE /api/files/:id
-// @access Protected (Admin only)
-// ---------------------------------------------------------------------------
-export const deleteGridFsFile = async (req, res, next) => {
-  const { id } = req.params;
-
-  if (!ObjectId.isValid(id)) {
-    res.status(400);
-    return next(new Error('Invalid file ID'));
-  }
-
-  if (mongoose.connection.readyState !== 1) {
-    res.status(503);
-    return next(new Error('Database is not connected'));
-  }
-
-  try {
-    const bucket = new GridFSBucket(mongoose.connection.db, {
-      bucketName: 'uploads',
-    });
-
-    await bucket.delete(new ObjectId(id));
-
-    res.status(200).json({ success: true, message: 'File deleted' });
   } catch (error) {
     next(error);
   }

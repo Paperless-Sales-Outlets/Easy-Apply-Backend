@@ -13,8 +13,6 @@ import mongoose from 'mongoose';
 import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
 import adminFormsRoutes from './routes/admin/formsRoutes.js';
-import adminDashboardRoutes from './routes/admin/dashboardRoutes.js';
-import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
 import adminKycRoutes from './routes/admin/kycRoutes.js';
 import adminAnalyticsRoutes from './routes/admin/analyticsRoutes.js';
 import adminAppointmentRoutes from './routes/admin/appointmentRoutes.js';
@@ -31,11 +29,9 @@ import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
-import nicRoutes from './routes/nicRoutes.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
-import { protect, authorize } from './middleware/authMiddleware.js';
 
 
 
@@ -54,7 +50,7 @@ mongoose.connection.once('open', async () => {
       await mongoose.connection.collection('appointments').dropIndex('orderId_1');
       console.log('✅ Dropped legacy orderId_1 index from appointments');
     }
-  } catch (e) { /* index may not exist or collection may not exist yet */ }
+  } catch { /* index may not exist or collection may not exist yet */ }
 });
 
 
@@ -218,16 +214,6 @@ app.use(
   adminFormsRoutes
 );
 
-app.use(
-  '/api/admin/dashboard',
-  adminDashboardRoutes
-);
-
-app.use(
-  '/api/admin/dashboard-stats',
-  adminDashboardStatsRoutes
-);
-
 
 app.use(
   '/api/admin/kyc',
@@ -305,11 +291,6 @@ app.use(
 app.use(
   '/api/files',
   fileRoutes
-);
-
-app.use(
-  '/api/nic',
-  nicRoutes
 );
 
 

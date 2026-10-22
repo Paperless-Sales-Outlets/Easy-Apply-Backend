@@ -46,15 +46,6 @@ async function getTransporter() {
 function formatServiceLabel(serviceType) {
   const map = {
     'new-connection': 'New Connection',
-    'reconnection': 'Reconnection',
-    'relocation': 'Relocation',
-    'termination': 'Service Termination',
-    'transfer': 'Ownership Transfer',
-    'package-migration': 'Package Migration',
-    'service-vacation': 'Service Vacation',
-    'refund-request': 'Refund Request',
-    'customer-request-acceptance': 'Customer Request',
-    'internet-services': 'Internet Services',
     'appointment-booking': 'Appointment Booking',
   };
   return map[serviceType] || (serviceType || 'Service').replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

@@ -26,7 +26,7 @@ export const parseMultipartFormData = (req, res, next) => {
     try {
       req.body.formData = JSON.parse(req.body.formData);
 
-    } catch (e) {
+    } catch {
 
       res.status(400);
       return next(
@@ -50,18 +50,7 @@ export const validateApplicationSubmission = [
     .trim()
     .notEmpty()
     .withMessage('Service type is required')
-    .isIn([
-      'new-connection',
-      'reconnection',
-      'relocation',
-      'termination',
-      'transfer',
-      'package-migration',
-      'service-vacation',
-      'refund-request',
-      'customer-request-acceptance',
-      'internet-services',
-    ])
+    .isIn(['new-connection'])
     .withMessage('Invalid service type'),
 
 
@@ -83,7 +72,7 @@ export const validateApplicationSubmission = [
           parsedData = JSON.parse(value);
           req.body.formData = parsedData;
 
-        } catch (e) {
+        } catch {
 
           throw new Error(
             'Invalid JSON structure in formData'
@@ -103,29 +92,6 @@ export const validateApplicationSubmission = [
           'Form data must be an object'
         );
 
-      }
-
-
-
-      // BRD 5.1.6
-      // Broadband package mandatory for new connection
-      if (
-        req.body.serviceType === 'new-connection'
-      ) {
-        const broadbandPkg =
-          parsedData.broadbandPackage ||
-          parsedData.otherBroadbandPackage ||
-          parsedData.product?.productName ||
-          parsedData.product?.name ||
-          parsedData.selectedProduct?.productName ||
-          parsedData.packageName ||
-          'Fibre Broadband';
-
-        if (!broadbandPkg) {
-          throw new Error(
-            'Selection of at least one Broadband Package is mandatory per BRD 5.1.6.'
-          );
-        }
       }
 
       return true;
@@ -160,141 +126,6 @@ export const validateApplicationSubmission = [
 
 
 
-
-  // Service-specific validations
-  body().custom((value, { req }) => {
-
-
-    if (
-      req.body.serviceType === 'reconnection'
-    ) {
-
-
-      const data =
-        req.body.formData || {};
-
-
-
-      const hasFacility =
-        data.facility_broadband ||
-        data.facility_peoTv ||
-        data.facility_sltPlus ||
-        data.facility_cli ||
-        data.facility_idd ||
-        data.facility_email ||
-        data.facility_dialUp ||
-        data.facility_other;
-
-
-
-      if (!hasFacility) {
-
-        throw new Error(
-          'At least one facility must be selected for reconnection'
-        );
-
-      }
-
-
-
-
-      if (
-        data.facility_email &&
-        !data.emailUsername
-      ) {
-
-        throw new Error(
-          'Email Username is required when Email facility is selected'
-        );
-
-      }
-
-
-
-
-      if (
-        data.facility_dialUp &&
-        !data.dialUpUsername
-      ) {
-
-        throw new Error(
-          'Dial-up Username is required when Dial-up facility is selected'
-        );
-
-      }
-
-      if (
-        data.facility_other &&
-        !data.otherServiceText
-      ) {
-        throw new Error(
-          'Please specify the other service you want to reconnect'
-        );
-      }
-
-
-
-      // Payment receipt validation can be added here
-      // using req.files if required
-    }
-
-    if (req.body.serviceType === 'service-vacation') {
-      const data = req.body.formData || {};
-
-      const hasFacility = data.facility_voice || data.facility_broadband || data.facility_peotv;
-      if (!hasFacility) {
-        throw new Error('At least one facility (Voice, Broadband, or PeoTV) must be selected for service vacation');
-      }
-
-      if (!data.deactivationDate || !data.resumeDate) {
-        throw new Error('Both Deactivation Date and Resume Date are required');
-      }
-
-      const deactivation = new Date(data.deactivationDate);
-      const resume = new Date(data.resumeDate);
-
-      if (resume <= deactivation) {
-        throw new Error('Resume Date must be after Deactivation Date');
-      }
-
-      const diffTime = Math.abs(resume - deactivation);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-      
-      if (diffDays > 122) {
-        throw new Error('Vacation duration cannot exceed 4 months (122 days)');
-      }
-    }
-
-    return true;
-
-  }),
-
-
-
-  validateRequest,
-
-];
-
-
-
-
-// Validation rules for updating status
-export const validateStatusUpdate = [
-
-  body('status')
-    .trim()
-    .toLowerCase()
-    .notEmpty()
-    .withMessage('Status is required')
-    .isIn([
-      'pending',
-      'approved',
-      'rejected',
-      'flagged'
-    ])
-    .withMessage(
-      'Invalid status value. Must be one of: pending, approved, rejected, flagged'
-    ),
 
   validateRequest,
 
@@ -353,46 +184,6 @@ export const validatePaymentCreate = [
 ];
 
 
-// Validation rules for admin form creation
-export const validateAdminFormCreate = [
-  body('formType')
-    .trim()
-    .notEmpty()
-    .withMessage('Form type is required'),
-
-  body('data')
-    .notEmpty()
-    .withMessage('Form data is required')
-    .custom((value, { req }) => {
-      if (typeof value === 'string') {
-        try {
-          req.body.data = JSON.parse(value);
-        } catch (e) {
-          throw new Error('Invalid JSON in data');
-        }
-      }
-      if (typeof req.body.data !== 'object' || req.body.data === null) {
-        throw new Error('Form data must be an object');
-      }
-      return true;
-    }),
-
-  validateRequest,
-];
-
-
-// Validation for updating a form
-export const validateAdminFormUpdate = [
-  body('status')
-    .optional()
-    .trim()
-    .toLowerCase()
-    .isIn(['pending', 'approved', 'rejected', 'flagged'])
-    .withMessage('Invalid status value'),
-  validateRequest,
-];
-
-
 // Validation for reviewing a KYC case (approve / reject / flag / reopen)
 export const validateKycReview = [
   body('status')
@@ -425,18 +216,6 @@ export const validateUpdateApplicationStatus = [
     .trim()
     .isLength({ max: 2000 })
     .withMessage('Notes must be at most 2000 characters'),
-  validateRequest,
-];
-
-
-// Validation for adding a comment to a form
-export const validateAddComment = [
-  body('text')
-    .trim()
-    .notEmpty()
-    .withMessage('Comment text is required')
-    .isLength({ max: 1000 })
-    .withMessage('Comment must be at most 1000 characters'),
   validateRequest,
 ];
 
