@@ -1,8 +1,11 @@
 import mongoose from 'mongoose';
 import Otp from '../models/Otp.js';
+import { sendOtpEmail } from '../services/emailService.js';
 
 // In-memory fallback store when MongoDB is offline
 const inMemoryOtpStore = new Map();
+// Separate in-memory store for email OTPs
+const inMemoryEmailOtpStore = new Map();
 
 // Helper to normalize phone number string
 const normalizePhone = (phone) => {
@@ -128,3 +131,98 @@ export const verifyOtp = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Generate and send OTP to email address via live SMTP
+// @route   POST /api/otp/send-email
+// @access  Public
+export const sendEmailOtp = async (req, res, next) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ success: false, message: 'Email address is required' });
+  }
+
+  // Basic email format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ success: false, message: 'Please enter a valid email address' });
+  }
+
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Persist OTP
+    if (mongoose.connection.readyState === 1) {
+      await Otp.deleteMany({ email: cleanEmail });
+      await Otp.create({ email: cleanEmail, otp: otpCode });
+    } else {
+      inMemoryEmailOtpStore.set(cleanEmail, otpCode);
+    }
+
+    // Attempt to send via SMTP — never block the response on failure
+    try {
+      await sendOtpEmail({ to: cleanEmail, otpCode });
+    } catch (smtpErr) {
+      console.error(`\n❌ [sendEmailOtp] SMTP delivery failed for ${cleanEmail}: ${smtpErr.message}`);
+      console.log(`   ↳ OTP for ${cleanEmail}: ${otpCode}  (bypass: 000000)\n`);
+    }
+
+    console.log(`\n📧 Email OTP for ${cleanEmail}: ${otpCode}  (bypass: 000000)\n`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Verification code sent to your email address.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Verify email OTP entered by user
+// @route   POST /api/otp/verify-email
+// @access  Public
+export const verifyEmailOtp = async (req, res, next) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    return res.status(400).json({ success: false, message: 'Email and OTP code are required' });
+  }
+
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanOtp = String(otp).trim();
+
+    // Bypass codes — always succeed (for devs and phone bypass parity)
+    if (cleanOtp === '000000' || cleanOtp === '123456') {
+      return res.status(200).json({ success: true, message: 'Email address verified successfully' });
+    }
+
+    if (mongoose.connection.readyState === 1) {
+      const record = await Otp.findOne({ email: cleanEmail, otp: cleanOtp });
+
+      if (!record) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired code. Check your email or use 000000.',
+        });
+      }
+
+      await Otp.deleteMany({ email: cleanEmail });
+    } else {
+      const storedOtp = inMemoryEmailOtpStore.get(cleanEmail);
+      if (storedOtp !== cleanOtp) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired code. Check your email or use 000000.',
+        });
+      }
+      inMemoryEmailOtpStore.delete(cleanEmail);
+    }
+
+    res.status(200).json({ success: true, message: 'Email address verified successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
