@@ -3,8 +3,23 @@ import mongoose from 'mongoose';
 const otpLockoutSchema = new mongoose.Schema({
   phone: {
     type: String,
-    required: true,
-    unique: true,
+    required: false,
+    sparse: true,
+    trim: true,
+    index: true,
+  },
+  email: {
+    type: String,
+    required: false,
+    sparse: true,
+    trim: true,
+    lowercase: true,
+    index: true,
+  },
+  target: {
+    type: String,
+    required: false,
+    sparse: true,
     trim: true,
     index: true,
   },

@@ -254,6 +254,10 @@ async function _send({ to, subject, html }) {
     return;
   }
 
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
   try {
     const transporter = await getTransporter();
     const from = process.env.SMTP_FROM || '"SLTMobitel EasyApply" <noreply@sltmobitel.lk>';
@@ -305,5 +309,27 @@ export async function sendApplicationSubmittedEmail({
     subject,
     bodyHtml: buildApplicationSubmittedBody({ customerName, referenceNumber, serviceType, phone, submittedAt, requiresPayment }),
   });
+  await _send({ to, subject, html });
+}
+
+/**
+ * Send email verification code (OTP).
+ */
+export async function sendOtpEmail({ to, otpCode }) {
+  const subject = `Your Verification Code: ${otpCode}`;
+  const bodyHtml = `
+    <div style="text-align: center; padding: 20px 0;">
+      <h2 style="color: #0b4a91; margin-bottom: 12px; font-size: 20px;">Email Verification Code</h2>
+      <p style="color: #475569; font-size: 15px; margin-bottom: 24px;">Please use the following 6-digit code to verify your email address:</p>
+      <div style="display: inline-block; background-color: #f1f5f9; border: 1.5px solid #cbd5e1; border-radius: 12px; padding: 14px 28px; margin-bottom: 24px;">
+        <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0b4a91;">${otpCode}</span>
+      </div>
+      <p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 0;">
+        This code is valid for exactly <strong>5 minutes</strong>.<br/>
+        If you did not request this verification code, please ignore this email.
+      </p>
+    </div>
+  `;
+  const html = emailShell({ subject, bodyHtml });
   await _send({ to, subject, html });
 }

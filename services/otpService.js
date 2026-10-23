@@ -2,14 +2,15 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import Otp from '../models/Otp.js';
 import OtpLockout from '../models/OtpLockout.js';
+import { sendOtpEmail } from './emailService.js';
 
 export const OTP_EXPIRY_MS = 5 * 60 * 1000; // Exactly 5 minutes validity (300 seconds)
-export const RESEND_COOLDOWN_MS = 60 * 1000; // Exactly 1-minute resend cooldown (60 seconds)
 export const MAX_FAILED_ATTEMPTS = 3; // Maximum 3 incorrect OTP verification attempts
 export const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // Exactly 15-minute lockout (900 seconds)
 
 export const inMemoryOtpStore = new Map();
 export const inMemoryLockoutStore = new Map();
+const pendingRequests = new Set(); // Concurrency protection against simultaneous resend requests
 
 /**
  * Normalizes phone numbers to standard 9-digit Sri Lankan national format (e.g. 771234567)
@@ -17,6 +18,30 @@ export const inMemoryLockoutStore = new Map();
 export const normalizePhone = (phone) => {
   const digits = String(phone || '').replace(/\D/g, '');
   return digits.slice(-9);
+};
+
+/**
+ * Normalizes email address to lower case and trimmed string
+ */
+export const normalizeEmail = (email) => {
+  return String(email || '').trim().toLowerCase();
+};
+
+/**
+ * Determines whether a target string represents an email address
+ */
+export const isEmail = (target) => {
+  return typeof target === 'string' && target.includes('@');
+};
+
+/**
+ * Normalizes any target (phone or email)
+ */
+export const normalizeTarget = (target) => {
+  if (!target) return '';
+  const str = String(target).trim();
+  if (isEmail(str)) return normalizeEmail(str);
+  return normalizePhone(str);
 };
 
 /**
@@ -28,6 +53,7 @@ export const buildPhoneQuery = (cleanPhone, rawPhone = '') => {
     { phone: `0${cleanPhone}` },
     { phone: `94${cleanPhone}` },
     { phone: `+94${cleanPhone}` },
+    { target: cleanPhone },
   ];
   if (rawPhone && String(rawPhone).trim()) {
     queries.push({ phone: String(rawPhone).trim() });
@@ -36,54 +62,86 @@ export const buildPhoneQuery = (cleanPhone, rawPhone = '') => {
 };
 
 /**
+ * Builds standard Mongo query for either phone or email
+ */
+export const buildTargetQuery = (cleanTarget, rawTarget = '') => {
+  if (isEmail(cleanTarget)) {
+    return {
+      $or: [
+        { email: cleanTarget },
+        { target: cleanTarget },
+      ],
+    };
+  }
+  return buildPhoneQuery(cleanTarget, rawTarget);
+};
+
+/**
  * Helper to fetch lockout record
  */
-const getLockoutRecord = async (cleanPhone) => {
+const getLockoutRecord = async (cleanTarget) => {
   if (mongoose.connection.readyState === 1) {
-    return await OtpLockout.findOne({ phone: cleanPhone });
+    if (isEmail(cleanTarget)) {
+      return await OtpLockout.findOne({ $or: [{ email: cleanTarget }, { target: cleanTarget }] });
+    }
+    return await OtpLockout.findOne({ $or: [{ phone: cleanTarget }, { target: cleanTarget }] });
   }
-  return inMemoryLockoutStore.get(cleanPhone) || null;
+  return inMemoryLockoutStore.get(cleanTarget) || null;
 };
 
 /**
  * Helper to save lockout record
  */
-const saveLockoutRecord = async (cleanPhone, failedAttempts, lockedUntil) => {
+const saveLockoutRecord = async (cleanTarget, failedAttempts, lockedUntil) => {
   if (mongoose.connection.readyState === 1) {
+    const isMail = isEmail(cleanTarget);
+    const filter = isMail
+      ? { $or: [{ email: cleanTarget }, { target: cleanTarget }] }
+      : { $or: [{ phone: cleanTarget }, { target: cleanTarget }] };
+
+    const doc = isMail
+      ? { email: cleanTarget, target: cleanTarget, failedAttempts, lockedUntil, updatedAt: new Date() }
+      : { phone: cleanTarget, target: cleanTarget, failedAttempts, lockedUntil, updatedAt: new Date() };
+
     return await OtpLockout.findOneAndUpdate(
-      { phone: cleanPhone },
-      { failedAttempts, lockedUntil, updatedAt: new Date() },
+      filter,
+      doc,
       { upsert: true, new: true }
     );
   }
-  const rec = { phone: cleanPhone, failedAttempts, lockedUntil, updatedAt: Date.now() };
-  inMemoryLockoutStore.set(cleanPhone, rec);
+  const rec = { target: cleanTarget, failedAttempts, lockedUntil, updatedAt: Date.now() };
+  inMemoryLockoutStore.set(cleanTarget, rec);
   return rec;
 };
 
 /**
  * Helper to clear lockout record
  */
-const clearLockoutRecord = async (cleanPhone) => {
+const clearLockoutRecord = async (cleanTarget) => {
   if (mongoose.connection.readyState === 1) {
-    await OtpLockout.deleteOne({ phone: cleanPhone });
+    const isMail = isEmail(cleanTarget);
+    const filter = isMail
+      ? { $or: [{ email: cleanTarget }, { target: cleanTarget }] }
+      : { $or: [{ phone: cleanTarget }, { target: cleanTarget }] };
+    await OtpLockout.deleteMany(filter);
   } else {
-    inMemoryLockoutStore.delete(cleanPhone);
+    inMemoryLockoutStore.delete(cleanTarget);
   }
 };
 
 /**
- * Checks if the phone number is currently in the 15-minute lockout state.
+ * Checks if the target (phone or email) is currently in the 15-minute lockout state.
  * Throws 429 if locked out.
  */
-export const checkLockout = async (cleanPhone) => {
+export const checkLockout = async (cleanTarget) => {
   const now = Date.now();
-  const lockout = await getLockoutRecord(cleanPhone);
+  const lockout = await getLockoutRecord(cleanTarget);
   if (lockout && lockout.lockedUntil) {
     const lockedUntilMs = new Date(lockout.lockedUntil).getTime();
     if (now < lockedUntilMs) {
       const remainingSeconds = Math.ceil((lockedUntilMs - now) / 1000);
-      const error = new Error('Too many incorrect OTP attempts. OTP verification is locked for 15 minutes.');
+      const isMail = isEmail(cleanTarget);
+      const error = new Error(`Too many incorrect OTP attempts. ${isMail ? 'Email' : 'OTP'} verification is locked for 15 minutes.`);
       error.status = 429;
       error.code = 'OTP_LOCKED';
       error.lockoutRemaining = remainingSeconds;
@@ -91,25 +149,26 @@ export const checkLockout = async (cleanPhone) => {
       throw error;
     } else {
       // 15-minute lockout has elapsed! Clear lockout so user can proceed
-      await clearLockoutRecord(cleanPhone);
+      await clearLockoutRecord(cleanTarget);
     }
   }
 };
 
 /**
- * Returns current OTP and lockout status for a phone number
+ * Returns current OTP and lockout status for a phone number or email address
  */
-export const getOtpStatus = async (phone) => {
-  if (!phone) {
-    const error = new Error('Phone number is required');
+export const getOtpStatus = async (target) => {
+  if (!target) {
+    const error = new Error('Phone number or email address is required');
     error.status = 400;
     throw error;
   }
 
-  const cleanPhone = normalizePhone(phone);
+  const cleanTarget = normalizeTarget(target);
+  const isMail = isEmail(target);
   const now = Date.now();
 
-  const lockout = await getLockoutRecord(cleanPhone);
+  const lockout = await getLockoutRecord(cleanTarget);
   let isLocked = false;
   let lockoutRemaining = 0;
   let lockedUntil = null;
@@ -121,14 +180,16 @@ export const getOtpStatus = async (phone) => {
       lockoutRemaining = Math.ceil((lockedUntilMs - now) / 1000);
       lockedUntil = new Date(lockedUntilMs).toISOString();
     } else {
-      await clearLockoutRecord(cleanPhone);
+      await clearLockoutRecord(cleanTarget);
     }
   }
 
   if (isLocked) {
     return {
       success: true,
-      phone: cleanPhone,
+      target: cleanTarget,
+      phone: isMail ? undefined : cleanTarget,
+      email: isMail ? cleanTarget : undefined,
       isLocked: true,
       lockedUntil,
       lockoutRemaining,
@@ -141,9 +202,9 @@ export const getOtpStatus = async (phone) => {
 
   let activeOtp = null;
   if (mongoose.connection.readyState === 1) {
-    activeOtp = await Otp.findOne(buildPhoneQuery(cleanPhone, phone)).sort({ createdAt: -1 });
+    activeOtp = await Otp.findOne(buildTargetQuery(cleanTarget, target)).sort({ createdAt: -1 });
   } else {
-    activeOtp = inMemoryOtpStore.get(cleanPhone) || null;
+    activeOtp = inMemoryOtpStore.get(cleanTarget) || null;
   }
 
   let hasActiveOtp = false;
@@ -161,13 +222,13 @@ export const getOtpStatus = async (phone) => {
       hasActiveOtp = true;
       expiresIn = Math.ceil((expiresAtMs - now) / 1000);
       expiresAt = new Date(expiresAtMs).toISOString();
-
-      const lastSentMs = new Date(activeOtp.lastSentAt || activeOtp.createdAt).getTime();
-      const elapsed = now - lastSentMs;
-      if (elapsed < RESEND_COOLDOWN_MS) {
-        resendCooldown = Math.ceil((RESEND_COOLDOWN_MS - elapsed) / 1000);
-        resendAvailableAt = new Date(lastSentMs + RESEND_COOLDOWN_MS).toISOString();
-      }
+      resendAvailableAt = new Date(expiresAtMs).toISOString();
+    } else {
+      // OTP has expired - resend is immediately available
+      hasActiveOtp = false;
+      expiresIn = 0;
+      expiresAt = new Date(expiresAtMs).toISOString();
+      resendAvailableAt = new Date(expiresAtMs).toISOString();
     }
   }
 
@@ -175,164 +236,156 @@ export const getOtpStatus = async (phone) => {
 
   return {
     success: true,
-    phone: cleanPhone,
+    target: cleanTarget,
+    phone: isMail ? undefined : cleanTarget,
+    email: isMail ? cleanTarget : undefined,
     isLocked: false,
     lockedUntil: null,
     lockoutRemaining: 0,
     hasActiveOtp,
     expiresAt,
     expiresIn,
-    resendCooldown,
+    resendCooldown: 0,
     resendAvailableAt,
     attemptsRemaining,
   };
 };
 
 /**
- * Generates and issues a new OTP for a phone number.
+ * Generates and issues a new OTP for a phone number or email address.
  * Enforces:
- * - 15-minute lockout check: blocked if user is currently locked out
- * - 60-second resend cooldown: HTTP 429 if requested within cooldown
- * - 5-minute expiry timestamp
- * - Invalidation of any previously issued OTPs for this phone
+ * - 15-minute lockout check: blocked if target is currently locked out
+ * - 5-minute OTP validity period
+ * - Resend restriction: strictly blocked while OTP is active (first 5 minutes)
+ * - Immediate resend available as soon as the 5-minute OTP expires (no 60s cooldown)
+ * - Concurrency protection: duplicate/concurrent resends while processing are rejected
+ * - Invalidation of any previously issued OTPs for this target
  * - Reset of attempt counter for the new OTP challenge (when not locked out)
- * - Safe response: never exposes OTP value
+ * - Safe response: never exposes raw OTP value
  */
-export const requestOtp = async (phone) => {
-  if (!phone) {
-    const error = new Error('Phone number is required');
+export const requestOtp = async (target) => {
+  if (!target) {
+    const error = new Error('Phone number or email address is required');
     error.status = 400;
     throw error;
   }
 
-  const cleanPhone = normalizePhone(phone);
-  if (cleanPhone.length !== 9) {
-    const error = new Error('Please enter a valid 9-digit Sri Lankan mobile number');
-    error.status = 400;
-    throw error;
+  const isMail = isEmail(target);
+  const cleanTarget = normalizeTarget(target);
+
+  if (isMail) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanTarget)) {
+      const error = new Error('Please enter a valid email address');
+      error.status = 400;
+      throw error;
+    }
+  } else {
+    if (cleanTarget.length !== 9) {
+      const error = new Error('Please enter a valid 9-digit Sri Lankan mobile number');
+      error.status = 400;
+      throw error;
+    }
   }
 
-  const now = Date.now();
+  // Prevent duplicate or concurrent resend requests while a request is in flight
+  if (pendingRequests.has(cleanTarget)) {
+    const error = new Error('A verification code request is already being processed. Please wait.');
+    error.status = 429;
+    error.code = 'REQUEST_IN_PROGRESS';
+    throw error;
+  }
+  pendingRequests.add(cleanTarget);
 
-  // 1. Enforce 15-Minute Lockout: Repeated resend cannot bypass verification lockout
-  await checkLockout(cleanPhone);
+  try {
+    const now = Date.now();
 
-  // 2. Block resend while current OTP is still valid, then enforce 60-second cooldown after expiry.
-  //    Resend is only permitted after: OTP has expired AND 60 seconds have passed since expiry.
-  if (mongoose.connection.readyState === 1) {
-    const existing = await Otp.findOne(buildPhoneQuery(cleanPhone, phone)).sort({ createdAt: -1 });
+    // 1. Enforce 15-Minute Lockout: Repeated resend cannot bypass verification lockout
+    await checkLockout(cleanTarget);
+
+    // 2. Block resend while current OTP is still valid (5-minute validity period).
+    //    Resend is permitted immediately once the OTP expires (no 60s cooldown).
+    let existing = null;
+    if (mongoose.connection.readyState === 1) {
+      existing = await Otp.findOne(buildTargetQuery(cleanTarget, target)).sort({ createdAt: -1 });
+    } else {
+      existing = inMemoryOtpStore.get(cleanTarget);
+    }
+
     if (existing) {
       const expiresAtMs = existing.expiresAt
         ? new Date(existing.expiresAt).getTime()
-        : new Date(existing.createdAt).getTime() + OTP_EXPIRY_MS;
+        : (typeof existing.createdAt === 'number' ? existing.createdAt : new Date(existing.createdAt).getTime()) + OTP_EXPIRY_MS;
 
       if (now < expiresAtMs) {
-        // OTP is still valid — completely block resend
+        // OTP is still valid — completely block resend during 5-minute validity
         const remainingSeconds = Math.ceil((expiresAtMs - now) / 1000);
-        const resendAllowedAt = new Date(expiresAtMs + RESEND_COOLDOWN_MS);
         const error = new Error('A valid OTP has already been sent. Please wait for it to expire before requesting a new one.');
         error.status = 429;
         error.code = 'OTP_STILL_VALID';
         error.otpRemaining = remainingSeconds;
         error.expiresAt = new Date(expiresAtMs).toISOString();
-        error.resendAvailableAt = resendAllowedAt.toISOString();
+        error.resendAvailableAt = new Date(expiresAtMs).toISOString();
         throw error;
       }
 
-      // OTP has expired — enforce 60-second cooldown measured from expiry time
-      const cooldownStartMs = expiresAtMs;
-      const elapsedSinceExpiry = now - cooldownStartMs;
-      if (elapsedSinceExpiry < RESEND_COOLDOWN_MS) {
-        const remainingSeconds = Math.ceil((RESEND_COOLDOWN_MS - elapsedSinceExpiry) / 1000);
-        const error = new Error(`Please wait ${remainingSeconds} seconds before requesting a new OTP.`);
-        error.status = 429;
-        error.code = 'RESEND_COOLDOWN';
-        error.cooldownRemaining = remainingSeconds;
-        error.resendAvailableAt = new Date(cooldownStartMs + RESEND_COOLDOWN_MS).toISOString();
-        throw error;
-      }
+      // OTP has expired — no additional 60-second cooldown! Resend allowed immediately.
     }
-  } else {
-    const existing = inMemoryOtpStore.get(cleanPhone);
-    if (existing) {
-      const expiresAtMs = typeof existing.expiresAt === 'number'
-        ? existing.expiresAt
-        : Number(existing.createdAt) + OTP_EXPIRY_MS;
 
-      if (now < expiresAtMs) {
-        // OTP is still valid — completely block resend
-        const remainingSeconds = Math.ceil((expiresAtMs - now) / 1000);
-        const resendAllowedAt = new Date(expiresAtMs + RESEND_COOLDOWN_MS);
-        const error = new Error('A valid OTP has already been sent. Please wait for it to expire before requesting a new one.');
-        error.status = 429;
-        error.code = 'OTP_STILL_VALID';
-        error.otpRemaining = remainingSeconds;
-        error.expiresAt = new Date(expiresAtMs).toISOString();
-        error.resendAvailableAt = resendAllowedAt.toISOString();
-        throw error;
-      }
-
-      // OTP has expired — enforce 60-second cooldown measured from expiry time
-      const cooldownStartMs = expiresAtMs;
-      const elapsedSinceExpiry = now - cooldownStartMs;
-      if (elapsedSinceExpiry < RESEND_COOLDOWN_MS) {
-        const remainingSeconds = Math.ceil((RESEND_COOLDOWN_MS - elapsedSinceExpiry) / 1000);
-        const error = new Error(`Please wait ${remainingSeconds} seconds before requesting a new OTP.`);
-        error.status = 429;
-        error.code = 'RESEND_COOLDOWN';
-        error.cooldownRemaining = remainingSeconds;
-        error.resendAvailableAt = new Date(cooldownStartMs + RESEND_COOLDOWN_MS).toISOString();
-        throw error;
-      }
+    // 3. Invalidate previous OTPs for this target
+    if (mongoose.connection.readyState === 1) {
+      await Otp.deleteMany(buildTargetQuery(cleanTarget, target));
+    } else {
+      inMemoryOtpStore.delete(cleanTarget);
     }
+
+    // 4. Reset attempt counter for new OTP challenge (since not locked out)
+    await clearLockoutRecord(cleanTarget);
+
+    // 5. Generate 6-digit numeric OTP and timestamps.
+    //    resendAvailableAt = OTP expiry time (available immediately at 5 minutes).
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(now + OTP_EXPIRY_MS);
+    const resendAvailableAt = new Date(now + OTP_EXPIRY_MS);
+
+    // 6. Store in Database or In-Memory fallback
+    if (mongoose.connection.readyState === 1) {
+      const doc = isMail
+        ? { email: cleanTarget, target: cleanTarget, otp: otpCode, createdAt: new Date(now), lastSentAt: new Date(now), expiresAt, failedAttempts: 0 }
+        : { phone: cleanTarget, target: cleanTarget, otp: otpCode, createdAt: new Date(now), lastSentAt: new Date(now), expiresAt, failedAttempts: 0 };
+      await Otp.create(doc);
+    } else {
+      inMemoryOtpStore.set(cleanTarget, {
+        otp: otpCode,
+        createdAt: now,
+        lastSentAt: now,
+        expiresAt: expiresAt.getTime(),
+        failedAttempts: 0,
+        target: cleanTarget,
+        isMail,
+      });
+    }
+
+    if (isMail) {
+      console.log(`[OTP] Generated verification code for ${cleanTarget} (Valid: 5m, immediate resend upon expiry)`);
+      try {
+        await sendOtpEmail({ to: cleanTarget, otpCode });
+      } catch (mailErr) {
+        console.warn(`[OTP] Notice: Email delivery failed for ${cleanTarget}:`, mailErr.message);
+      }
+    } else {
+      console.log(`[OTP] Generated verification code for +94 ${cleanTarget} (Valid: 5m, immediate resend upon expiry)`);
+    }
+
+    return {
+      success: true,
+      message: isMail ? 'Verification code sent to your email address.' : 'OTP sent successfully to your mobile number.',
+      expiresIn: Math.ceil(OTP_EXPIRY_MS / 1000),
+      expiresAt: expiresAt.toISOString(),
+      resendAvailableAt: resendAvailableAt.toISOString(),
+    };
+  } finally {
+    pendingRequests.delete(cleanTarget);
   }
-
-  // 3. Invalidate previous OTPs for this phone
-  if (mongoose.connection.readyState === 1) {
-    await Otp.deleteMany(buildPhoneQuery(cleanPhone, phone));
-  } else {
-    inMemoryOtpStore.delete(cleanPhone);
-  }
-
-  // 4. Reset attempt counter for new OTP challenge (since not locked out)
-  await clearLockoutRecord(cleanPhone);
-
-  // 5. Generate 6-digit numeric OTP and timestamps.
-  //    resendAvailableAt = OTP expiry time + 60-second cooldown (not 60s from now).
-  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(now + OTP_EXPIRY_MS);
-  const resendAvailableAt = new Date(now + OTP_EXPIRY_MS + RESEND_COOLDOWN_MS);
-
-  // 6. Store in Database or In-Memory fallback
-  if (mongoose.connection.readyState === 1) {
-    await Otp.create({
-      phone: cleanPhone,
-      otp: otpCode,
-      createdAt: new Date(now),
-      lastSentAt: new Date(now),
-      expiresAt,
-      failedAttempts: 0,
-    });
-  } else {
-    inMemoryOtpStore.set(cleanPhone, {
-      otp: otpCode,
-      createdAt: now,
-      lastSentAt: now,
-      expiresAt: expiresAt.getTime(),
-      failedAttempts: 0,
-    });
-  }
-
-  console.log(`[OTP] Generated verification code for +94 ${cleanPhone} (Valid: 5m, then 60s resend cooldown)`);
-
-  return {
-    success: true,
-    message: 'OTP sent successfully to your mobile number.',
-    expiresIn: Math.ceil(OTP_EXPIRY_MS / 1000),
-    expiresAt: expiresAt.toISOString(),
-    resendCooldown: Math.ceil(RESEND_COOLDOWN_MS / 1000),
-    resendAvailableAt: resendAvailableAt.toISOString(),
-  };
 };
 
 /**
@@ -344,26 +397,27 @@ export const requestOtp = async (phone) => {
  * - Invalidation upon success: deleted immediately so cannot be reused
  * - Clearing of attempt/lockout counters upon successful verification
  */
-export const validateOtp = async (phone, inputOtp) => {
-  if (!phone || !inputOtp) {
-    const error = new Error('Phone number and OTP code are required');
+export const validateOtp = async (target, inputOtp) => {
+  if (!target || !inputOtp) {
+    const error = new Error('Phone number or email and OTP code are required');
     error.status = 400;
     throw error;
   }
 
-  const cleanPhone = normalizePhone(phone);
+  const isMail = isEmail(target);
+  const cleanTarget = normalizeTarget(target);
   const cleanOtp = String(inputOtp).trim();
   const now = Date.now();
 
   // 1. Check 15-Minute Lockout first
-  await checkLockout(cleanPhone);
+  await checkLockout(cleanTarget);
 
   // 2. Fetch active OTP record
   let record = null;
   if (mongoose.connection.readyState === 1) {
-    record = await Otp.findOne(buildPhoneQuery(cleanPhone, phone));
+    record = await Otp.findOne(buildTargetQuery(cleanTarget, target));
   } else {
-    record = inMemoryOtpStore.get(cleanPhone);
+    record = inMemoryOtpStore.get(cleanTarget);
   }
 
   if (!record) {
@@ -380,9 +434,9 @@ export const validateOtp = async (phone, inputOtp) => {
 
   if (now > expiresAtMs) {
     if (mongoose.connection.readyState === 1) {
-      await Otp.deleteMany(buildPhoneQuery(cleanPhone, phone));
+      await Otp.deleteMany(buildTargetQuery(cleanTarget, target));
     } else {
-      inMemoryOtpStore.delete(cleanPhone);
+      inMemoryOtpStore.delete(cleanTarget);
     }
     const error = new Error('Your OTP has expired. Please request a new OTP.');
     error.status = 400;
@@ -405,28 +459,28 @@ export const validateOtp = async (phone, inputOtp) => {
 
   // 5. Handle Incorrect Attempt
   if (!isMatch) {
-    const currentLockout = (await getLockoutRecord(cleanPhone)) || { failedAttempts: 0 };
+    const currentLockout = (await getLockoutRecord(cleanTarget)) || { failedAttempts: 0 };
     const newFailed = (currentLockout.failedAttempts || 0) + 1;
 
     if (newFailed >= MAX_FAILED_ATTEMPTS) {
       const lockedUntil = new Date(now + LOCKOUT_DURATION_MS);
-      await saveLockoutRecord(cleanPhone, newFailed, lockedUntil);
+      await saveLockoutRecord(cleanTarget, newFailed, lockedUntil);
 
       // Invalidate current OTP
       if (mongoose.connection.readyState === 1) {
-        await Otp.deleteMany(buildPhoneQuery(cleanPhone, phone));
+        await Otp.deleteMany(buildTargetQuery(cleanTarget, target));
       } else {
-        inMemoryOtpStore.delete(cleanPhone);
+        inMemoryOtpStore.delete(cleanTarget);
       }
 
-      const error = new Error('Too many incorrect OTP attempts. OTP verification is locked for 15 minutes.');
+      const error = new Error(`Too many incorrect OTP attempts. ${isMail ? 'Email' : 'OTP'} verification is locked for 15 minutes.`);
       error.status = 429;
       error.code = 'OTP_LOCKED';
       error.lockoutRemaining = 900;
       error.lockedUntil = lockedUntil.toISOString();
       throw error;
     } else {
-      await saveLockoutRecord(cleanPhone, newFailed, null);
+      await saveLockoutRecord(cleanTarget, newFailed, null);
 
       const remainingTries = MAX_FAILED_ATTEMPTS - newFailed;
       const errorMsg = `Invalid verification code. Please try again. (${remainingTries} attempt${remainingTries === 1 ? '' : 's'} remaining)`;
@@ -440,17 +494,21 @@ export const validateOtp = async (phone, inputOtp) => {
 
   // 6. Match Succeeded: Delete OTP immediately and clear lockout record
   if (mongoose.connection.readyState === 1) {
-    await Otp.deleteMany(buildPhoneQuery(cleanPhone, phone));
+    await Otp.deleteMany(buildTargetQuery(cleanTarget, target));
   } else {
-    inMemoryOtpStore.delete(cleanPhone);
+    inMemoryOtpStore.delete(cleanTarget);
   }
-  await clearLockoutRecord(cleanPhone);
+  await clearLockoutRecord(cleanTarget);
 
   return {
     success: true,
-    message: 'Phone number verified successfully',
+    message: isMail ? 'Email address verified successfully' : 'Phone number verified successfully',
   };
 };
+
+export const requestEmailOtp = (email) => requestOtp(email);
+export const validateEmailOtp = (email, otp) => validateOtp(email, otp);
+export const getEmailOtpStatus = (email) => getOtpStatus(email);
 
 export default {
   requestOtp,
@@ -458,9 +516,15 @@ export default {
   getOtpStatus,
   checkLockout,
   normalizePhone,
+  normalizeEmail,
+  normalizeTarget,
+  isEmail,
   buildPhoneQuery,
+  buildTargetQuery,
+  requestEmailOtp,
+  validateEmailOtp,
+  getEmailOtpStatus,
   OTP_EXPIRY_MS,
-  RESEND_COOLDOWN_MS,
   MAX_FAILED_ATTEMPTS,
   LOCKOUT_DURATION_MS,
 };
