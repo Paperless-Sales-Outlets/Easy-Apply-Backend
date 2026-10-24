@@ -133,63 +133,6 @@ export const assignTechnician = async (req, res, next) => {
   }
 };
 
-// @desc    Update appointment status (scheduled -> in-progress -> completed / cancelled)
-// @route   PATCH /api/admin/appointments/:id/status
-// @access  Private (Admin / Staff only)
-export const updateAppointmentStatus = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (!status) {
-      res.status(400);
-      return next(new Error('Status is required'));
-    }
-
-    const previous = await Appointment.findById(id).select('status referenceNumber');
-    const appointment = await Appointment.findByIdAndUpdate(
-      id,
-      { $set: { status } },
-      { new: true, runValidators: true }
-    )
-      .populate('technicianId', 'name email phone')
-      .lean();
-
-    if (!appointment) {
-      res.status(404);
-      return next(new Error('Appointment not found'));
-    }
-
-    await recordAudit({
-      req,
-      action: 'STATUS_UPDATE',
-      module: 'Appointments',
-      targetId: appointment.referenceNumber || id,
-      description: `Changed appointment status from ${previous?.status || 'unknown'} to ${appointment.status}`,
-      metadata: { previousStatus: previous?.status, newStatus: appointment.status },
-    });
-    res.status(200).json({
-      success: true,
-      appointment: {
-        id: appointment._id,
-        applicationId: appointment.applicationId,
-        referenceNumber: appointment.referenceNumber,
-        customer: appointment.customerName,
-        phone: appointment.phone,
-        address: appointment.address,
-        serviceType: appointment.serviceType,
-        scheduledAt: appointment.scheduledAt,
-        technicianId: appointment.technicianId?._id || null,
-        technicianName: appointment.technicianId?.name || null,
-        status: appointment.status,
-        notes: appointment.notes || '',
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 // @desc    Create a new appointment
 // @route   POST /api/admin/appointments
 // @access  Private (Admin / Staff only)

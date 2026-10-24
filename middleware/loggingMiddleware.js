@@ -53,8 +53,3 @@ export const errorLogger = (err, req, res, next) => {
 
   next(err);
 };
-
-export default {
-  requestLogger,
-  errorLogger,
-};

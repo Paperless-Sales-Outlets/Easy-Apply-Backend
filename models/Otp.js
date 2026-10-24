@@ -1,10 +1,19 @@
 import mongoose from 'mongoose';
 
+// Single Otp collection stores both phone OTPs and email OTPs.
+// Phone OTPs:  { phone, otp }  — no real SMS, bypass 000000 is accepted.
+// Email OTPs:  { email, otp }  — real 6-digit code sent via live SMTP.
+// Neither field is required globally; validation is done in the controller.
 const otpSchema = new mongoose.Schema({
   phone: {
     type: String,
-    required: true,
     trim: true,
+    // NOT required — email OTPs are stored without a phone number
+  },
+  email: {
+    type: String,
+    trim: true,
+    lowercase: true,
   },
   otp: {
     type: String,
@@ -13,7 +22,7 @@ const otpSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now,
-    expires: 300, // Expires and automatically deletes after 5 minutes (300 seconds)
+    expires: 300, // Auto-deleted after 5 minutes by MongoDB TTL index
   },
 });
 

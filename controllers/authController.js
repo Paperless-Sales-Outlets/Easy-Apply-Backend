@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import Customer from '../models/Customer.js';
 import User from '../models/User.js';
@@ -8,76 +7,6 @@ import { findAccountById } from '../middleware/authMiddleware.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
 import { recordAudit } from '../services/auditService.js';
-
-// @desc    Check if a phone number is registered (used by login flow to decide
-//          whether to send OTP or redirect to sign-up)
-// @route   POST /api/auth/check-phone
-// @access  Public
-export const checkPhone = async (req, res, next) => {
-  const { phone } = req.body;
-  if (!phone) {
-    return res.status(400).json({ success: false, message: 'Phone number is required' });
-  }
-
-  try {
-    const digitsOnly = String(phone).replace(/\D/g, '');
-    const last9 = digitsOnly.slice(-9);
-
-    // 1. Try finding in the Customer database
-    const customer = await Customer.findOne({
-      $or: [
-        { phone: phone },
-        { phone: digitsOnly },
-        { phone: last9 },
-        { phone: `0${last9}` },
-        { phone: `+94${last9}` },
-        { phone: `94${last9}` },
-      ],
-    }).select('_id');
-    
-    let registered = !!customer;
-
-    // 2. If not found in Customers, check if they are an existing SLT Customer connection/application
-    if (!registered) {
-      if (mongoose.connection.readyState === 1) {
-        const Connection = mongoose.models.Connection || mongoose.model('Connection');
-        const match = await Connection.findOne({
-          $or: [
-            { telephone: phone },
-            { telephone: digitsOnly },
-            { telephone: `0${last9}` },
-            { contactNo: phone },
-            { contactNo: digitsOnly },
-            { contactNo: `0${last9}` },
-          ],
-        }).select('_id');
-
-        if (match) {
-          registered = true;
-        } else if (mongoose.models.Application) {
-          const app = await mongoose.models.Application.findOne({
-            $or: [
-              { phone: phone },
-              { phone: digitsOnly },
-              { phone: `0${last9}` },
-              { 'formData.mobileNumber': digitsOnly },
-              { 'formData.mobileNumber': `0${last9}` },
-            ],
-          }).select('_id');
-          if (app) registered = true;
-        }
-      }
-    }
-
-    return res.status(200).json({
-      success: true,
-      registered,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 
 // The customer fields safe to return to the client. Kept in one place so
 // register, login and /me all expose the same profile.
@@ -188,7 +117,7 @@ const generateRefreshToken = (user) => {
 // @desc    Get all customers / users (admin only)
 // @route   GET /api/auth/users, GET /api/auth/customers
 // @access  Private (Admin)
-export const getCustomers = async (req, res, next) => {
+export const getUsers = async (req, res, next) => {
   try {
     const customers = await Customer.find()
       .select('name email phone role NIC createdAt')
@@ -216,89 +145,6 @@ export const getCustomers = async (req, res, next) => {
   }
 };
 
-export const getUsers = getCustomers;
-
-// @desc    Send OTP to mobile number
-// @route   POST /api/auth/send-otp
-// @access  Public
-export const sendOtp = async (req, res, next) => {
-  const { phone } = req.body;
-
-  if (!phone) {
-    res.status(400);
-    return next(new Error('Phone number is required'));
-  }
-
-  try {
-    // Generate 6-digit numeric OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Hash the OTP using bcryptjs
-    const salt = await bcrypt.genSalt(10);
-    const hashedOtp = await bcrypt.hash(otp, salt);
-
-    // Delete any existing OTP for this phone number
-    await Otp.deleteMany({ phone });
-
-    // Store the new OTP
-    await Otp.create({
-      phone,
-      otp: hashedOtp,
-    });
-
-    // Mock SMS delivery - Log to console
-    console.log('\n=======================================');
-    console.log(`[SMS MOCK] Sent OTP: ${otp} to +94${phone}`);
-    console.log('=======================================\n');
-
-    res.status(200).json({
-      success: true,
-      message: 'OTP sent successfully (Logged to console)',
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Verify OTP
-// @route   POST /api/auth/verify-otp
-// @access  Public
-export const verifyOtp = async (req, res, next) => {
-  const { phone, otp } = req.body;
-
-  if (!phone || !otp) {
-    res.status(400);
-    return next(new Error('Phone number and OTP code are required'));
-  }
-
-  try {
-    // Check if OTP record exists
-    const otpRecord = await Otp.findOne({ phone });
-
-    if (!otpRecord) {
-      res.status(400);
-      return next(new Error('OTP has expired or was not requested'));
-    }
-
-    // Verify OTP matches
-    const isMatch = await bcrypt.compare(otp, otpRecord.otp);
-
-    if (!isMatch) {
-      res.status(400);
-      return next(new Error('Invalid OTP code'));
-    }
-
-    // OTP is valid - delete it so it cannot be reused
-    await Otp.deleteOne({ _id: otpRecord._id });
-
-    res.status(200).json({
-      success: true,
-      message: 'OTP verified successfully',
-    });
-  } catch (error) {
-    next(error);
-  }
-};
 
 // @desc    Register a new customer / user
 // @route   POST /api/auth/register
@@ -517,103 +363,6 @@ export const login = async (req, res, next) => {
 };
 
 
-// @desc    Sign in with a phone number and OTP, returning the same session a
-//          password login gives. Customers hold both credentials: whichever
-//          they remember should get them the identical account.
-// @route   POST /api/auth/otp-login
-// @access  Public
-export const otpLogin = async (req, res, next) => {
-  const { phone, otp } = req.body;
-
-  if (!phone || !otp) {
-    res.status(400);
-    return next(new Error('Phone number and verification code are required'));
-  }
-
-  try {
-    const digitsOnly = String(phone).replace(/\D/g, '');
-    const last9 = digitsOnly.slice(-9);
-    const cleanOtp = String(otp).trim();
-
-    // 1. Confirm the code, accepting the same demo bypass as /api/otp/verify
-    //    so the two paths behave identically in development.
-    const isDemoCode = cleanOtp === '000000' || cleanOtp === '123456';
-
-    if (!isDemoCode) {
-      const record = await Otp.findOne({
-        $or: [
-          { phone: last9, otp: cleanOtp },
-          { phone: `0${last9}`, otp: cleanOtp },
-          { phone: `94${last9}`, otp: cleanOtp },
-          { phone: String(phone).trim(), otp: cleanOtp },
-        ],
-      });
-
-      if (!record) {
-        res.status(400);
-        return next(new Error('Invalid or expired verification code'));
-      }
-
-      await Otp.deleteMany({
-        $or: [
-          { phone: last9 },
-          { phone: `0${last9}` },
-          { phone: `94${last9}` },
-          { phone: String(phone).trim() },
-        ],
-      });
-    }
-
-    // 2. Find the registered account. Numbers are stored in several shapes
-    //    across the data set, so match on all of them.
-    const customer = await Customer.findOne({
-      $or: [
-        { phone: String(phone).trim() },
-        { phone: digitsOnly },
-        { phone: last9 },
-        { phone: `0${last9}` },
-        { phone: `+94${last9}` },
-        { phone: `94${last9}` },
-      ],
-    });
-
-    if (!customer) {
-      res.status(404);
-      return next(new Error('No account is registered to this number. Please create one first.'));
-    }
-
-    const accessToken = generateAccessToken(customer);
-    const refreshToken = generateRefreshToken(customer);
-
-    const decodedRefresh = jwt.decode(refreshToken);
-    await RefreshToken.create({
-      userId: customer._id,
-      token: refreshToken,
-      expiresAt: new Date(decodedRefresh.exp * 1000),
-    });
-
-    const publicProfile = publicCustomer(customer);
-    await recordAudit({
-      req,
-      actor: customer,
-      action: 'LOGIN',
-      module: 'Authentication',
-      targetId: customer._id,
-      description: 'Successful OTP login',
-    });
-
-    res.status(200).json({
-      success: true,
-      customer: publicProfile,
-      user: publicProfile,
-      accessToken,
-      refreshToken,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 // @desc    Refresh access token
 // @route   POST /api/auth/refresh
 // @access  Public
@@ -658,7 +407,7 @@ export const refresh = async (req, res, next) => {
       success: true,
       accessToken: newAccessToken,
     });
-  } catch (error) {
+  } catch {
     // If token verify fails (expired, signature mismatch etc.)
     res.status(401);
     return next(new Error('Invalid refresh token'));

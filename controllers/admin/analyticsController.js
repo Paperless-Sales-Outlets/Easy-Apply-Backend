@@ -3,15 +3,6 @@ import User from '../../models/User.js';
 
 const SERVICE_LABELS = {
   'new-connection': 'New Connection',
-  'reconnection': 'Reconnection',
-  'relocation': 'Relocation',
-  'termination': 'Termination',
-  'transfer': 'Transfer',
-  'package-migration': 'Package Migration',
-  'service-vacation': 'Service Vacation',
-  'refund-request': 'Refund Request',
-  'customer-request-acceptance': 'Customer Request Acceptance',
-  'internet-services': 'Internet Services',
 };
 
 const STATUS_LABELS = {
@@ -23,7 +14,6 @@ const STATUS_LABELS = {
   flagged: 'Flagged',
 };
 
-const CLOSED_STATUSES = ['approved', 'confirmed'];
 const OPEN_STATUSES = ['pending', 'pending payment'];
 
 const MAX_RANGE_DAYS = 366;

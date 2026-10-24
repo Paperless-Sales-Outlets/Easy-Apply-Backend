@@ -1,10 +1,10 @@
-import mongoose from 'mongoose';
 import Application from '../models/admin/applicationModel.js';
 import Customer from '../models/Customer.js';
 import KycReview from '../models/admin/kycReviewModel.js';
 import { isDbConnected } from '../config/db.js';
 import { cleanNic, parseNic, toNewFormat } from '../utils/sriLankaNic.js';
 import { recordAudit } from './auditService.js';
+import { identityChecks } from './kycIdentityChecks.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Automated KYC review
@@ -15,21 +15,15 @@ import { recordAudit } from './auditService.js';
 //              registered for the customer)
 //   flagged  – anything missing, ambiguous or suspicious → a person decides
 //
-// The project keeps NIC reading private and in the browser, so this service
-// never sends an ID image anywhere. It therefore cannot compare the live photo
-// with the NIC photo — that is reported as a "manual" check which never blocks
-// approval but is always shown to the reviewer.
+// Identity photos follow the customer flow (new customer: NIC front + back +
+// live selfie; returning customer with NIC photos on file: a new live selfie
+// only) — see kycIdentityChecks.js. The selfie is compared with the NIC photo
+// by local face matching on this server; no ID image is sent anywhere.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SYSTEM_ACTOR_NAME = 'Automated KYC';
 
 const NAME_FIELDS = ['nameFull', 'fullName', 'contactName', 'customerName', 'legalOwner', 'currentCustomerName', 'applicantName'];
-const REQUIRED_DOCS = [
-  { key: 'nicFront', label: 'NIC front' },
-  { key: 'nicBack', label: 'NIC back' },
-  { key: 'facePhoto', label: 'live photo' },
-];
-const MIN_IMAGE_BYTES = 5 * 1024;
 const TITLES = new Set(['mr', 'mrs', 'ms', 'miss', 'mx', 'dr', 'prof', 'rev', 'ven', 'hon', 'sir', 'madam', 'master', 'mst']);
 
 // Statuses each kind of automated run is allowed to change. 'pending payment'
@@ -100,79 +94,6 @@ export function compareNames(x, y) {
   return { agree, partial: !agree && matched > 0, missing: false };
 }
 
-// ── Documents ────────────────────────────────────────────────────────────────
-
-function docRef(raw) {
-  if (!raw) return null;
-  const s = typeof raw === 'string'
-    ? raw
-    : raw._bsontype === 'ObjectId' || raw instanceof mongoose.Types.ObjectId ? String(raw) : raw.url || raw.fileId;
-  if (typeof s !== 'string') return null;
-  if (s.startsWith('data:image/')) return { kind: 'inline', size: s.length };
-  const m = s.match(/^(?:gridfs:\/\/|\/api\/files\/)?([0-9a-fA-F]{24})$/);
-  if (m) return { kind: 'gridfs', id: m[1] };
-  if (s.startsWith('/uploads/') || /^https?:\/\//.test(s)) return { kind: 'path' };
-  return null; // e.g. the DIGITALLY_VERIFIED_OTP marker
-}
-
-async function inspectDocuments(formDocs, account) {
-  const refs = {};
-  REQUIRED_DOCS.forEach(({ key }) => {
-    refs[key] = docRef(formDocs?.[key]) || docRef(account?.identityDocuments?.[key]);
-  });
-
-  const ids = Object.values(refs).filter((r) => r?.kind === 'gridfs').map((r) => new mongoose.Types.ObjectId(r.id));
-  const files = ids.length
-    ? await mongoose.connection.db.collection('uploads.files').find({ _id: { $in: ids } }).toArray()
-    : [];
-  const byId = new Map(files.map((f) => [String(f._id), f]));
-
-  const missing = [];
-  const unusable = [];
-  const foreignCandidates = []; // { label, owner } — captured under another account id
-  let ownedByAccount = 0;
-
-  REQUIRED_DOCS.forEach(({ key, label }) => {
-    const ref = refs[key];
-    if (!ref) { missing.push(label); return; }
-    if (ref.kind === 'inline') {
-      if (ref.size < MIN_IMAGE_BYTES) unusable.push(label);
-      return;
-    }
-    if (ref.kind === 'gridfs') {
-      const file = byId.get(ref.id);
-      if (!file) { missing.push(label); return; }
-      const type = file.contentType || file.metadata?.contentType || '';
-      if (!/^image\//.test(type) || (file.length || 0) < MIN_IMAGE_BYTES) { unusable.push(label); return; }
-      const owner = file.metadata?.userId ? String(file.metadata.userId) : null;
-      if (account && owner) {
-        if (owner === String(account._id)) ownedByAccount += 1;
-        else foreignCandidates.push({ label, owner });
-      }
-    }
-  });
-
-  // A different owner id is only a concern when that account still exists and
-  // belongs to a different person. A customer who re-registered leaves images
-  // under their old (now deleted) account id, which proves nothing either way.
-  const foreign = [];
-  if (foreignCandidates.length) {
-    const owners = await Customer
-      .find({ _id: { $in: [...new Set(foreignCandidates.map((c) => c.owner))] } })
-      .select('NIC')
-      .lean();
-    const ownerNic = new Map(owners.map((o) => [String(o._id), toNewFormat(o.NIC) || cleanNic(o.NIC)]));
-    const accountNic = toNewFormat(account.NIC) || cleanNic(account.NIC);
-    foreignCandidates.forEach(({ label, owner }) => {
-      const theirs = ownerNic.get(owner);
-      if (theirs && theirs !== accountNic) foreign.push(label);
-      else ownedByAccount += 1; // same person (or an account that no longer exists)
-    });
-  }
-
-  return { missing, unusable, foreign, ownedByAccount };
-}
-
 // ── Checks ───────────────────────────────────────────────────────────────────
 
 const check = (key, label, result, detail) => ({ key, label, result, detail });
@@ -223,30 +144,27 @@ function profileConsistencyChecks(parsed, { profileDob, profileGender, sourceLab
   return out;
 }
 
-function documentChecks(docs, account) {
-  const out = [];
-  const problems = [];
-  if (docs.missing.length) problems.push(`missing: ${docs.missing.join(', ')}`);
-  if (docs.unusable.length) problems.push(`unreadable or too small: ${docs.unusable.join(', ')}`);
+function ocrCompletenessCheck(formData = {}) {
+  const ocrExtraction = formData.ocrExtraction || {};
+  const isPartial = ocrExtraction.isPartial || ocrExtraction.extractionStatus === 'PARTIAL';
+  const missing = ocrExtraction.missingFields || [];
 
-  out.push(problems.length
-    ? check('documents', 'Identity documents', 'unsure', `Identity documents incomplete — ${problems.join('; ')}.`)
-    : check('documents', 'Identity documents', 'pass', 'NIC front, NIC back and live photo are all on file and are valid images.'));
-
-  if (account) {
-    if (docs.foreign.length) {
-      out.push(check('document_owner', 'Documents belong to this customer', 'unsure',
-        `${docs.foreign.join(', ')} were captured on a different customer account.`));
-    } else if (docs.ownedByAccount > 0) {
-      out.push(check('document_owner', 'Documents belong to this customer', 'pass',
-        'The ID images were captured during this customer\'s own registration.'));
-    }
+  if (isPartial || missing.length > 0) {
+    return check(
+      'data_completeness',
+      'Document data completeness',
+      'unsure',
+      `Auto KYC incomplete: Partial data fetched from document (${missing.join(', ') || 'fields missing in OCR'}). Queued for manual admin verification.`
+    );
   }
-  return out;
-}
 
-const faceCheck = () => check('face_match', 'Live photo vs NIC photo', 'manual',
-  'Not machine-verified: ID images are never sent to outside services. Compare the live photo with the NIC photo yourself.');
+  return check(
+    'data_completeness',
+    'Document data completeness',
+    'pass',
+    'Complete identity details were successfully fetched and verified against document.'
+  );
+}
 
 /** pass/fail/unsure → approved / rejected / flagged. 'manual' never blocks. */
 export function decide(checks) {
@@ -258,8 +176,7 @@ export function decide(checks) {
 export function buildRemark(decision, checks) {
   if (decision === 'approved') {
     const labels = checks.filter((c) => c.result === 'pass').map((c) => c.label.toLowerCase());
-    return `Auto-approved: every automated check passed (${labels.join(', ')}). `
-      + 'The live photo was not compared with the NIC photo by the system — worth a quick visual check.';
+    return `Auto-approved: every automated check passed (${labels.join(', ')}).`;
   }
   if (decision === 'rejected') {
     return `Auto-rejected: ${checks.filter((c) => c.result === 'fail').map((c) => c.detail).join(' ')}`;
@@ -268,6 +185,22 @@ export function buildRemark(decision, checks) {
 }
 
 // ── Evaluation ───────────────────────────────────────────────────────────────
+
+// Other requests made with this NIC or phone number.
+async function relatedApplications(rawNic, phone, excludeId) {
+  const last9 = last9Of(phone);
+  const nicForms = [...new Set([rawNic, toNewFormat(rawNic)].filter(Boolean))];
+  const or = [
+    ...(nicForms.length ? [{ nic: { $in: nicForms } }] : []),
+    ...(last9.length === 9 ? [{ phone: new RegExp(`${escapeRegex(last9)}$`) }] : []),
+  ];
+  if (!or.length) return [];
+  return Application.find({ ...(excludeId ? { _id: { $ne: excludeId } } : {}), $or: or })
+    .select('nic phone status referenceNumber createdAt formData documents')
+    .sort({ createdAt: -1 })
+    .limit(40)
+    .lean();
+}
 
 async function findAccounts(rawNic, phone) {
   const cleaned = cleanNic(rawNic);
@@ -341,18 +274,9 @@ export async function evaluateApplication(app) {
     sourceLabel: fd.dob ? 'request lists' : 'registered profile lists',
   }));
 
-  const docs = await inspectDocuments(fd.documents, account);
-  checks.push(...documentChecks(docs, account));
-
   // Same NIC under a different name, or the same phone under a different NIC, elsewhere.
   const last9 = last9Of(app.phone);
-  const others = await Application.find({
-    _id: { $ne: app._id },
-    $or: [
-      ...(rawNic ? [{ nic: rawNic }] : []),
-      ...(last9.length === 9 ? [{ phone: new RegExp(`${escapeRegex(last9)}$`) }] : []),
-    ],
-  }).select('nic phone formData').limit(40).lean();
+  const others = await relatedApplications(rawNic, app.phone, app._id);
 
   const conflicts = [];
   others.forEach((o) => {
@@ -371,9 +295,21 @@ export async function evaluateApplication(app) {
     ? check('duplicate_identity', 'No conflicting use elsewhere', 'unsure', `Possible identity reuse — ${uniqueConflicts.join('; ')}.`)
     : check('duplicate_identity', 'No conflicting use elsewhere', 'pass', 'This NIC and phone number are not used with any conflicting details on other requests.'));
 
-  checks.push(faceCheck());
+  // Completeness check of document extraction
+  checks.push(ocrCompletenessCheck(fd));
+
+  // NIC photos + live selfie, and the face match between them.
+  const identity = await identityChecks({
+    subjectKind: 'application',
+    submittedAt: app.createdAt || new Date(),
+    formDocs: { ...fd.documents, ...app.documents },
+    account,
+    rawNic,
+    related: others,
+  });
+  checks.push(...identity.checks);
   const decision = decide(checks);
-  return { decision, checks, remark: buildRemark(decision, checks) };
+  return { decision, checks, remark: buildRemark(decision, checks), caseInfo: identity.caseInfo };
 }
 
 export async function evaluateAccount(customer) {
@@ -387,12 +323,18 @@ export async function evaluateAccount(customer) {
     sourceLabel: 'registration lists',
   }));
 
-  const docs = await inspectDocuments(null, customer);
-  checks.push(...documentChecks(docs, customer));
-  checks.push(faceCheck());
+  const identity = await identityChecks({
+    subjectKind: 'account',
+    submittedAt: customer.identityDocuments?.capturedAt || customer.createdAt || new Date(),
+    formDocs: null,
+    account: customer,
+    rawNic,
+    related: await relatedApplications(rawNic, customer.phone, null),
+  });
+  checks.push(...identity.checks);
 
   const decision = decide(checks);
-  return { decision, checks, remark: buildRemark(decision, checks) };
+  return { decision, checks, remark: buildRemark(decision, checks), caseInfo: identity.caseInfo };
 }
 
 // ── Applying a decision ──────────────────────────────────────────────────────
@@ -428,6 +370,7 @@ async function recordReview({ subjectType, subjectId, evaluation, statusChange, 
     autoDecision: evaluation.decision,
     autoCheckedAt: now,
     checks: evaluation.checks,
+    caseInfo: evaluation.caseInfo || null,
   };
   const update = { $set: set };
 
@@ -446,7 +389,7 @@ async function recordReview({ subjectType, subjectId, evaluation, statusChange, 
   // else: checks are refreshed but the status is not ours to change, so no
   // decision is attributed to anyone.
 
-  return KycReview.findOneAndUpdate({ subjectType, subjectId }, update, { upsert: true, new: true });
+  return KycReview.findOneAndUpdate({ subjectType, subjectId }, update, { upsert: true, returnDocument: 'after' });
 }
 
 /**
@@ -471,7 +414,7 @@ export async function reviewApplicationAuto(app, { kind = 'auto', requestedBy = 
   const updated = await Application.findOneAndUpdate(
     { _id: app._id, status: app.status },
     { $set: { status: evaluation.decision, notes: remark.slice(0, 2000), actionedBy: null, actionedAt: new Date() } },
-    { new: true }
+    { returnDocument: 'after' }
   );
   if (!updated) return { applied: false, decision: evaluation.decision, review: null };
 
@@ -507,7 +450,7 @@ export async function reviewAccountAuto(customer, { kind = 'auto', requestedBy =
         : { kycStatus: current }),
     },
     { $set: { kycStatus: evaluation.decision, kycNotes: remark.slice(0, 2000), kycActionedAt: new Date() } },
-    { new: true }
+    { returnDocument: 'after' }
   );
   if (!updated) return { applied: false, decision: evaluation.decision, review: null };
 

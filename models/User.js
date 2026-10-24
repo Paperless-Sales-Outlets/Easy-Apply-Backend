@@ -18,7 +18,7 @@ const userSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
       match: [
-        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
         'Please enter a valid email address',
       ],
     },
@@ -46,8 +46,8 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Role is required'],
     },
-    // Unique staff identifier, auto-generated when an Admin creates an
-    // account from User Management.
+    // Unique staff identifier, entered by the Admin when creating an account
+    // from User Management.
     employeeNumber: {
       type: String,
       trim: true,

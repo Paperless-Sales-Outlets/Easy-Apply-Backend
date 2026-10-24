@@ -54,6 +54,12 @@ const kycReviewSchema = new mongoose.Schema(
     autoCheckedAt: { type: Date, default: null },
     checks: { type: [checkSchema], default: [] },
 
+    // What the latest automated run found about the identity photos:
+    //   customerType – 'new' | 'returning' | 'existing-new-nic' | 'unknown'
+    //   images       – { nicFront|nicBack|facePhoto: { capturedAt, source: 'request'|'on-file'|null } }
+    //   face         – { result, against: 'nic'|'selfie', distance, threshold, referenceNumber? }
+    caseInfo: { type: mongoose.Schema.Types.Mixed, default: null },
+
     history: { type: [historySchema], default: [] },
   },
   { timestamps: true }
