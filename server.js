@@ -8,6 +8,7 @@ import fs from 'fs';
 
 import connectDB, { isDbConnected } from './config/db.js';
 import { startKycAutoReviewScheduler } from './services/kycAutoReviewService.js';
+import { startDraftExpiryScheduler } from './services/draftExpiryService.js';
 import mongoose from 'mongoose';
 
 import applicationRoutes from './routes/applicationRoutes.js';
@@ -29,6 +30,8 @@ import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
+import nicRoutes from './routes/nicRoutes.js';
+import draftRoutes from './routes/draftRoutes.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -41,6 +44,10 @@ connectDB();
 
 // Automated KYC review (set KYC_AUTO_REVIEW=off to disable)
 startKycAutoReviewScheduler();
+
+// Unfinished New Connection applications: hide them from the customer after
+// 30 days (kept in the database, marked expired). Checked hourly.
+startDraftExpiryScheduler();
 
 // Drop legacy orderId index once connected
 mongoose.connection.once('open', async () => {
@@ -76,7 +83,7 @@ const rawAllowedOrigins = (process.env.FRONTEND_URL || '')
 
 // Always permit localhost Vite dev server in non-production environments
 if (process.env.NODE_ENV !== 'production') {
-  ['http://localhost:5173', 'http://localhost:3000'].forEach((devOrigin) => {
+  ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'].forEach((devOrigin) => {
     if (!rawAllowedOrigins.includes(devOrigin)) {
       rawAllowedOrigins.push(devOrigin);
     }
@@ -94,7 +101,7 @@ app.use(cors({
     }
   },
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id', 'x-draft-token'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   optionsSuccessStatus: 204,
 }));
@@ -291,6 +298,17 @@ app.use(
 app.use(
   '/api/files',
   fileRoutes
+);
+
+app.use(
+  '/api/nic',
+  nicRoutes
+);
+
+// Saved progress on the New Connection application (signed-in customers only)
+app.use(
+  '/api/drafts',
+  draftRoutes
 );
 
 
