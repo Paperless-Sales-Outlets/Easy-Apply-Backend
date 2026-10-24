@@ -105,3 +105,17 @@ export const getOtpStatus = async (req, res, next) => {
     });
   }
 };
+
+// @desc    Generate and send OTP to email address via live SMTP
+// @route   POST /api/otp/send-email
+// @access  Public
+export const sendEmailOtp = async (req, res, next) => {
+  return sendOtp(req, res, next);
+};
+
+// @desc    Verify email OTP entered by user
+// @route   POST /api/otp/verify-email
+// @access  Public
+export const verifyEmailOtp = async (req, res, next) => {
+  return verifyOtp(req, res, next);
+};

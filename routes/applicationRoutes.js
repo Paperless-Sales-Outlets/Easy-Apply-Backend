@@ -4,8 +4,6 @@ import {
   createApplication,
   checkApplicationStatus,
   getApplicationsByPhone,
-  lookupConnection,
-  lookupPackage,
   checkLoopAvailability,
 } from '../controllers/applicationController.js';
 
@@ -33,20 +31,6 @@ router.get(
 router.get(
   '/by-phone',
   getApplicationsByPhone
-);
-
-
-// Public route for looking up existing connection
-router.get(
-  '/lookup-connection',
-  lookupConnection
-);
-
-
-// Public route for looking up customer current package (BRD 5.6)
-router.get(
-  '/lookup-package',
-  lookupPackage
 );
 
 

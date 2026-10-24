@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import Customer from '../models/Customer.js';
 import User from '../models/User.js';
@@ -9,76 +8,6 @@ import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
 import { recordAudit } from '../services/auditService.js';
 import { requestOtp, validateOtp } from '../services/otpService.js';
-
-// @desc    Check if a phone number is registered (used by login flow to decide
-//          whether to send OTP or redirect to sign-up)
-// @route   POST /api/auth/check-phone
-// @access  Public
-export const checkPhone = async (req, res, next) => {
-  const { phone } = req.body;
-  if (!phone) {
-    return res.status(400).json({ success: false, message: 'Phone number is required' });
-  }
-
-  try {
-    const digitsOnly = String(phone).replace(/\D/g, '');
-    const last9 = digitsOnly.slice(-9);
-
-    // 1. Try finding in the Customer database
-    const customer = await Customer.findOne({
-      $or: [
-        { phone: phone },
-        { phone: digitsOnly },
-        { phone: last9 },
-        { phone: `0${last9}` },
-        { phone: `+94${last9}` },
-        { phone: `94${last9}` },
-      ],
-    }).select('_id');
-    
-    let registered = !!customer;
-
-    // 2. If not found in Customers, check if they are an existing SLT Customer connection/application
-    if (!registered) {
-      if (mongoose.connection.readyState === 1) {
-        const Connection = mongoose.models.Connection || mongoose.model('Connection');
-        const match = await Connection.findOne({
-          $or: [
-            { telephone: phone },
-            { telephone: digitsOnly },
-            { telephone: `0${last9}` },
-            { contactNo: phone },
-            { contactNo: digitsOnly },
-            { contactNo: `0${last9}` },
-          ],
-        }).select('_id');
-
-        if (match) {
-          registered = true;
-        } else if (mongoose.models.Application) {
-          const app = await mongoose.models.Application.findOne({
-            $or: [
-              { phone: phone },
-              { phone: digitsOnly },
-              { phone: `0${last9}` },
-              { 'formData.mobileNumber': digitsOnly },
-              { 'formData.mobileNumber': `0${last9}` },
-            ],
-          }).select('_id');
-          if (app) registered = true;
-        }
-      }
-    }
-
-    return res.status(200).json({
-      success: true,
-      registered,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 
 // The customer fields safe to return to the client. Kept in one place so
 // register, login and /me all expose the same profile.
@@ -189,7 +118,7 @@ const generateRefreshToken = (user) => {
 // @desc    Get all customers / users (admin only)
 // @route   GET /api/auth/users, GET /api/auth/customers
 // @access  Private (Admin)
-export const getCustomers = async (req, res, next) => {
+export const getUsers = async (req, res, next) => {
   try {
     const customers = await Customer.find()
       .select('name email phone role NIC createdAt')
@@ -217,7 +146,7 @@ export const getCustomers = async (req, res, next) => {
   }
 };
 
-export const getUsers = getCustomers;
+export const getCustomers = getUsers;
 
 // @desc    Send OTP to mobile number
 // @route   POST /api/auth/send-otp
@@ -567,7 +496,6 @@ export const otpLogin = async (req, res, next) => {
     next(error);
   }
 };
-
 // @desc    Refresh access token
 // @route   POST /api/auth/refresh
 // @access  Public
@@ -612,7 +540,7 @@ export const refresh = async (req, res, next) => {
       success: true,
       accessToken: newAccessToken,
     });
-  } catch (error) {
+  } catch {
     // If token verify fails (expired, signature mismatch etc.)
     res.status(401);
     return next(new Error('Invalid refresh token'));
