@@ -232,7 +232,10 @@ export const createApplication = async (req, res, next) => {
       paymentDetails: isPaid
         ? {
             orderId: formData.paymentReference,
-            amount: formData.product?.monthlyPrice || 2500,
+            amount:
+              formData.product?.installationFee ??
+              formData.product?.monthlyPrice ??
+              2500,
             currency: 'LKR',
           }
         : undefined,
