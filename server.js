@@ -38,6 +38,9 @@ import draftRoutes from './routes/draftRoutes.js';
 // SLT Banner routes
 import sltBannerRoutes from './routes/sltBannerRoutes.js';
 
+// OCR routes (PaddleOCR ONNX deep-learning engine)
+import ocrRoutes from './routes/ocrRoutes.js';
+
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
 
@@ -286,6 +289,9 @@ app.use('/api/files', fileRoutes);
 
 // Saved progress on New Connection applications
 app.use('/api/drafts', draftRoutes);
+
+// Server-side PaddleOCR Routes
+app.use('/api/ocr', ocrRoutes);
 
 // =====================================
 // Error Handling
