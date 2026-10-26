@@ -1,14 +1,24 @@
 import express from 'express';
-import { sendOtp, verifyOtp, sendEmailOtp, verifyEmailOtp } from '../controllers/otpController.js';
+import {
+  sendOtp,
+  verifyOtp,
+  getOtpStatus,
+  sendEmailOtp,
+  verifyEmailOtp,
+} from '../controllers/otpController.js';
 
 const router = express.Router();
 
-// Phone OTP — bypassed with 000000 (no SMS gateway yet)
+// Public OTP routes for phone & email verification
 router.post('/send', sendOtp);
 router.post('/verify', verifyOtp);
+router.get('/status', getOtpStatus);
+router.post('/status', getOtpStatus);
 
-// Email OTP — real 6-digit code delivered via live SMTP
+// Dedicated email OTP routes (SMTP delivery + 5-minute expiry & lockout security)
 router.post('/send-email', sendEmailOtp);
 router.post('/verify-email', verifyEmailOtp);
+router.get('/status-email', getOtpStatus);
+router.post('/status-email', getOtpStatus);
 
 export default router;
