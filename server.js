@@ -33,7 +33,6 @@ import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
 
 // New Connection Draft routes
-import nicRoutes from './routes/nicRoutes.js';
 import draftRoutes from './routes/draftRoutes.js';
 
 // SLT Banner routes
@@ -282,9 +281,6 @@ app.use('/api/customers', customerRoutes);
 // Protected file-serving — streams KYC documents stored in MongoDB GridFS.
 // Requires Admin or Staff JWT authentication.
 app.use('/api/files', fileRoutes);
-
-// NIC Verification Routes
-app.use('/api/nic', nicRoutes);
 
 // Saved progress on New Connection applications
 app.use('/api/drafts', draftRoutes);
