@@ -143,8 +143,51 @@ export function checkOSSFeasibility({
 } = {}) {
   const addressText = `${address || ''} ${city || ''} ${district || ''}`.trim().toLowerCase();
 
+  // Demo Mode: Only Colombo areas have Fibre loop coverage available.
+  // Other areas outside Colombo are unavailable for loops.
+  const COLOMBO_KEYWORDS = [
+    'colombo',
+    'dehiwala',
+    'mount lavinia',
+    'nugegoda',
+    'maharagama',
+    'kottawa',
+    'battaramulla',
+    'kotte',
+    'malabe',
+    'rajagiriya',
+    'moratuwa',
+    'piliyandala',
+    'homagama',
+    'padukka',
+    'hanwella',
+    'hokandara',
+    'thalawathugoda',
+    'pannipitiya',
+    'havelock',
+    'wellawatte',
+    'bambalapitiya',
+    'kollupitiya',
+    'fort',
+    'borella',
+    'maradana',
+    'pettah',
+    'cinnamon gardens',
+    'kotahena',
+    'grandpass',
+    'modara',
+    'dematagoda',
+    'hulftsdorp',
+    'slave island',
+  ];
+
+  const isColomboArea =
+    (district && district.toLowerCase().includes('colombo')) ||
+    COLOMBO_KEYWORDS.some((kw) => addressText.includes(kw));
+
   // Test simulation keywords
   const isSimulatedNoFibre =
+    !isColomboArea ||
     addressText.includes('no fibre') ||
     addressText.includes('no-fibre') ||
     addressText.includes('ports full') ||
@@ -155,7 +198,6 @@ export function checkOSSFeasibility({
     addressText.includes('no loop') ||
     addressText.includes('no-loop') ||
     addressText.includes('unavailable') ||
-    addressText.includes('unserviced') ||
     addressText.includes('remote zone') ||
     addressText.includes('dead zone');
 
@@ -190,9 +232,15 @@ export function checkOSSFeasibility({
 
   let fibreAvailable = true;
   let fibreStatus = 'FEASIBLE';
-  let fibreReason = `Direct optical drop cable path verified to ${fdpId} (${fdpDistanceMeters}m away, ${fdpAvailablePorts} of ${totalFdpPorts} ports free).`;
+  let fibreReason = `Direct optical drop cable path verified to ${fdpId} (${fdpDistanceMeters}m away, ${fdpAvailablePorts} of ${totalFdpPorts} ports free) in Colombo service area.`;
 
-  if (isSimulatedNoCoverage) {
+  if (!isColomboArea) {
+    fibreAvailable = false;
+    fibreStatus = 'NO_LOOP';
+    fdpDistanceMeters = 1250;
+    fdpAvailablePorts = 0;
+    fibreReason = `In this demo version, Fibre loop coverage is available only for Colombo areas. No active Fibre loop exists for ${city || district || 'this location'}.`;
+  } else if (isSimulatedNoCoverage) {
     fibreAvailable = false;
     fibreStatus = 'UNSERVICED';
     fdpDistanceMeters = 850;
@@ -239,7 +287,9 @@ export function checkOSSFeasibility({
 
   const isFibreProduct =
     prodCat.includes('fibre') ||
+    prodCat.includes('fiber') ||
     prodName.includes('fibre') ||
+    prodName.includes('fiber') ||
     prodCat.includes('ftth') ||
     prodName.includes('ftth');
 
