@@ -4,6 +4,7 @@ import Connection from '../models/Connection.js';
 import Customer from '../models/Customer.js';
 import Appointment from '../models/Appointment.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
+import { checkOSSFeasibility } from '../services/ossService.js';
 import { recordAudit } from '../services/auditService.js';
 
 
@@ -416,116 +417,148 @@ export const checkApplicationStatus = async (req, res, next) => {
 
 
 
-// Reference coordinates for major SLT service centers / districts
-const CITY_COORDINATES = {
-  'colombo': { lat: 6.9271, lng: 79.8612 },
-  'dehiwala': { lat: 6.8511, lng: 79.8659 },
-  'mount lavinia': { lat: 6.8344, lng: 79.8653 },
-  'moratuwa': { lat: 6.7730, lng: 79.8816 },
-  'kandy': { lat: 7.2906, lng: 80.6337 },
-  'galle': { lat: 6.0535, lng: 80.2210 },
-  'matara': { lat: 5.9549, lng: 80.5550 },
-  'jaffna': { lat: 9.6615, lng: 80.0255 },
-  'gampaha': { lat: 7.0840, lng: 79.9939 },
-  'negombo': { lat: 7.2008, lng: 79.8737 },
-  'kurunegala': { lat: 7.4863, lng: 80.3623 },
-  'anuradhapura': { lat: 8.3114, lng: 80.4037 },
-  'badulla': { lat: 6.9934, lng: 81.0550 },
-  'ratnapura': { lat: 6.6828, lng: 80.4035 },
-  'trincomalee': { lat: 8.5874, lng: 81.2152 },
-  'batticaloa': { lat: 7.7310, lng: 81.6747 },
-  'vavuniya': { lat: 8.7514, lng: 80.4971 },
-  'nuwara eliya': { lat: 6.9497, lng: 80.7891 },
+// @desc    Lookup connection by phone number
+// @route   GET /api/applications/lookup-connection
+// @access  Public
+export const lookupConnection = async (req, res, next) => {
+  const { phone } = req.query;
+
+  const digitsOnly = String(phone || '').replace(/\D/g, '');
+  const last9 = digitsOnly.slice(-9);
+
+  try {
+    const connections = await Connection.find({
+      $or: [
+        { telephone: phone },
+        { telephone: digitsOnly },
+        { telephone: `0${last9}` },
+        { accountNo: phone },
+        { contactNo: phone },
+        { contactNo: digitsOnly },
+        { contactNo: `0${last9}` },
+      ]
+    });
+
+    if (connections && connections.length > 0) {
+      return res.status(200).json({
+        success: true,
+        data: connections,
+      });
+    }
+
+    res.status(404);
+
+    return next(
+      new Error(
+        'Connection not found for this telephone number.'
+      )
+    );
+
+
+  } catch (error) {
+
+    next(error);
+
+  }
+
 };
 
-function calculateDistanceKm(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth radius in km
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
 
-// @desc    Check loop availability for installation address/city
+
+// @desc    Lookup customer current package information by phone number (BRD 5.6)
+// @route   GET /api/applications/lookup-package?phone=
+// @access  Public
+export const lookupPackage = async (req, res, next) => {
+  const { phone } = req.query;
+
+  if (!phone) {
+    res.status(400);
+    return next(new Error('Telephone number (phone) parameter is required.'));
+  }
+
+  const cleanPhone = phone.replace(/\D/g, '');
+  const last9 = cleanPhone.slice(-9);
+
+  try {
+    let connection = null;
+
+    if (mongoose.connection.readyState === 1) {
+      connection = await Connection.findOne({
+        $or: [
+          { telephone: phone },
+          { telephone: cleanPhone },
+          { telephone: `0${last9}` },
+          { accountNo: phone },
+          { contactNo: phone },
+          { contactNo: cleanPhone },
+          { contactNo: `0${last9}` },
+        ],
+      });
+    }
+
+    if (connection) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          telephone: connection.telephone,
+          accountNo: connection.accountNo,
+          customerName: connection.fullName,
+          nic: connection.nic,
+          contactNo: connection.contactNo,
+          packageName: connection.packageName,
+          currentPackage: connection.packageName,
+          speed: connection.speed,
+          monthlyPrice: connection.monthlyPrice,
+          activationDate: connection.createdAt
+            ? connection.createdAt.toISOString().split('T')[0]
+            : null,
+          status: connection.status,
+        },
+      });
+    }
+
+    return res.status(200).json({
+      success: false,
+      data: null,
+      message: 'No customer found for this telephone number.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Check loop availability and OSS service feasibility for installation address/city
+
 // @route   POST /api/applications/check-loop
 // @access  Public
 export const checkLoopAvailability = async (req, res, next) => {
   try {
-    const { address, city, district, latitude, longitude } = req.body;
-    const searchString = `${address || ''} ${city || ''} ${district || ''}`.toLowerCase();
+    const { address, city, district, latitude, longitude, requestedProduct } = req.body;
 
-    // 1. Check for geographic mismatch between chosen city and pinned GPS coordinates
-    if (latitude && longitude && city) {
-      const cityKey = Object.keys(CITY_COORDINATES).find((k) =>
-        city.toLowerCase().includes(k) || (district && district.toLowerCase().includes(k))
-      );
-      if (cityKey) {
-        const ref = CITY_COORDINATES[cityKey];
-        const distKm = calculateDistanceKm(
-          Number(latitude),
-          Number(longitude),
-          ref.lat,
-          ref.lng
-        );
-        // If distance exceeds 45km (e.g. Colombo chosen but Jaffna/Galle pinned)
-        if (distKm > 45) {
-          return res.status(200).json({
-            success: true,
-            available: false,
-            mismatch: true,
-            message: `Location conflict: The map pin is located approximately ${Math.round(distKm)} km away from ${city}. Please verify your installation address and map pin.`,
-            coverage: {
-              area: city,
-              loopStatus: 'MISMATCH_DETECTED',
-              distanceKm: Math.round(distKm),
-              recommendedAction: 'ADJUST_MAP_PIN',
-            },
-          });
-        }
-      }
-    }
+    const ossResult = checkOSSFeasibility({
+      address,
+      city,
+      district,
+      latitude,
+      longitude,
+      requestedProduct,
+    });
 
-    // 2. Check if explicitly unserviced or marked unavailable for testing/demo
-    const isExplicitlyUnavailable =
-      searchString.includes('no loop') ||
-      searchString.includes('no-loop') ||
-      searchString.includes('unavailable') ||
-      searchString.includes('unserviced') ||
-      searchString.includes('remote zone');
 
-    // If address or city is provided and not explicitly marked unavailable
-    const isAvailable = !isExplicitlyUnavailable && (searchString.trim().length > 0 || (latitude && longitude));
-
-    if (isAvailable) {
-      return res.status(200).json({
-        success: true,
-        available: true,
-        message: 'Service loop is available in your area.',
-        coverage: {
-          area: city || district || 'Standard Service Area',
-          loopStatus: 'AVAILABLE',
-          estimatedProvisionDays: 3,
-          coordinates: latitude && longitude ? { lat: Number(latitude), lng: Number(longitude) } : null,
-        },
-      });
-    } else {
-      return res.status(200).json({
-        success: true,
-        available: false,
-        message: 'No service loop available in this area. Please contact your nearest SLTMobitel branch.',
-        coverage: {
-          area: city || district || 'Unserviced Area',
-          loopStatus: 'UNAVAILABLE',
-          recommendedAction: 'CONTACT_NEAREST_BRANCH',
-        },
-      });
-    }
+    return res.status(200).json({
+      success: true,
+      available: ossResult.available,
+      overallStatus: ossResult.overallStatus,
+      message: ossResult.available
+        ? 'OSS network feasibility verified successfully.'
+        : 'Service currently unavailable at this exact location.',
+      coverage: {
+        area: city || district || ossResult.location?.servingExchange?.name || 'Service Area',
+        loopStatus: ossResult.fibre?.available ? 'AVAILABLE' : (ossResult.lte?.available ? 'LTE_ONLY' : 'UNAVAILABLE'),
+        estimatedProvisionDays: ossResult.fibre?.available ? 3 : 1,
+      },
+      ...ossResult,
+    });
   } catch (error) {
     next(error);
   }

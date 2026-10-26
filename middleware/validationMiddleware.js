@@ -50,7 +50,18 @@ export const validateApplicationSubmission = [
     .trim()
     .notEmpty()
     .withMessage('Service type is required')
-    .isIn(['new-connection'])
+    .isIn([
+      'new-connection',
+      'reconnection',
+      'relocation',
+      'termination',
+      'transfer',
+      'package-migration',
+      'service-vacation',
+      'refund-request',
+      'customer-request-acceptance',
+      'internet-services',
+    ])
     .withMessage('Invalid service type'),
 
 
@@ -127,8 +138,88 @@ export const validateApplicationSubmission = [
 
 
 
-  validateRequest,
+  // Service-specific validations
+  body().custom((value, { req }) => {
+    if (req.body.serviceType === 'reconnection') {
+      const data = req.body.formData || {};
 
+      const hasFacility =
+        data.facility_broadband ||
+        data.facility_peoTv ||
+        data.facility_sltPlus ||
+        data.facility_cli ||
+        data.facility_idd ||
+        data.facility_email ||
+        data.facility_dialUp ||
+        data.facility_other;
+
+      if (!hasFacility) {
+        throw new Error('At least one facility must be selected for reconnection');
+      }
+
+      if (data.facility_email && !data.emailUsername) {
+        throw new Error('Email Username is required when Email facility is selected');
+      }
+
+      if (data.facility_dialUp && !data.dialUpUsername) {
+        throw new Error('Dial-up Username is required when Dial-up facility is selected');
+      }
+
+      if (data.facility_other && !data.otherServiceText) {
+        throw new Error('Please specify the other service you want to reconnect');
+      }
+    }
+
+    if (req.body.serviceType === 'service-vacation') {
+      const data = req.body.formData || {};
+
+      const hasFacility = data.facility_voice || data.facility_broadband || data.facility_peotv;
+      if (!hasFacility) {
+        throw new Error('At least one facility (Voice, Broadband, or PeoTV) must be selected for service vacation');
+      }
+
+      if (!data.deactivationDate || !data.resumeDate) {
+        throw new Error('Both Deactivation Date and Resume Date are required');
+      }
+
+      const deactivation = new Date(data.deactivationDate);
+      const resume = new Date(data.resumeDate);
+
+      if (resume <= deactivation) {
+        throw new Error('Resume Date must be after Deactivation Date');
+      }
+
+      const diffTime = Math.abs(resume - deactivation);
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      if (diffDays > 122) {
+        throw new Error('Vacation duration cannot exceed 4 months (122 days)');
+      }
+    }
+
+    return true;
+  }),
+
+  validateRequest,
+];
+
+// Validation rules for updating status
+export const validateStatusUpdate = [
+  body('status')
+    .trim()
+    .toLowerCase()
+    .notEmpty()
+    .withMessage('Status is required')
+    .isIn([
+      'pending',
+      'approved',
+      'rejected',
+      'flagged',
+    ])
+    .withMessage(
+      'Invalid status value. Must be one of: pending, approved, rejected, flagged'
+    ),
+  validateRequest,
 ];
 
 

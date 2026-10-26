@@ -272,6 +272,10 @@ async function _send({ to, subject, html }) {
     return;
   }
 
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
   try {
     const transporter = await getTransporter();
     const from = process.env.SMTP_FROM || '"SLTMobitel EasyApply" <noreply@sltmobitel.lk>';

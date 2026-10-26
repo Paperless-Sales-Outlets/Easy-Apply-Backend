@@ -1,225 +1,172 @@
-import mongoose from 'mongoose';
-import Otp from '../models/Otp.js';
-import { sendOtpEmail } from '../services/emailService.js';
 
-// In-memory fallback store when MongoDB is offline
-const inMemoryOtpStore = new Map();
-// Separate in-memory store for email OTPs
-const inMemoryEmailOtpStore = new Map();
+import { issueDraftToken } from '../utils/draftToken.js';
+import {
+  requestOtp,
+  validateOtp,
+  getOtpStatus as checkOtpStatus,
+} from '../services/otpService.js';
 
-// Helper to normalize phone number string
+// Normalize Sri Lankan phone numbers for draft token generation
 const normalizePhone = (phone) => {
-  const digits = String(phone || '').replace(/\D/g, '');
-  return digits.slice(-9); // 9-digit national number e.g. 774053185
+  const digits = String(phone).replace(/\D/g, '');
+
+  if (digits.startsWith('94') && digits.length === 11) {
+    return digits.slice(2);
+  }
+
+  if (digits.startsWith('0') && digits.length === 10) {
+    return digits.slice(1);
+  }
+
+  return digits;
 };
 
-// @desc    Generate and send OTP for phone verification
-// @route   POST /api/otp/send
+// @desc    Generate and send OTP for phone or email verification
+// @route   POST /api/otp/send, POST /api/otp/send-email
 // @access  Public
 export const sendOtp = async (req, res, next) => {
-  const { phone } = req.body;
+  const target =
+    req.body?.email ||
+    req.body?.phone ||
+    req.body?.target;
 
-  if (!phone) {
+  if (!target) {
     return res.status(400).json({
       success: false,
-      message: 'Phone number is required',
+      code: 'INPUT_REQUIRED',
+      message: 'Phone number or email is required',
     });
   }
 
   try {
-    const cleanPhone = normalizePhone(phone);
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-    if (mongoose.connection.readyState === 1) {
-      // Delete any existing OTP for this phone number variations
-      await Otp.deleteMany({
-        $or: [
-          { phone: cleanPhone },
-          { phone: `0${cleanPhone}` },
-          { phone: `94${cleanPhone}` },
-          { phone: String(phone).trim() },
-        ],
+    const result = await requestOtp(target);
+    return res.status(200).json(result);
+  } catch (error) {
+    if (error.status === 429) {
+      return res.status(429).json({
+        success: false,
+        code: error.code || 'TOO_MANY_REQUESTS',
+        message: error.message,
+        otpRemaining: error.otpRemaining,
+        expiresAt: error.expiresAt,
+        cooldownRemaining: error.cooldownRemaining,
+        resendAvailableAt: error.resendAvailableAt,
+        lockoutRemaining: error.lockoutRemaining,
+        lockedUntil: error.lockedUntil,
       });
-      // Save to database (auto-expires in 5 minutes)
-      await Otp.create({ phone: cleanPhone, otp: otpCode });
-    } else {
-      inMemoryOtpStore.set(cleanPhone, otpCode);
     }
 
-    console.log(`\n📱 OTP for +94 ${cleanPhone}: ${otpCode} (Demo Code: 000000)\n`);
+    if (error.status === 400) {
+      return res.status(400).json({
+        success: false,
+        code: error.code || 'BAD_REQUEST',
+        message: error.message,
+      });
+    }
 
-    res.status(200).json({
-      success: true,
-      message: `OTP sent successfully. Demo code: ${otpCode} or 000000.`,
-      otp: otpCode,
-    });
-  } catch (error) {
-    next(error);
+    return next(error);
   }
 };
 
-// @desc    Verify OTP entered by user
-// @route   POST /api/otp/verify
+// @desc    Verify OTP entered by user (phone or email)
+// @route   POST /api/otp/verify, POST /api/otp/verify-email
 // @access  Public
 export const verifyOtp = async (req, res, next) => {
-  const { phone, otp } = req.body;
+  const target =
+    req.body?.email ||
+    req.body?.phone ||
+    req.body?.target;
 
-  if (!phone || !otp) {
+  const otp = req.body?.otp;
+
+  if (!target || !otp) {
     return res.status(400).json({
       success: false,
-      message: 'Phone number and OTP are required',
+      code: 'INPUT_REQUIRED',
+      message: 'Phone number or email and OTP code are required',
     });
   }
 
   try {
-    const cleanPhone = normalizePhone(phone);
-    const cleanOtp = String(otp).trim();
+    const result = await validateOtp(target, otp);
 
-    // Accept demo/test bypass codes '000000' or '123456'
-    if (cleanOtp === '000000' || cleanOtp === '123456') {
+    // Issue a draft token only after successful phone OTP verification.
+    // Email verification does not grant phone-based draft access.
+    const isEmail = String(target).includes('@');
+
+    if (result.success === true && !isEmail) {
+      const cleanPhone = normalizePhone(target);
+
       return res.status(200).json({
-        success: true,
-        message: 'Phone number verified successfully',
+        ...result,
+        draftToken: issueDraftToken(cleanPhone),
       });
     }
 
-    if (mongoose.connection.readyState === 1) {
-      const record = await Otp.findOne({
-        $or: [
-          { phone: cleanPhone, otp: cleanOtp },
-          { phone: `0${cleanPhone}`, otp: cleanOtp },
-          { phone: `94${cleanPhone}`, otp: cleanOtp },
-          { phone: String(phone).trim(), otp: cleanOtp },
-        ],
-      });
-
-      if (!record) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid or expired OTP code. Use demo code 000000.',
-        });
-      }
-
-      // Delete OTP after successful verification
-      await Otp.deleteMany({
-        $or: [
-          { phone: cleanPhone },
-          { phone: `0${cleanPhone}` },
-          { phone: `94${cleanPhone}` },
-          { phone: String(phone).trim() },
-        ],
-      });
-    } else {
-      const storedOtp = inMemoryOtpStore.get(cleanPhone);
-      const isMatch = storedOtp === cleanOtp;
-
-      if (!isMatch) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid or expired OTP code. Use demo code 000000.',
-        });
-      }
-
-      inMemoryOtpStore.delete(cleanPhone);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Phone number verified successfully',
-    });
+    return res.status(200).json(result);
   } catch (error) {
-    next(error);
+    if (!error.status) {
+      return next(error);
+    }
+
+    return res.status(error.status).json({
+      success: false,
+      code: error.code || 'OTP_INVALID',
+      message: error.message || 'Invalid or expired verification code.',
+      attemptsRemaining: error.attemptsRemaining,
+      lockoutRemaining: error.lockoutRemaining,
+      lockedUntil: error.lockedUntil,
+    });
   }
 };
 
-// @desc    Generate and send OTP to email address via live SMTP
+// @desc    Get OTP and lockout status for a phone number or email address
+// @route   GET /api/otp/status, POST /api/otp/status
+// @route   GET /api/otp/status-email, POST /api/otp/status-email
+// @access  Public
+export const getOtpStatus = async (req, res, next) => {
+  const target =
+    req.query?.email ||
+    req.query?.phone ||
+    req.query?.target ||
+    req.body?.email ||
+    req.body?.phone ||
+    req.body?.target;
+
+  if (!target) {
+    return res.status(400).json({
+      success: false,
+      code: 'INPUT_REQUIRED',
+      message: 'Phone number or email is required',
+    });
+  }
+
+  try {
+    const status = await checkOtpStatus(target);
+    return res.status(200).json(status);
+  } catch (error) {
+    if (!error.status) {
+      return next(error);
+    }
+
+    return res.status(error.status).json({
+      success: false,
+      code: error.code || 'BAD_REQUEST',
+      message: error.message,
+    });
+  }
+};
+
+// @desc    Generate and send OTP to email address
 // @route   POST /api/otp/send-email
 // @access  Public
 export const sendEmailOtp = async (req, res, next) => {
-  const { email } = req.body;
-
-  if (!email) {
-    return res.status(400).json({ success: false, message: 'Email address is required' });
-  }
-
-  // Basic email format validation
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    return res.status(400).json({ success: false, message: 'Please enter a valid email address' });
-  }
-
-  try {
-    const cleanEmail = email.trim().toLowerCase();
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Persist OTP
-    if (mongoose.connection.readyState === 1) {
-      await Otp.deleteMany({ email: cleanEmail });
-      await Otp.create({ email: cleanEmail, otp: otpCode });
-    } else {
-      inMemoryEmailOtpStore.set(cleanEmail, otpCode);
-    }
-
-    // Send email asynchronously in background so slow SMTP/network timeouts do not freeze the UI response
-    sendOtpEmail({ to: cleanEmail, otpCode }).catch((smtpErr) => {
-      console.error(`\n❌ [sendEmailOtp] SMTP delivery failed for ${cleanEmail}: ${smtpErr.message}`);
-    });
-
-    console.log(`\n📧 Email OTP for ${cleanEmail}: ${otpCode}  (bypass: 000000)\n`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Verification code sent to your email address.',
-    });
-  } catch (error) {
-    next(error);
-  }
+  return sendOtp(req, res, next);
 };
 
 // @desc    Verify email OTP entered by user
 // @route   POST /api/otp/verify-email
 // @access  Public
 export const verifyEmailOtp = async (req, res, next) => {
-  const { email, otp } = req.body;
-
-  if (!email || !otp) {
-    return res.status(400).json({ success: false, message: 'Email and OTP code are required' });
-  }
-
-  try {
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanOtp = String(otp).trim();
-
-    // Bypass codes — always succeed (for devs and phone bypass parity)
-    if (cleanOtp === '000000' || cleanOtp === '123456') {
-      return res.status(200).json({ success: true, message: 'Email address verified successfully' });
-    }
-
-    if (mongoose.connection.readyState === 1) {
-      const record = await Otp.findOne({ email: cleanEmail, otp: cleanOtp });
-
-      if (!record) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid or expired code. Check your email or use 000000.',
-        });
-      }
-
-      await Otp.deleteMany({ email: cleanEmail });
-    } else {
-      const storedOtp = inMemoryEmailOtpStore.get(cleanEmail);
-      if (storedOtp !== cleanOtp) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid or expired code. Check your email or use 000000.',
-        });
-      }
-      inMemoryEmailOtpStore.delete(cleanEmail);
-    }
-
-    res.status(200).json({ success: true, message: 'Email address verified successfully' });
-  } catch (error) {
-    next(error);
-  }
+  return verifyOtp(req, res, next);
 };
-
