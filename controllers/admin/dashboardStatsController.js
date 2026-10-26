@@ -66,18 +66,33 @@ function normalizeApplication(app) {
 // @access  Private (Admin / Staff only)
 export const getDashboardStats = async (req, res, next) => {
   try {
+    const { startDate, endDate } = req.query;
+
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // Optional submission-date range. When supplied (by the Forms page summary
+    // cards) the per-service-type totals and completions are scoped to the
+    // window; without it the figures stay all-time.
+    const rangeMatch = {};
+    if (startDate) rangeMatch.$gte = new Date(startDate);
+    if (endDate) rangeMatch.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
+    const hasRange = Object.keys(rangeMatch).length > 0;
+    const rangeStage = hasRange ? [{ $match: { createdAt: rangeMatch } }] : [];
 
     const [statusRows, totalsByType, completedByType, recent] = await Promise.all([
       // Count per status
       Application.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
 
       // Total submissions per service type
-      Application.aggregate([{ $group: { _id: '$serviceType', count: { $sum: 1 } } }]),
+      Application.aggregate([
+        ...rangeStage,
+        { $group: { _id: '$serviceType', count: { $sum: 1 } } },
+      ]),
 
       // Completed submissions per service type
       Application.aggregate([
+        ...rangeStage,
         { $match: { status: { $in: COMPLETED_STATUSES } } },
         { $group: { _id: '$serviceType', count: { $sum: 1 } } },
       ]),
@@ -120,6 +135,7 @@ export const getDashboardStats = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      range: hasRange ? { startDate: startDate || null, endDate: endDate || null } : null,
       pendingKyc,
       approvedToday,
       rejectedToday,

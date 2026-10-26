@@ -10,6 +10,7 @@ const SYSTEM_PRIVILEGES = [
   { key: 'appointments', name: 'Appointments', description: 'Schedule installation appointments and assign technicians to them.' },
   { key: 'technician', name: 'My Jobs', description: 'See the field jobs assigned to this person and update their progress.' },
   { key: 'forms', name: 'Forms', description: 'Browse submitted service forms and add internal comments.' },
+  { key: 'leads', name: 'Lead Management', description: 'Track new-connection leads, record site survey results and decide what happens when a site is not serviceable.' },
   { key: 'analytics', name: 'Reports & Analytics', description: 'View performance reports and export analytics for applications and staff.' },
 ];
 
