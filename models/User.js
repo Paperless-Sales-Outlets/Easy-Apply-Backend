@@ -82,12 +82,11 @@ const userSchema = new mongoose.Schema(
 );
 
 // Encrypt password using bcrypt pre-save
-userSchema.pre('save', async function (next) {
-  if (!this.password || !this.isModified('password')) return next();
+userSchema.pre('save', async function () {
+  if (!this.password || !this.isModified('password')) return;
 
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
-  return next();
 });
 
 // Match user entered password to hashed password in database

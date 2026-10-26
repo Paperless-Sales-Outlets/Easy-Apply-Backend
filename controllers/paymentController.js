@@ -173,11 +173,13 @@ export const handlePayHereNotify = async (req, res, next) => {
         if (application) {
           application.paymentStatus = 'paid';
           application.status = 'confirmed';
+          application.completedSale = true;
+          if (!application.completedSaleAt) application.completedSaleAt = emailPaidAt;
           if (!application.paymentDetails) application.paymentDetails = {};
           application.paymentDetails.payherePaymentId = paymentId;
           application.paymentDetails.paidAt = emailPaidAt;
           await application.save();
-          console.log(`   Updated Application ${application.referenceNumber}: paymentStatus=paid, status=confirmed`);
+          console.log(`   Updated Application ${application.referenceNumber}: paymentStatus=paid, status=confirmed, completedSale=true`);
 
           // Application data takes priority over appointment for email fields
           emailReferenceNumber = application.referenceNumber;
