@@ -209,8 +209,8 @@ export const validateUpdateApplicationStatus = [
     .toLowerCase()
     .notEmpty()
     .withMessage('Status is required')
-    .isIn(['pending', 'pending payment', 'approved', 'confirmed', 'rejected', 'flagged'])
-    .withMessage('Invalid status value. Must be one of: pending, pending payment, approved, confirmed, rejected, flagged'),
+    .isIn(['pending', 'pending payment', 'approved', 'confirmed', 'completed', 'rejected', 'flagged'])
+    .withMessage('Invalid status value. Must be one of: pending, pending payment, approved, confirmed, completed, rejected, flagged'),
   body('notes')
     .optional()
     .trim()

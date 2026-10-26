@@ -20,6 +20,9 @@ import adminUsersRoutes from './routes/admin/usersRoutes.js';
 import adminRolesRoutes from './routes/admin/rolesRoutes.js';
 import adminPrivilegesRoutes from './routes/admin/privilegesRoutes.js';
 import adminAuditRoutes from './routes/admin/auditRoutes.js';
+import adminSalesOfficerRoutes from './routes/admin/salesOfficerRoutes.js';
+import salesTrackingRoutes from './routes/salesTrackingRoutes.js';
+import salesOfficerMeRoutes from './routes/salesOfficerMeRoutes.js';
 import fieldAppointmentRoutes from './routes/field/fieldAppointmentRoutes.js';
 import appointmentRoutes from './routes/appointmentRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
@@ -76,7 +79,7 @@ const rawAllowedOrigins = (process.env.FRONTEND_URL || '')
 
 // Always permit localhost Vite dev server in non-production environments
 if (process.env.NODE_ENV !== 'production') {
-  ['http://localhost:5173', 'http://localhost:3000'].forEach((devOrigin) => {
+  ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'].forEach((devOrigin) => {
     if (!rawAllowedOrigins.includes(devOrigin)) {
       rawAllowedOrigins.push(devOrigin);
     }
@@ -250,6 +253,18 @@ app.use(
   adminAuditRoutes
 );
 
+// Admin Sales Officers Management (supports /api/v1 and /api)
+app.use('/api/v1/admin/sales-officers', adminSalesOfficerRoutes);
+app.use('/api/admin/sales-officers', adminSalesOfficerRoutes);
+
+// Public Sales Tracking (supports /api/v1 and /api)
+app.use('/api/v1/sales-tracking', salesTrackingRoutes);
+app.use('/api/sales-tracking', salesTrackingRoutes);
+
+// Sales Officer Self-Service (supports /api/v1 and /api)
+app.use('/api/v1/sales-officer', salesOfficerMeRoutes);
+app.use('/api/sales-officer', salesOfficerMeRoutes);
+
 app.use(
   '/api/field/appointments',
   fieldAppointmentRoutes
@@ -354,3 +369,6 @@ process.on(
 
   }
 );
+
+export { app, server };
+export default app;
