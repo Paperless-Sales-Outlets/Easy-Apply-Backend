@@ -29,6 +29,7 @@ import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
+import sltBannerRoutes from './routes/sltBannerRoutes.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -185,6 +186,8 @@ app.get('/api/health', (req, res) => {
     environment: process.env.NODE_ENV,
   });
 });
+
+app.use('/api/slt-banners', sltBannerRoutes);
 
 app.use(
   '/api/otp',
