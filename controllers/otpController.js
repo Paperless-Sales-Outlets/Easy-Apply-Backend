@@ -160,13 +160,10 @@ export const sendEmailOtp = async (req, res, next) => {
       inMemoryEmailOtpStore.set(cleanEmail, otpCode);
     }
 
-    // Attempt to send via SMTP — never block the response on failure
-    try {
-      await sendOtpEmail({ to: cleanEmail, otpCode });
-    } catch (smtpErr) {
+    // Send email asynchronously in background so slow SMTP/network timeouts do not freeze the UI response
+    sendOtpEmail({ to: cleanEmail, otpCode }).catch((smtpErr) => {
       console.error(`\n❌ [sendEmailOtp] SMTP delivery failed for ${cleanEmail}: ${smtpErr.message}`);
-      console.log(`   ↳ OTP for ${cleanEmail}: ${otpCode}  (bypass: 000000)\n`);
-    }
+    });
 
     console.log(`\n📧 Email OTP for ${cleanEmail}: ${otpCode}  (bypass: 000000)\n`);
 
