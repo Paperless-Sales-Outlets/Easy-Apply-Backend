@@ -33,6 +33,7 @@ export const getAllProducts = async (req, res, next) => {
       data: products,
       source: source || 'LOCAL_DATABASE',
       hubUrl: hubUrl || process.env.PRODUCT_HUB_URL || process.env.REACT_APP_PRODUCT_HUB_URL || 'https://dpdlab1.slt.lk:703/api/templates',
+      packageSelectionUrl: process.env.PACKAGE_SELECTION_PORTAL_URL || 'https://dpdlab1.slt.lk:703',
       pagination: {
         page: pagination.page || 1,
         limit: pagination.limit || 10,
