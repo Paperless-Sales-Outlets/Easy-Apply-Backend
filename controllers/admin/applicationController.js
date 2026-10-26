@@ -1,4 +1,5 @@
 import Application from '../../models/admin/applicationModel.js';
+import { recordAudit } from '../../services/auditService.js';
 
 // @desc    Get all applications — paginated, filterable list
 // @route   GET /api/admin/applications
@@ -124,6 +125,7 @@ export const updateApplicationStatus = async (req, res, next) => {
       updates.actionedAt = new Date();
     }
 
+    const previous = await Application.findById(id).select('status referenceNumber serviceType');
     const application = await Application.findByIdAndUpdate(
       id,
       { $set: updates },
@@ -137,6 +139,14 @@ export const updateApplicationStatus = async (req, res, next) => {
       return next(new Error('Application not found'));
     }
 
+    await recordAudit({
+      req,
+      action: 'STATUS_UPDATE',
+      module: 'Application',
+      targetId: application.referenceNumber || id,
+      description: `Changed status from ${previous?.status || 'unknown'} to ${application.status}`,
+      metadata: { serviceType: application.serviceType, previousStatus: previous?.status, newStatus: application.status },
+    });
     res.status(200).json({ success: true, application });
   } catch (error) {
     next(error);
@@ -176,6 +186,14 @@ export const updateOfficeFields = async (req, res, next) => {
       return next(new Error('Application not found'));
     }
 
+    await recordAudit({
+      req,
+      action: 'UPDATE',
+      module: 'Application',
+      targetId: application.referenceNumber || id,
+      description: 'Updated application office fields',
+      metadata: { fields: Object.keys(officeFields) },
+    });
     res.status(200).json({ success: true, application });
   } catch (error) {
     next(error);

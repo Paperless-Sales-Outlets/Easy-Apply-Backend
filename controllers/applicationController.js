@@ -5,6 +5,7 @@ import Customer from '../models/Customer.js';
 import Appointment from '../models/Appointment.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
 import { checkOSSFeasibility } from '../services/ossService.js';
+import { recordAudit } from '../services/auditService.js';
 
 
 // @desc    Submit a new service application
@@ -19,7 +20,7 @@ export const createApplication = async (req, res, next) => {
     if (typeof formData === 'string') {
       try {
         formData = JSON.parse(formData);
-      } catch (err) {
+      } catch {
         res.status(400);
         return next(new Error('Invalid JSON structure in formData'));
       }
@@ -56,7 +57,7 @@ export const createApplication = async (req, res, next) => {
           ],
         }).select('NIC');
         if (existingCustomer?.NIC) nic = existingCustomer.NIC;
-      } catch (_) {}
+      } catch {}
     }
 
     if (nic && String(nic).startsWith('NIC-')) {
@@ -78,44 +79,11 @@ export const createApplication = async (req, res, next) => {
       }
     });
 
-    // Existing customer validation (temporarily bypassed for seamless flow)
-    // if (formData?.isExistingCustomer === 'yes' && !formData?.existingNumber?.trim()) { ... }
-
-    // =====================================
-    // New Connection Digital Workflow
-    // =====================================
-    if (serviceType === 'new-connection') {
-      if (formData.declarationAccepted === undefined) {
-        formData.declarationAccepted = true;
-      }
-      if (!formData.signature) {
-        formData.signature = 'DIGITALLY_VERIFIED_OTP';
-      }
+    if (formData.declarationAccepted === undefined) {
+      formData.declarationAccepted = true;
     }
-
-    // =====================================
-    // Package Migration BRD 5.6 Validations
-    // =====================================
-    if (serviceType === 'package-migration') {
-      const effectiveDate = formData.effectiveDate;
-      if (!effectiveDate) {
-        res.status(400);
-        return next(new Error('Effective Date is required for package migration (BRD 5.6).'));
-      }
-
-      const todayStr = new Date().toISOString().split('T')[0];
-      if (effectiveDate < todayStr) {
-        res.status(400);
-        return next(new Error('Effective Date must be today or a future date. Past dates are not allowed (BRD 5.6).'));
-      }
-
-      const currentPkg = (formData.currentPackage || formData.existingPackage || '').trim().toLowerCase();
-      const reqPkg = (formData.requiredPackage || formData.requestedPackage || '').trim().toLowerCase();
-
-      if (currentPkg && reqPkg && currentPkg === reqPkg) {
-        res.status(400);
-        return next(new Error('Requested package cannot be the same as your current package (BRD 5.6).'));
-      }
+    if (!formData.signature) {
+      formData.signature = 'DIGITALLY_VERIFIED_OTP';
     }
 
     // Merge document references
@@ -233,11 +201,9 @@ export const createApplication = async (req, res, next) => {
         10000000 + Math.random() * 90000000
       ).toString();
 
-      const prefix = serviceType === 'customer-request-acceptance' ? 'SR' : 'REQ';
-
       application = {
         _id: `mock_app_${refDigits}`,
-        referenceNumber: `${prefix}-${refDigits}`,
+        referenceNumber: `REQ-${refDigits}`,
         serviceType,
         status: 'pending',
         nic,
@@ -252,6 +218,16 @@ export const createApplication = async (req, res, next) => {
 
     }
 
+    if (mongoose.connection.readyState === 1) {
+      await recordAudit({
+        req,
+        action: 'CREATE',
+        module: 'Forms/Requests',
+        targetId: application.referenceNumber,
+        description: `Submitted ${serviceType} request`,
+        metadata: { serviceType, status: application.status },
+      });
+    }
 
     // ─────────────────────────────────────────────────────────
     // Send application submitted email (non-blocking)
@@ -554,6 +530,7 @@ export const lookupPackage = async (req, res, next) => {
 };
 
 // @desc    Check loop availability and OSS service feasibility for installation address/city
+
 // @route   POST /api/applications/check-loop
 // @access  Public
 export const checkLoopAvailability = async (req, res, next) => {
@@ -568,6 +545,7 @@ export const checkLoopAvailability = async (req, res, next) => {
       longitude,
       requestedProduct,
     });
+
 
     return res.status(200).json({
       success: true,
@@ -587,4 +565,3 @@ export const checkLoopAvailability = async (req, res, next) => {
     next(error);
   }
 };
-

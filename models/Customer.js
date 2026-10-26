@@ -18,7 +18,7 @@ const customerSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
       match: [
-        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
         'Please enter a valid email address',
       ],
     },
@@ -95,6 +95,4 @@ customerSchema.methods.matchPassword = async function (enteredPassword) {
 
 const Customer = mongoose.model('Customer', customerSchema, 'customers');
 
-// Re-export User as alias for backward compatibility
-export const User = Customer;
 export default Customer;

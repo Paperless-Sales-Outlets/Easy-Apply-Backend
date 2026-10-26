@@ -29,6 +29,7 @@ const appointmentSchema = new mongoose.Schema(
     },
     serviceType: {
       type: String,
+      // Only new-connection is created now; the rest stay so older records still validate.
       enum: [
         'new-connection',
         'reconnection',
@@ -66,7 +67,7 @@ const appointmentSchema = new mongoose.Schema(
     },
     technicianId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Customer',
+      ref: 'User',
       default: null,
     },
 

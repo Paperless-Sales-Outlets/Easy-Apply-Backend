@@ -1,4 +1,5 @@
 import Appointment from '../../models/Appointment.js';
+import { recordAudit } from '../../services/auditService.js';
 
 // @desc    Get appointments assigned to the logged-in technician
 // @route   GET /api/field/appointments
@@ -56,8 +57,16 @@ export const updateJobStatus = async (req, res, next) => {
       return next(new Error('Appointment not found or not assigned to you'));
     }
 
+    const previousStatus = appointment.status;
     appointment.status = status;
     await appointment.save();
+    await recordAudit({
+      req,
+      action: 'STATUS_UPDATE',
+      module: 'Appointments',
+      targetId: appointment.referenceNumber || appointment._id,
+      description: `Changed appointment status from ${previousStatus || 'unknown'} to ${status}`,
+    });
 
     res.status(200).json({
       success: true,

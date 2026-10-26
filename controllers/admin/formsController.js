@@ -1,5 +1,4 @@
 import Form from '../../models/admin/formModel.js';
-import Customer from '../../models/Customer.js';
 
 // GET /api/admin/forms
 export const getForms = async (req, res, next) => {
@@ -24,97 +23,6 @@ export const getForms = async (req, res, next) => {
     ]);
 
     res.status(200).json({ success: true, forms, pagination: { currentPage: pageNum, pageSize, totalCount } });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// GET /api/admin/forms/:id
-export const getFormById = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const form = await Form.findById(id).populate('createdBy', 'name email').lean();
-    if (!form) {
-      res.status(404);
-      return next(new Error('Form not found'));
-    }
-    res.status(200).json({ success: true, form });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// POST /api/admin/forms
-export const createForm = async (req, res, next) => {
-  try {
-    const { formType, data, status } = req.body;
-    const userObj = req.customer || req.user;
-    const form = await Form.create({ formType, data, status, createdBy: userObj && userObj._id });
-    res.status(201).json({ success: true, form });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// PUT /api/admin/forms/:id
-export const updateForm = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const updates = req.body;
-    const form = await Form.findByIdAndUpdate(id, updates, { new: true }).lean();
-    if (!form) {
-      res.status(404);
-      return next(new Error('Form not found'));
-    }
-    res.status(200).json({ success: true, form });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// DELETE /api/admin/forms/:id
-export const deleteForm = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const form = await Form.findByIdAndDelete(id).lean();
-    if (!form) {
-      res.status(404);
-      return next(new Error('Form not found'));
-    }
-    res.status(200).json({ success: true, message: 'Form deleted' });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// POST /api/admin/forms/:id/comments
-export const addComment = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { text } = req.body;
-    if (!text || !text.trim()) {
-      res.status(400);
-      return next(new Error('Comment text is required'));
-    }
-
-    const userObj = req.customer || req.user;
-    const comment = { text: text.trim(), author: userObj ? userObj._id : undefined };
-
-    const form = await Form.findByIdAndUpdate(
-      id,
-      { $push: { comments: comment } },
-      { new: true }
-    ).lean();
-
-    if (!form) {
-      res.status(404);
-      return next(new Error('Form not found'));
-    }
-
-    // Populate the newly added comment author for response
-    const populated = await Form.findById(form._id).populate('comments.author', 'name email').lean();
-
-    res.status(201).json({ success: true, form: populated });
   } catch (error) {
     next(error);
   }

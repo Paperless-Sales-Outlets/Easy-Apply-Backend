@@ -83,42 +83,6 @@ export const addItemToCart = async (userId, productId, quantity) => {
 };
 
 /**
- * Update item quantity in cart
- */
-export const updateCartItemQuantity = async (userId, productId, quantity) => {
-  // Validate quantity
-  if (quantity <= 0) {
-    throw new Error('Quantity must be greater than zero');
-  }
-
-  // Get cart — must be a real document (not getCart's .lean() result) since
-  // updateItemQuantity below is a Mongoose instance method.
-  const cart = await getOrCreateCart(userId);
-  const target = String(productId);
-
-  // Check if item exists in cart
-  const existingItem = cart.items.find(
-    (item) =>
-      (item.productId && item.productId.toString() === target) ||
-      (item._id && item._id.toString() === target) ||
-      (item.id && item.id.toString() === target)
-  );
-
-  if (!existingItem) {
-    throw new Error('Item not found in cart');
-  }
-
-  // Check product availability
-  const actualProdId = existingItem.productId || existingItem._id;
-  await productService.checkProductAvailability(actualProdId, quantity);
-
-  // Update quantity
-  await cart.updateItemQuantity(target, quantity);
-
-  return await Cart.findOne({ userId }).lean();
-};
-
-/**
  * Remove item from cart
  */
 export const removeItemFromCart = async (userId, productId) => {
@@ -142,66 +106,4 @@ export const clearCart = async (userId) => {
   await cart.clearCart();
 
   return await Cart.findOne({ userId }).lean();
-};
-
-/**
- * Validate cart items before checkout
- */
-export const validateCartForCheckout = async (userId) => {
-  const cart = await getCart(userId);
-
-  if (cart.items.length === 0) {
-    throw new Error('Cart is empty');
-  }
-
-  // Check each item for availability and stock
-  for (const item of cart.items) {
-    try {
-      await productService.checkProductAvailability(item.productId, item.quantity);
-    } catch (error) {
-      throw new Error(
-        `Product "${item.productName}" is not available or has insufficient stock`
-      );
-    }
-  }
-
-  return cart;
-};
-
-/**
- * Decrease stock for cart items after successful payment
- */
-export const decreaseStockForCartItems = async (userId) => {
-  const cart = await getCart(userId);
-
-  for (const item of cart.items) {
-    await productService.decreaseProductStock(item.productId, item.quantity);
-  }
-
-  return cart;
-};
-
-/**
- * Increase stock for cart items (e.g., after payment failure)
- */
-export const increaseStockForCartItems = async (userId) => {
-  const cart = await getCart(userId);
-
-  for (const item of cart.items) {
-    await productService.increaseProductStock(item.productId, item.quantity);
-  }
-
-  return cart;
-};
-
-export default {
-  getOrCreateCart,
-  getCart,
-  addItemToCart,
-  updateCartItemQuantity,
-  removeItemFromCart,
-  clearCart,
-  validateCartForCheckout,
-  decreaseStockForCartItems,
-  increaseStockForCartItems,
 };

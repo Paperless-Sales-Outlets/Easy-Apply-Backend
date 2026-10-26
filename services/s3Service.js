@@ -52,5 +52,3 @@ export const getSignedFileUrl = async (publicPath, expiresInSec = 900) => {
     return publicPath;
   }
 };
-
-export default { getSignedFileUrl, isS3Configured };

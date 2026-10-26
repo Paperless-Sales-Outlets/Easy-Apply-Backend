@@ -3,7 +3,6 @@
  * Catches and formats all errors in a consistent manner
  */
 
-import { errorResponse } from '../utils/responseHandler.js';
 
 /**
  * Custom error class for operational errors
@@ -60,14 +59,22 @@ export const errorHandler = (err, req, res, next) => {
     error = new AppError(message, 401);
   }
 
-  // Default to res.statusCode (if set) or 500 server error
-  const statusCode = error.statusCode || (res.statusCode && res.statusCode !== 200 ? res.statusCode : 500);
+  // Default to err.status / error.statusCode or res.statusCode or 500 server error
+  const statusCode = err.status || error.statusCode || (res.statusCode && res.statusCode !== 200 ? res.statusCode : 500);
   const message = error.message || 'Internal server error';
 
   // Don't leak stack trace in production
   const responseData = {
     success: false,
     message,
+    ...(err.code ? { code: err.code } : {}),
+    ...(err.lockoutRemaining !== undefined ? { lockoutRemaining: err.lockoutRemaining } : {}),
+    ...(err.lockedUntil ? { lockedUntil: err.lockedUntil } : {}),
+    ...(err.cooldownRemaining !== undefined ? { cooldownRemaining: err.cooldownRemaining } : {}),
+    ...(err.resendAvailableAt ? { resendAvailableAt: err.resendAvailableAt } : {}),
+    ...(err.attemptsRemaining !== undefined ? { attemptsRemaining: err.attemptsRemaining } : {}),
+    ...(err.otpRemaining !== undefined ? { otpRemaining: err.otpRemaining } : {}),
+    ...(err.expiresAt ? { expiresAt: err.expiresAt } : {}),
   };
 
   if (process.env.NODE_ENV === 'development') {
@@ -83,10 +90,4 @@ export const errorHandler = (err, req, res, next) => {
 export const notFound = (req, res, next) => {
   const error = new AppError(`Route not found: ${req.originalUrl}`, 404);
   next(error);
-};
-
-export default {
-  AppError,
-  errorHandler,
-  notFound,
 };
