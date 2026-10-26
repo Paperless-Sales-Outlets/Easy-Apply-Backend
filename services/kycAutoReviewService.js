@@ -144,6 +144,28 @@ function profileConsistencyChecks(parsed, { profileDob, profileGender, sourceLab
   return out;
 }
 
+function ocrCompletenessCheck(formData = {}) {
+  const ocrExtraction = formData.ocrExtraction || {};
+  const isPartial = ocrExtraction.isPartial || ocrExtraction.extractionStatus === 'PARTIAL';
+  const missing = ocrExtraction.missingFields || [];
+
+  if (isPartial || missing.length > 0) {
+    return check(
+      'data_completeness',
+      'Document data completeness',
+      'unsure',
+      `Auto KYC incomplete: Partial data fetched from document (${missing.join(', ') || 'fields missing in OCR'}). Queued for manual admin verification.`
+    );
+  }
+
+  return check(
+    'data_completeness',
+    'Document data completeness',
+    'pass',
+    'Complete identity details were successfully fetched and verified against document.'
+  );
+}
+
 /** pass/fail/unsure → approved / rejected / flagged. 'manual' never blocks. */
 export function decide(checks) {
   if (checks.some((c) => c.result === 'fail')) return 'rejected';
@@ -273,6 +295,9 @@ export async function evaluateApplication(app) {
     ? check('duplicate_identity', 'No conflicting use elsewhere', 'unsure', `Possible identity reuse — ${uniqueConflicts.join('; ')}.`)
     : check('duplicate_identity', 'No conflicting use elsewhere', 'pass', 'This NIC and phone number are not used with any conflicting details on other requests.'));
 
+  // Completeness check of document extraction
+  checks.push(ocrCompletenessCheck(fd));
+
   // NIC photos + live selfie, and the face match between them.
   const identity = await identityChecks({
     subjectKind: 'application',
@@ -285,7 +310,6 @@ export async function evaluateApplication(app) {
     related: others,
   });
   checks.push(...identity.checks);
-
   const decision = decide(checks);
   return { decision, checks, remark: buildRemark(decision, checks), caseInfo: identity.caseInfo };
 }

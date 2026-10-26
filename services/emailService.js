@@ -1,30 +1,57 @@
 import nodemailer from 'nodemailer';
 
 // ─────────────────────────────────────────────────────────────
-// Demo recipient addresses — all emails CC'd here for testing
-// ─────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────
-// Transporter — use env SMTP creds when provided,
-// otherwise auto-create an Ethereal test account (demo mode).
+// Transporter — use env SMTP creds when SMTP_HOST + SMTP_USER are set.
+// SMTP_PASS may be empty or "N/A" — in that case we use relay/no-auth mode
+// (common on internal corporate relays that trust by IP or username only).
+// Falls back to Ethereal test account when no host is configured at all.
 // ─────────────────────────────────────────────────────────────
 let _transporter = null;
+
+/**
+ * Resolve whether SMTP_PASS is a real password or an empty / "N/A" placeholder.
+ */
+function resolveSmtpPass(raw) {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed === '' || trimmed.toUpperCase() === 'N/A') return null;
+  return trimmed;
+}
 
 async function getTransporter() {
   if (_transporter) return _transporter;
 
-  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpUser = process.env.SMTP_USER;
+
+  if (smtpHost && smtpUser) {
+    // ── Live SMTP (corporate relay or authenticated) ──────────────────────
+    const smtpPass = resolveSmtpPass(process.env.SMTP_PASS);
+    const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+    // Port 465 is direct SSL/TLS. Ports 25 and 587 use STARTTLS (secure must be false).
+    const smtpSecure = smtpPort === 465 || (process.env.SMTP_SECURE === 'true' && smtpPort !== 25 && smtpPort !== 587);
+
+    // If no password provided, omit auth object completely so Nodemailer works as pure open/IP relay
+    const authBlock = smtpPass ? { user: smtpUser, pass: smtpPass } : undefined;
+
     _transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587', 10),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
+      auth: authBlock,
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000,
+      tls: {
+        // Accept self-signed / internal corporate TLS certificates
+        rejectUnauthorized: false,
       },
     });
-    console.log(`\n📧 Nodemailer: using SMTP host ${process.env.SMTP_HOST}\n`);
+
+    const modeLabel = smtpPass ? 'authenticated' : 'relay / no-auth';
+    console.log(`\n📧 Nodemailer: using SMTP host ${smtpHost}:${smtpPort} (${modeLabel})\n`);
   } else {
+    // ── Demo mode via Ethereal — captures emails at https://ethereal.email ──
     const testAccount = await nodemailer.createTestAccount();
     _transporter = nodemailer.createTransport({
       host: 'smtp.ethereal.email',
@@ -245,6 +272,10 @@ async function _send({ to, subject, html }) {
     return;
   }
 
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
   try {
     const transporter = await getTransporter();
     const from = process.env.SMTP_FROM || '"SLTMobitel EasyApply" <noreply@sltmobitel.lk>';
@@ -295,6 +326,58 @@ export async function sendApplicationSubmittedEmail({
   const html = emailShell({
     subject,
     bodyHtml: buildApplicationSubmittedBody({ customerName, referenceNumber, serviceType, phone, submittedAt, requiresPayment }),
+  });
+  await _send({ to, subject, html });
+}
+
+// ─────────────────────────────────────────────────────────────
+// 3. OTP VERIFICATION EMAIL
+//    Triggered: POST /api/otp/send-email
+// ─────────────────────────────────────────────────────────────
+function buildOtpEmailBody({ otpCode, expiresInMinutes = 5 }) {
+  const digits = String(otpCode).split('');
+  const digitBoxes = digits
+    .map(
+      (d) =>
+        `<span style="display:inline-block;width:44px;height:56px;line-height:56px;text-align:center;font-size:28px;font-weight:900;color:#0056b3;background:#f0f9ff;border:2px solid #bae6fd;border-radius:10px;margin:0 4px;font-variant-numeric:tabular-nums;letter-spacing:0">${d}</span>`
+    )
+    .join('');
+
+  return `
+  <style>
+    .otp-title{font-size:20px;font-weight:900;color:#0f172a;text-align:center;margin-bottom:6px}
+    .otp-sub{font-size:14px;color:#64748b;text-align:center;line-height:1.55;margin-bottom:24px}
+    .otp-box{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:16px;padding:24px 20px;text-align:center;margin-bottom:22px}
+    .otp-label{font-size:11px;color:#0284c7;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:14px}
+    .otp-digits{display:inline-flex;gap:0;flex-wrap:nowrap;justify-content:center}
+    .warn{background:#fefce8;border-left:4px solid #f59e0b;border-radius:0 10px 10px 0;padding:12px 16px;font-size:13px;color:#78350f;line-height:1.6}
+  </style>
+  <div style="text-align:center"><div style="display:inline-block;background:#dbeafe;border-radius:50%;width:64px;height:64px;line-height:64px;text-align:center;margin:0 auto 16px;font-size:32px">🔐</div></div>
+  <div class="otp-title">Your Verification Code</div>
+  <div class="otp-sub">Use the code below to verify your email address on SLTMobitel EasyApply.</div>
+
+  <div class="otp-box">
+    <div class="otp-label">One-Time Password (OTP)</div>
+    <div class="otp-digits">${digitBoxes}</div>
+    <div style="margin-top:14px;font-size:12px;color:#94a3b8">Valid for <strong style="color:#0056b3">${expiresInMinutes} minutes</strong></div>
+  </div>
+
+  <div class="warn">
+    <strong>🔒 Security Notice:</strong><br/>
+    Never share this code with anyone — including SLTMobitel staff.<br/>
+    If you did not request this code, please ignore this email.
+  </div>`;
+}
+
+/**
+ * Send a 6-digit OTP code to a customer's email address.
+ * Called by POST /api/otp/send-email.
+ */
+export async function sendOtpEmail({ to, otpCode, expiresInMinutes = 5 }) {
+  const subject = `Your SLTMobitel Verification Code: ${otpCode}`;
+  const html = emailShell({
+    subject,
+    bodyHtml: buildOtpEmailBody({ otpCode, expiresInMinutes }),
   });
   await _send({ to, subject, html });
 }

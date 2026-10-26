@@ -7,6 +7,7 @@ import { findAccountById } from '../middleware/authMiddleware.js';
 import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
 import { recordAudit } from '../services/auditService.js';
+import { requestOtp, validateOtp } from '../services/otpService.js';
 
 // The customer fields safe to return to the client. Kept in one place so
 // register, login and /me all expose the same profile.
@@ -145,6 +146,68 @@ export const getUsers = async (req, res, next) => {
   }
 };
 
+export const getCustomers = getUsers;
+
+// @desc    Send OTP to mobile number
+// @route   POST /api/auth/send-otp
+// @access  Public
+export const sendOtp = async (req, res, next) => {
+  const { phone } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({
+      success: false,
+      code: 'PHONE_REQUIRED',
+      message: 'Phone number is required',
+    });
+  }
+
+  try {
+    const result = await requestOtp(phone);
+    return res.status(200).json(result);
+  } catch (error) {
+    const status = error.status || 400;
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'BAD_REQUEST',
+      message: error.message,
+      cooldownRemaining: error.cooldownRemaining,
+      resendAvailableAt: error.resendAvailableAt,
+      lockoutRemaining: error.lockoutRemaining,
+      lockedUntil: error.lockedUntil,
+    });
+  }
+};
+
+// @desc    Verify OTP
+// @route   POST /api/auth/verify-otp
+// @access  Public
+export const verifyOtp = async (req, res, next) => {
+  const { phone, otp } = req.body;
+
+  if (!phone || !otp) {
+    return res.status(400).json({
+      success: false,
+      code: 'INPUT_REQUIRED',
+      message: 'Phone number and OTP code are required',
+    });
+  }
+
+  try {
+    const result = await validateOtp(phone, otp);
+    return res.status(200).json(result);
+  } catch (error) {
+    const status = error.status || 400;
+    return res.status(status).json({
+      success: false,
+      code: error.code || 'OTP_INVALID',
+      message: error.message,
+      attemptsRemaining: error.attemptsRemaining,
+      lockoutRemaining: error.lockoutRemaining,
+      lockedUntil: error.lockedUntil,
+    });
+  }
+};
 
 // @desc    Register a new customer / user
 // @route   POST /api/auth/register
@@ -363,6 +426,76 @@ export const login = async (req, res, next) => {
 };
 
 
+// @desc    Sign in with a phone number and OTP, returning the same session a
+//          password login gives. Customers hold both credentials: whichever
+//          they remember should get them the identical account.
+// @route   POST /api/auth/otp-login
+// @access  Public
+export const otpLogin = async (req, res, next) => {
+  const { phone, otp } = req.body;
+
+  if (!phone || !otp) {
+    res.status(400);
+    return next(new Error('Phone number and verification code are required'));
+  }
+
+  try {
+    const digitsOnly = String(phone).replace(/\D/g, '');
+    const last9 = digitsOnly.slice(-9);
+    const cleanOtp = String(otp).trim();
+
+    // 1. Validate OTP with 5-minute expiry enforcement
+    await validateOtp(phone, otp);
+
+    // 2. Find the registered account. Numbers are stored in several shapes
+    //    across the data set, so match on all of them.
+    const customer = await Customer.findOne({
+      $or: [
+        { phone: String(phone).trim() },
+        { phone: digitsOnly },
+        { phone: last9 },
+        { phone: `0${last9}` },
+        { phone: `+94${last9}` },
+        { phone: `94${last9}` },
+      ],
+    });
+
+    if (!customer) {
+      res.status(404);
+      return next(new Error('No account is registered to this number. Please create one first.'));
+    }
+
+    const accessToken = generateAccessToken(customer);
+    const refreshToken = generateRefreshToken(customer);
+
+    const decodedRefresh = jwt.decode(refreshToken);
+    await RefreshToken.create({
+      userId: customer._id,
+      token: refreshToken,
+      expiresAt: new Date(decodedRefresh.exp * 1000),
+    });
+
+    const publicProfile = publicCustomer(customer);
+    await recordAudit({
+      req,
+      actor: customer,
+      action: 'LOGIN',
+      module: 'Authentication',
+      targetId: customer._id,
+      description: 'Successful OTP login',
+    });
+
+    res.status(200).json({
+      success: true,
+      customer: publicProfile,
+      user: publicProfile,
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 // @desc    Refresh access token
 // @route   POST /api/auth/refresh
 // @access  Public
@@ -470,33 +603,8 @@ export const verifyEntry = async (req, res, next) => {
       return next(new Error('Please provide a valid 9-digit Sri Lankan mobile number'));
     }
 
-    // 1. Verify OTP (accept demo codes 000000 / 123456)
-    const isDemoCode = cleanOtp === '000000' || cleanOtp === '123456';
-
-    if (!isDemoCode) {
-      const record = await Otp.findOne({
-        $or: [
-          { phone: last9, otp: cleanOtp },
-          { phone: `0${last9}`, otp: cleanOtp },
-          { phone: `94${last9}`, otp: cleanOtp },
-          { phone: String(phone).trim(), otp: cleanOtp },
-        ],
-      });
-
-      if (!record) {
-        res.status(400);
-        return next(new Error('Invalid or expired verification code'));
-      }
-
-      await Otp.deleteMany({
-        $or: [
-          { phone: last9 },
-          { phone: `0${last9}` },
-          { phone: `94${last9}` },
-          { phone: String(phone).trim() },
-        ],
-      });
-    }
+    // 1. Verify OTP with 5-minute expiry enforcement
+    await validateOtp(phone, otp);
 
     // 2. Check if customer is registered in Customer collection by phone or NIC
     const customer = await Customer.findOne({
