@@ -24,6 +24,7 @@ import adminPrivilegesRoutes from './routes/admin/privilegesRoutes.js';
 import adminAuditRoutes from './routes/admin/auditRoutes.js';
 import fieldAppointmentRoutes from './routes/field/fieldAppointmentRoutes.js';
 import appointmentRoutes from './routes/appointmentRoutes.js';
+import nicRoutes from './routes/nicRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
@@ -268,6 +269,10 @@ app.use(
 
 // Customer Appointment Routes
 app.use('/api/appointments', appointmentRoutes);
+
+// NIC Verification Routes
+app.use('/api/nic', nicRoutes);
+app.use('/api/ocr', nicRoutes);
 
 // Payment Routes
 app.use('/api/payment', paymentRoutes);

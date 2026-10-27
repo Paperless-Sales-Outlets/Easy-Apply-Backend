@@ -1,6 +1,6 @@
 import express from 'express';
 import multer from 'multer';
-import { scanNIC } from '../controllers/nicController.js';
+import { scanNIC, scanNICFlat } from '../controllers/nicController.js';
 
 const router = express.Router();
 
@@ -17,5 +17,7 @@ const cpUpload = upload.fields([
 
 // POST /api/nic/scan
 router.post('/scan', cpUpload, scanNIC);
+
+router.post('/scan-nic', scanNICFlat);
 
 export default router;

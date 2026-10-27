@@ -117,6 +117,7 @@ Do not invent or hallucinate missing data.
     try {
       const response = await ai.models.generateContent({
         model: modelName,
+        config: { thinkingConfig: { thinkingLevel: 'LOW' } },
         contents: [
           {
             role: 'user',
