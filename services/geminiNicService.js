@@ -1,17 +1,25 @@
-import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
+let GoogleGenAIClass = null;
 let aiClient = null;
 
-function getAIClient() {
+async function getAIClient() {
   if (!aiClient) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error('GEMINI_API_KEY is not configured in backend environment.');
     }
-    aiClient = new GoogleGenAI({ apiKey });
+    if (!GoogleGenAIClass) {
+      try {
+        const mod = await import('@google/genai');
+        GoogleGenAIClass = mod.GoogleGenAI;
+      } catch (err) {
+        throw new Error('@google/genai package is not available: ' + err.message);
+      }
+    }
+    aiClient = new GoogleGenAIClass({ apiKey });
   }
   return aiClient;
 }
@@ -64,7 +72,7 @@ function toInlineData(imageInput, defaultMime = 'image/jpeg') {
  * @returns {Promise<Object>} Extracted NIC fields
  */
 export async function scanSriLankanNIC({ nicFront, nicBack }) {
-  const ai = getAIClient();
+  const ai = await getAIClient();
 
   const parts = [];
 
