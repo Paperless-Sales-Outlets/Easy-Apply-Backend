@@ -1,5 +1,5 @@
 // KYC identity-check self-test — synthetic data only.
-// Creates a clearly-labelled test customer + blank test images, evaluates
+// Creates clearly-labelled test customers + blank test images, evaluates
 // unsaved test requests against them, prints the results, then deletes it all.
 // Run:  node scratch/kycIdentitySelftest.mjs
 import 'dotenv/config';
@@ -8,13 +8,15 @@ import sharp from 'sharp';
 import Customer from '../models/Customer.js';
 import { evaluateApplication, evaluateAccount } from '../services/kycAutoReviewService.js';
 
-const TEST_NIC = '199015009999';
+const TEST_NIC = '199015009999';     // same person as 901509999V (old format)
+const TEST_NIC_OLD = '901509999V';
 const TEST_PHONE = '0700000999';
+const OTHER_PHONE = '0700000998';
 const TAG = 'kyc-selftest';
 const DAY = 24 * 3600 * 1000;
 
-const blank = (r, g, b) => sharp({
-  create: { width: 600, height: 400, channels: 3, noise: { type: 'gaussian', mean: (r + g + b) / 3, sigma: 40 } },
+const blank = (mean) => sharp({
+  create: { width: 600, height: 400, channels: 3, noise: { type: 'gaussian', mean, sigma: 40 } },
 }).png().toBuffer();
 
 async function storeTest(buffer, uploadedAt) {
@@ -29,7 +31,7 @@ async function storeTest(buffer, uploadedAt) {
 }
 
 const show = (title, ev) => {
-  console.log(`\n■ ${title} → ${ev.decision.toUpperCase()}  (customer type: ${ev.caseInfo?.customerType})`);
+  console.log(`\n■ ${title} → ${ev.decision.toUpperCase()}  (customer: ${ev.caseInfo?.customerType})`);
   ev.checks.forEach((c) => console.log(`   ${c.result.padEnd(6)} ${c.label}: ${c.detail}`));
 };
 
@@ -39,66 +41,76 @@ const fakeApp = (docs, extra = {}) => ({
   phone: TEST_PHONE,
   status: 'pending',
   createdAt: new Date(),
-  formData: { nameFull: 'KYC Selftest Person', documents: docs },
+  formData: { nameFull: 'KYC Selftest Person', documents: docs, ...(extra.formData || {}) },
   documents: docs,
-  ...extra,
 });
 
 await mongoose.connect(process.env.MONGO_URI);
-const created = { files: [], customer: null };
+const created = { files: [], customers: [] };
 try {
-  if (await Customer.exists({ $or: [{ NIC: TEST_NIC }, { phone: TEST_PHONE }] })) throw new Error('test NIC/phone already in use — aborting');
+  if (await Customer.exists({ $or: [{ NIC: { $in: [TEST_NIC, TEST_NIC_OLD] } }, { phone: { $in: [TEST_PHONE, OTHER_PHONE] } }] })) {
+    throw new Error('test NIC/phone already in use — aborting');
+  }
 
   const old = new Date(Date.now() - 30 * DAY);
   const now = new Date();
-  const [nicF, nicB, oldSelfie, newSelfie] = await Promise.all([blank(200, 180, 160), blank(90, 120, 160), blank(150, 150, 150), blank(170, 140, 120)]);
   const ids = {
-    nicFrontOld: await storeTest(nicF, old),
-    nicBackOld: await storeTest(nicB, old),
-    selfieOld: await storeTest(oldSelfie, old),
-    selfieNew: await storeTest(newSelfie, now),
-    nicFrontNew: await storeTest(nicF, now),
-    nicBackNew: await storeTest(nicB, now),
+    nicFrontNew: await storeTest(await blank(190), now),
+    nicBackNew: await storeTest(await blank(110), now),
+    selfieOld: await storeTest(await blank(150), old),
+    selfieNew: await storeTest(await blank(130), now),
+    signature: await storeTest(await blank(240), now),
   };
   created.files = Object.values(ids);
+  const g = (id) => `gridfs://${id}`;
 
-  // A — new customer: everything uploaded with the request (inline images), no account yet
-  const inline = (buf) => `data:image/png;base64,${buf.toString('base64')}`;
-  show('A  New customer, NIC + selfie in the request, no account', await evaluateApplication(
-    fakeApp({ nicFront: inline(nicF), nicBack: inline(nicB), facePhoto: inline(newSelfie) })));
-
-  // Test customer registered 30 days ago, NIC photos + selfie on file
-  created.customer = await Customer.create({
+  // ── New customer: account created with this request ──
+  const fresh = await Customer.create({
     name: 'KYC Selftest Person', phone: TEST_PHONE, NIC: TEST_NIC, role: 'Customer', dob: '1990-05-29', gender: 'Male',
-    identityDocuments: { nicFront: ids.nicFrontOld, nicBack: ids.nicBackOld, facePhoto: ids.selfieOld, capturedAt: old },
+    identityDocuments: { nicFront: ids.nicFrontNew, nicBack: ids.nicBackNew, facePhoto: ids.selfieNew, capturedAt: now },
   });
-  // createdAt is immutable through Mongoose, so back-date the test record directly.
-  await Customer.collection.updateOne({ _id: created.customer._id }, { $set: { createdAt: old } });
+  created.customers.push(fresh._id);
 
-  show('B  Returning customer, NIC on file + NEW selfie', await evaluateApplication(
-    fakeApp({ nicFront: `gridfs://${ids.nicFrontOld}`, nicBack: `gridfs://${ids.nicBackOld}`, facePhoto: `gridfs://${ids.selfieNew}` })));
+  show('1  New customer: NIC front + back, selfie, signature', await evaluateApplication(
+    fakeApp({ nicFront: g(ids.nicFrontNew), nicBack: g(ids.nicBackNew), facePhoto: g(ids.selfieNew), signature: g(ids.signature) })));
 
-  show('C  Returning customer, NO new selfie (old one reused)', await evaluateApplication(
-    fakeApp({ nicFront: `gridfs://${ids.nicFrontOld}`, nicBack: `gridfs://${ids.nicBackOld}`, facePhoto: `gridfs://${ids.selfieOld}` })));
+  show('2  New customer, no signature drawn (OTP only)', await evaluateApplication(
+    fakeApp({ nicFront: g(ids.nicFrontNew), nicBack: g(ids.nicBackNew), facePhoto: g(ids.selfieNew), signature: 'DIGITALLY_VERIFIED_OTP' })));
 
-  show('D  "Selfie" is the NIC image file', await evaluateApplication(
-    fakeApp({ nicFront: `gridfs://${ids.nicFrontOld}`, nicBack: `gridfs://${ids.nicBackOld}`, facePhoto: `gridfs://${ids.nicFrontOld}` })));
+  await Customer.updateOne({ _id: fresh._id }, { $unset: { 'identityDocuments.nicBack': 1 } });
+  show('3  New customer missing NIC back', await evaluateApplication(
+    fakeApp({ nicFront: g(ids.nicFrontNew), facePhoto: g(ids.selfieNew), signature: g(ids.signature) })));
+  await Customer.updateOne({ _id: fresh._id }, { $set: { 'identityDocuments.nicBack': ids.nicBackNew } });
 
-  show('E  Existing customer adding NIC photos now', await evaluateApplication(
-    fakeApp({ nicFront: `gridfs://${ids.nicFrontNew}`, nicBack: `gridfs://${ids.nicBackNew}`, facePhoto: `gridfs://${ids.selfieNew}` })));
+  // ── Same customer, registered 30 days ago ──
+  await Customer.collection.updateOne({ _id: fresh._id }, { $set: { createdAt: old } });
 
-  await Customer.updateOne({ _id: created.customer._id }, { $set: { identityDocuments: { facePhoto: ids.selfieOld, capturedAt: old } } });
-  show('F  Returning customer with NO NIC photos on file, selfie only', await evaluateApplication(
-    fakeApp({ facePhoto: `gridfs://${ids.selfieNew}` })));
+  show('4  Registered customer: selfie + signature only', await evaluateApplication(
+    fakeApp({ facePhoto: g(ids.selfieNew), signature: g(ids.signature) })));
 
-  await Customer.updateOne({ _id: created.customer._id }, { $set: { identityDocuments: { nicFront: ids.nicFrontNew, nicBack: ids.nicBackNew, facePhoto: ids.selfieNew, capturedAt: now } } });
-  show('G  Account registration (no request yet)', await evaluateAccount(await Customer.findById(created.customer._id).lean()));
+  show('5  Registered customer, no signature', await evaluateApplication(
+    fakeApp({ facePhoto: g(ids.selfieNew) })));
+
+  show('6  Registered customer, old selfie reused', await evaluateApplication(
+    fakeApp({ facePhoto: g(ids.selfieOld), signature: g(ids.signature) })));
+
+  // ── Someone registers as "new" with an NIC already registered (written in old format) ──
+  const dup = await Customer.create({
+    name: 'KYC Selftest Duplicate', phone: OTHER_PHONE, NIC: TEST_NIC_OLD, role: 'Customer', dob: '1990-05-29', gender: 'Male',
+    identityDocuments: { nicFront: ids.nicFrontNew, nicBack: ids.nicBackNew, facePhoto: ids.selfieNew, capturedAt: now },
+  });
+  created.customers.push(dup._id);
+  show('7  New registration reusing a registered NIC (old format)', await evaluateAccount(await Customer.findById(dup._id).lean()));
+
+  await Customer.deleteOne({ _id: dup._id });
+  show('8  Account registration only (no request yet)', await evaluateAccount(
+    { ...(await Customer.findById(fresh._id).lean()), createdAt: now }));
 } finally {
   const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'uploads' });
   for (const id of created.files) await bucket.delete(id).catch(() => {});
-  if (created.customer) await Customer.deleteOne({ _id: created.customer._id });
+  await Customer.deleteMany({ _id: { $in: created.customers } });
   const leftovers = await mongoose.connection.db.collection('uploads.files').countDocuments({ 'metadata.kind': TAG })
-    + await Customer.countDocuments({ NIC: TEST_NIC });
+    + await Customer.countDocuments({ NIC: { $in: [TEST_NIC, TEST_NIC_OLD] } });
   console.log(`\ncleanup done — leftover test records: ${leftovers}`);
   await mongoose.disconnect();
 }

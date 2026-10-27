@@ -3,6 +3,7 @@ import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
 import Customer from '../models/Customer.js';
 import Appointment from '../models/Appointment.js';
+import SalesOfficerQr from '../models/SalesOfficerQr.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
 import { checkOSSFeasibility } from '../services/ossService.js';
 import { recordAudit } from '../services/auditService.js';
@@ -100,6 +101,7 @@ export const createApplication = async (req, res, next) => {
     };
 
     let application;
+    let attribution = null;
 
     // MongoDB available
     if (mongoose.connection.readyState === 1) {
@@ -175,59 +177,124 @@ export const createApplication = async (req, res, next) => {
         console.warn('Auto Customer persistence notice:', customerErr.message);
       }
 
-      // 2. Create Application document
-      application = await Application.create({
-        phone: verifiedPhone,
+    // Resolve Sales Officer QR attribution if a tracking token is supplied
+    attribution = null;
+    const rawCandidateToken =
+      req.body.salesTrackingToken ||
+      req.body.trackingToken ||
+      req.body.salesRef ||
+      req.headers['x-sales-ref'] ||
+      formData?.salesTrackingToken ||
+      formData?.trackingToken ||
+      formData?.salesRef;
+
+    if (rawCandidateToken) {
+      const candidateToken = String(rawCandidateToken).trim();
+      if (mongoose.connection.readyState === 1) {
+        const qrRecord = await SalesOfficerQr.findOne({
+          trackingToken: candidateToken,
+          isActive: true,
+        }).populate('officer', 'name email employeeNumber role isActive');
+
+        if (!qrRecord || !qrRecord.officer || qrRecord.officer.isActive === false) {
+          res.status(400);
+          return next(new Error('Invalid or inactive sales tracking token'));
+        }
+
+        attribution = {
+          officer: qrRecord.officer._id,
+          employeeNumber: qrRecord.employeeNumber || qrRecord.officer.employeeNumber,
+          officerName: qrRecord.officer.name,
+          trackingToken: qrRecord.trackingToken,
+          attributedAt: new Date(),
+        };
+      } else {
+        attribution = {
+          officer: null,
+          employeeNumber: 'OFFLINE_REF',
+          officerName: 'Sales Officer',
+          trackingToken: candidateToken,
+          attributedAt: new Date(),
+        };
+      }
+    }
+
+    // 2. Create Application document
+    const isPaid = Boolean(formData.paymentReference);
+    application = await Application.create({
+      phone: verifiedPhone,
+      serviceType,
+      formData,
+      documents: formData.documents || {},
+      nic: cleanNic,
+      status: 'pending',
+      paymentStatus: isPaid ? 'paid' : 'pending',
+      paymentDetails: isPaid
+        ? {
+            orderId: formData.paymentReference,
+            amount:
+              formData.product?.installationFee ??
+              formData.product?.monthlyPrice ??
+              2500,
+            currency: 'LKR',
+          }
+        : undefined,
+      completedSale: isPaid,
+      completedSaleAt: isPaid ? new Date() : null,
+      salesOfficer: attribution ? attribution.officer : null,
+      salesOfficerEmployeeNumber: attribution ? attribution.employeeNumber : null,
+      salesTrackingToken: attribution ? attribution.trackingToken : null,
+      salesAttribution: attribution
+        ? {
+            officerId: attribution.officer,
+            employeeNumber: attribution.employeeNumber,
+            officerName: attribution.officerName,
+            trackingToken: attribution.trackingToken,
+            attributedAt: attribution.attributedAt,
+          }
+        : undefined,
+    });
+  }
+
+  // Offline fallback mode
+  else {
+    const refDigits = Math.floor(
+      10000000 + Math.random() * 90000000
+    ).toString();
+
+    application = {
+      _id: `mock_app_${refDigits}`,
+      referenceNumber: `REQ-${refDigits}`,
+      serviceType,
+      status: 'pending',
+      nic,
+      formData,
+      createdAt: new Date(),
+      salesOfficer: attribution ? attribution.officer : null,
+      salesOfficerEmployeeNumber: attribution ? attribution.employeeNumber : null,
+      salesTrackingToken: attribution ? attribution.trackingToken : null,
+      salesAttribution: attribution || null,
+    };
+
+    console.log(
+      `\n📝 Application submitted in DB Offline mode. Ref: ${application.referenceNumber}\n`
+    );
+  }
+
+  if (mongoose.connection.readyState === 1) {
+    await recordAudit({
+      req,
+      action: 'CREATE',
+      module: 'Forms/Requests',
+      targetId: application.referenceNumber,
+      description: `Submitted ${serviceType} request${attribution ? ` (Attributed to Sales Officer ${attribution.employeeNumber})` : ''}`,
+      metadata: {
         serviceType,
-        formData,
-        documents: formData.documents || {},
-        nic: cleanNic,
-        status: 'pending',
-        paymentStatus: formData.paymentReference ? 'paid' : 'pending',
-        paymentDetails: formData.paymentReference
-          ? {
-              orderId: formData.paymentReference,
-              amount: formData.product?.monthlyPrice || 2500,
-              currency: 'LKR',
-            }
-          : undefined,
-      });
-    }
-
-    // Offline fallback mode
-    else {
-
-      const refDigits = Math.floor(
-        10000000 + Math.random() * 90000000
-      ).toString();
-
-      application = {
-        _id: `mock_app_${refDigits}`,
-        referenceNumber: `REQ-${refDigits}`,
-        serviceType,
-        status: 'pending',
-        nic,
-        formData,
-        createdAt: new Date(),
-      };
-
-
-      console.log(
-        `\n📝 Application submitted in DB Offline mode. Ref: ${application.referenceNumber}\n`
-      );
-
-    }
-
-    if (mongoose.connection.readyState === 1) {
-      await recordAudit({
-        req,
-        action: 'CREATE',
-        module: 'Forms/Requests',
-        targetId: application.referenceNumber,
-        description: `Submitted ${serviceType} request`,
-        metadata: { serviceType, status: application.status },
-      });
-    }
+        status: application.status,
+        salesOfficerEmployeeNumber: attribution ? attribution.employeeNumber : null,
+      },
+    });
+  }
 
     // ─────────────────────────────────────────────────────────
     // Send application submitted email (non-blocking)

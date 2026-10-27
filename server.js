@@ -22,6 +22,11 @@ import adminUsersRoutes from './routes/admin/usersRoutes.js';
 import adminRolesRoutes from './routes/admin/rolesRoutes.js';
 import adminPrivilegesRoutes from './routes/admin/privilegesRoutes.js';
 import adminAuditRoutes from './routes/admin/auditRoutes.js';
+import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
+import adminSalesOfficerRoutes from './routes/admin/salesOfficerRoutes.js';
+import salesTrackingRoutes from './routes/salesTrackingRoutes.js';
+import salesOfficerMeRoutes from './routes/salesOfficerMeRoutes.js';
+import adminLeadRoutes from './routes/admin/leadRoutes.js';
 import fieldAppointmentRoutes from './routes/field/fieldAppointmentRoutes.js';
 import appointmentRoutes from './routes/appointmentRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
@@ -33,7 +38,6 @@ import customerRoutes from './routes/customerRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
 
 // New Connection Draft routes
-import nicRoutes from './routes/nicRoutes.js';
 import draftRoutes from './routes/draftRoutes.js';
 
 // SLT Banner routes
@@ -258,6 +262,27 @@ app.use(
 // Admin Audit Logs
 app.use('/api/admin/audit-logs', adminAuditRoutes);
 
+// Admin Dashboard / Forms summary figures (optional ?startDate=&endDate=)
+app.use('/api/admin/dashboard-stats', adminDashboardStatsRoutes);
+
+// Admin Sales Officers Management (supports /api/v1 and /api)
+app.use('/api/v1/admin/sales-officers', adminSalesOfficerRoutes);
+app.use('/api/admin/sales-officers', adminSalesOfficerRoutes);
+
+// Public Sales Tracking (supports /api/v1 and /api)
+app.use('/api/v1/sales-tracking', salesTrackingRoutes);
+app.use('/api/sales-tracking', salesTrackingRoutes);
+
+// Sales Officer Self-Service (supports /api/v1 and /api)
+app.use('/api/v1/sales-officer', salesOfficerMeRoutes);
+app.use('/api/sales-officer', salesOfficerMeRoutes);
+
+// Admin Lead Management
+app.use(
+  '/api/admin/leads',
+  adminLeadRoutes
+);
+
 // Field Appointment Routes
 app.use(
   '/api/field/appointments',
@@ -282,9 +307,6 @@ app.use('/api/customers', customerRoutes);
 // Protected file-serving — streams KYC documents stored in MongoDB GridFS.
 // Requires Admin or Staff JWT authentication.
 app.use('/api/files', fileRoutes);
-
-// NIC Verification Routes
-app.use('/api/nic', nicRoutes);
 
 // Saved progress on New Connection applications
 app.use('/api/drafts', draftRoutes);
@@ -333,3 +355,6 @@ process.on('unhandledRejection', (err) => {
 
   server.close(() => process.exit(1));
 });
+
+export { app, server };
+export default app;
