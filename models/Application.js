@@ -32,7 +32,7 @@ const applicationSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'pending payment', 'approved', 'confirmed', 'rejected', 'flagged'],
+      enum: ['pending', 'pending payment', 'approved', 'confirmed', 'completed', 'rejected', 'flagged'],
       default: 'pending',
     },
     paymentStatus: {
@@ -83,11 +83,52 @@ const applicationSchema = new mongoose.Schema(
       staffSignature: { type: String, trim: true, default: '' },
       appointmentDate: { type: Date, default: null },
     },
+    // Sales Officer Attribution (tracked via Sales Officer QR code)
+    salesOfficer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    salesOfficerEmployeeNumber: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true,
+    },
+    salesTrackingToken: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true,
+    },
+    salesAttribution: {
+      officerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      employeeNumber: { type: String, trim: true },
+      officerName: { type: String, trim: true },
+      trackingToken: { type: String, trim: true },
+      attributedAt: { type: Date },
+    },
+    // Completed Sale Tracking
+    completedSale: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    completedSaleAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+applicationSchema.index({ salesOfficer: 1, createdAt: -1 });
+applicationSchema.index({ salesOfficerEmployeeNumber: 1, createdAt: -1 });
+applicationSchema.index({ salesOfficer: 1, status: 1 });
+applicationSchema.index({ salesOfficer: 1, completedSale: 1 });
 
 // Pre-validate hook to generate unique reference number if not set
 applicationSchema.pre('validate', async function () {

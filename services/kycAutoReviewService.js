@@ -15,10 +15,10 @@ import { identityChecks } from './kycIdentityChecks.js';
 //              registered for the customer)
 //   flagged  – anything missing, ambiguous or suspicious → a person decides
 //
-// Identity photos follow the customer flow (new customer: NIC front + back +
-// live selfie; returning customer with NIC photos on file: a new live selfie
-// only) — see kycIdentityChecks.js. The selfie is compared with the NIC photo
-// by local face matching on this server; no ID image is sent anywhere.
+// Identity checks follow the customer flow (new customer: NIC front + back,
+// live selfie and signature, selfie compared with the NIC photo; registered
+// customer: live selfie and signature, details checked only) — see
+// kycIdentityChecks.js. Face matching runs locally; no image is sent anywhere.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SYSTEM_ACTOR_NAME = 'Automated KYC';
@@ -303,8 +303,10 @@ export async function evaluateApplication(app) {
     subjectKind: 'application',
     submittedAt: app.createdAt || new Date(),
     formDocs: { ...fd.documents, ...app.documents },
+    formSignature: fd.signature,
     account,
     rawNic,
+    phone: app.phone,
     related: others,
   });
   checks.push(...identity.checks);
@@ -329,6 +331,7 @@ export async function evaluateAccount(customer) {
     formDocs: null,
     account: customer,
     rawNic,
+    phone: customer.phone,
     related: await relatedApplications(rawNic, customer.phone, null),
   });
   checks.push(...identity.checks);
@@ -516,6 +519,98 @@ export async function runKycAutoReview({ limit = 25 } = {}) {
     console.log(`[kyc-auto] reviewed ${summary.checked}: ${summary.approved} approved, ${summary.rejected} rejected, ${summary.flagged} flagged`);
   }
   return summary;
+}
+
+// ── Re-check all open cases (admin-requested) ────────────────────────────────
+
+// Statuses a bulk re-check covers. A case whose current decision a *person*
+// made is always left alone — bulk automation never overrides a staff member.
+const RECHECK_STATUSES = ['pending', 'flagged'];
+
+let recheckJob = null;
+
+export const getRecheckJob = () => recheckJob;
+
+/** Every open case a bulk re-check would cover → { applications, accounts, skipped }. */
+async function openCasesToRecheck() {
+  const [apps, personApps] = await Promise.all([
+    Application.find({ status: { $in: RECHECK_STATUSES } }).sort({ createdAt: 1 }),
+    KycReview.find({ subjectType: 'application', decidedBy: 'admin' }).distinct('subjectId'),
+  ]);
+  const personAppIds = new Set(personApps.map(String));
+
+  const appNics = new Set((await Application.distinct('nic')).map((n) => String(n).toUpperCase()));
+  const [customers, personAccounts] = await Promise.all([
+    Customer.find({
+      'identityDocuments.nicFront': { $exists: true },
+      $or: [{ kycStatus: { $exists: false } }, { kycStatus: { $in: RECHECK_STATUSES } }],
+    }).sort({ 'identityDocuments.capturedAt': 1 }),
+    KycReview.find({ subjectType: 'account', decidedBy: 'admin' }).distinct('subjectId'),
+  ]);
+  const personAccountIds = new Set(personAccounts.map(String));
+  const accounts = customers.filter((c) => !appNics.has(String(c.NIC).toUpperCase()));
+
+  return {
+    applications: apps.filter((a) => !personAppIds.has(String(a._id))),
+    accounts: accounts.filter((c) => !personAccountIds.has(String(c._id))),
+    skipped: apps.filter((a) => personAppIds.has(String(a._id))).length
+      + accounts.filter((c) => personAccountIds.has(String(c._id))).length,
+  };
+}
+
+/**
+ * Starts re-checking every open (pending / flagged) case with the current rules,
+ * in the background. Returns the job; only one job runs at a time.
+ */
+export async function startRecheckAll({ requestedBy }) {
+  if (recheckJob?.running) return { job: recheckJob, started: false };
+
+  const { applications, accounts, skipped } = await openCasesToRecheck();
+  const job = {
+    running: true,
+    requestedBy,
+    startedAt: new Date(),
+    finishedAt: null,
+    total: applications.length + accounts.length,
+    done: 0,
+    approved: 0,
+    rejected: 0,
+    flagged: 0,
+    unchanged: 0,
+    failed: 0,
+    skippedByPerson: skipped,
+  };
+  recheckJob = job;
+
+  const tally = (r) => {
+    job.done += 1;
+    if (!r.applied) job.unchanged += 1;
+    else job[r.decision] += 1;
+  };
+  const options = { kind: 'rerun', requestedBy };
+
+  (async () => {
+    try {
+      for (const app of applications) {
+        try { tally(await reviewApplicationAuto(app, options)); } catch (err) {
+          job.done += 1; job.failed += 1;
+          console.error(`[kyc-recheck] ${app.referenceNumber} failed:`, err.message);
+        }
+      }
+      for (const customer of accounts) {
+        try { tally(await reviewAccountAuto(customer, options)); } catch (err) {
+          job.done += 1; job.failed += 1;
+          console.error(`[kyc-recheck] account ${customer._id} failed:`, err.message);
+        }
+      }
+    } finally {
+      job.running = false;
+      job.finishedAt = new Date();
+      console.log(`[kyc-recheck] re-checked ${job.done}/${job.total}: ${job.approved} approved, ${job.rejected} rejected, ${job.flagged} flagged, ${job.unchanged} unchanged, ${job.failed} failed`);
+    }
+  })();
+
+  return { job, started: true };
 }
 
 /** Starts the background sweep. Set KYC_AUTO_REVIEW=off to disable. */
