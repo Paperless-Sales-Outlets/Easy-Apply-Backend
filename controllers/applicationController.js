@@ -488,7 +488,6 @@ export const checkApplicationStatus = async (req, res, next) => {
 // @route   GET /api/applications/lookup-connection
 // @access  Public
 export const lookupConnection = async (req, res, next) => {
-
   const { phone } = req.query;
 
   const digitsOnly = String(phone || '').replace(/\D/g, '');
@@ -513,7 +512,6 @@ export const lookupConnection = async (req, res, next) => {
         data: connections,
       });
     }
-
 
     res.status(404);
 

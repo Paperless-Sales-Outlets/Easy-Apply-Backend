@@ -29,6 +29,7 @@ import salesOfficerMeRoutes from './routes/salesOfficerMeRoutes.js';
 import adminLeadRoutes from './routes/admin/leadRoutes.js';
 import fieldAppointmentRoutes from './routes/field/fieldAppointmentRoutes.js';
 import appointmentRoutes from './routes/appointmentRoutes.js';
+import nicRoutes from './routes/nicRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
@@ -42,6 +43,9 @@ import draftRoutes from './routes/draftRoutes.js';
 
 // SLT Banner routes
 import sltBannerRoutes from './routes/sltBannerRoutes.js';
+
+// OCR routes (PaddleOCR ONNX deep-learning engine)
+import ocrRoutes from './routes/ocrRoutes.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -292,6 +296,10 @@ app.use(
 // Customer Appointment Routes
 app.use('/api/appointments', appointmentRoutes);
 
+// NIC Verification Routes
+app.use('/api/nic', nicRoutes);
+app.use('/api/ocr', nicRoutes);
+
 // Payment Routes
 app.use('/api/payment', paymentRoutes);
 
@@ -310,6 +318,9 @@ app.use('/api/files', fileRoutes);
 
 // Saved progress on New Connection applications
 app.use('/api/drafts', draftRoutes);
+
+// Server-side PaddleOCR Routes
+app.use('/api/ocr', ocrRoutes);
 
 // =====================================
 // Error Handling
