@@ -210,7 +210,6 @@ export const getOtpStatus = async (target) => {
   let hasActiveOtp = false;
   let expiresIn = 0;
   let expiresAt = null;
-  let resendCooldown = 0;
   let resendAvailableAt = null;
 
   if (activeOtp) {
@@ -506,6 +505,7 @@ export const validateOtp = async (target, inputOtp) => {
   };
 };
 
+// Email-named aliases of the generic OTP functions (OTP targets are phone or email).
 export const requestEmailOtp = (email) => requestOtp(email);
 export const validateEmailOtp = (email, otp) => validateOtp(email, otp);
 export const getEmailOtpStatus = (email) => getOtpStatus(email);

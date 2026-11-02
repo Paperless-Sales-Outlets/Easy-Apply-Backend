@@ -1,6 +1,7 @@
 import Product from '../models/Product.js';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import { AppError } from '../middleware/errorHandler.js';
 
 /**
  * Product Service Layer
@@ -364,7 +365,7 @@ export const getProductById = async (id) => {
     product = await Product.findOne({ productId: id }).lean();
   }
   if (!product) {
-    throw new Error('Product not found');
+    throw new AppError('Product not found', 404);
   }
   return product;
 };
@@ -372,7 +373,7 @@ export const getProductById = async (id) => {
 /**
  * Check if product exists and has sufficient stock
  */
-export const checkProductAvailability = async (productId, quantity) => {
+export const checkProductAvailability = async (productId) => {
   let product = null;
   if (mongoose.Types.ObjectId.isValid(productId)) {
     product = await Product.findById(productId).lean();
@@ -382,11 +383,11 @@ export const checkProductAvailability = async (productId, quantity) => {
   }
 
   if (!product) {
-    throw new Error('Product not found');
+    throw new AppError('Product not found', 404);
   }
 
   if (product.status !== 'active') {
-    throw new Error('Product is not available');
+    throw new AppError('Product is not available', 409);
   }
 
   return product;

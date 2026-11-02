@@ -44,6 +44,7 @@ const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // ── Name comparison ──────────────────────────────────────────────────────────
 
+/** Splits a name into lowercase alphabetic tokens, dropping honorific titles. */
 export function nameTokens(raw) {
   return String(raw || '')
     .toLowerCase()
@@ -173,6 +174,7 @@ export function decide(checks) {
   return 'approved';
 }
 
+/** Builds the human-readable remark stored with an automated KYC decision. */
 export function buildRemark(decision, checks) {
   if (decision === 'approved') {
     const labels = checks.filter((c) => c.result === 'pass').map((c) => c.label.toLowerCase());
@@ -214,6 +216,7 @@ async function findAccounts(rawNic, phone) {
   return { byNic, byPhone };
 }
 
+/** Runs every automated KYC check against a submitted application and returns the evaluation. */
 export async function evaluateApplication(app) {
   const fd = app.formData || {};
   const rawNic = cleanNic(app.nic);
@@ -314,6 +317,7 @@ export async function evaluateApplication(app) {
   return { decision, checks, remark: buildRemark(decision, checks), caseInfo: identity.caseInfo };
 }
 
+/** Runs the automated KYC checks against a customer account (NIC, profile and identity images). */
 export async function evaluateAccount(customer) {
   const rawNic = cleanNic(customer.NIC);
   const parsed = parseNic(rawNic);
@@ -431,6 +435,10 @@ export async function reviewApplicationAuto(app, { kind = 'auto', requestedBy = 
   return { applied: true, decision: evaluation.decision, review };
 }
 
+/**
+ * Evaluates a customer account and applies the decision when its current KYC
+ * status allows it. `kind: 'rerun'` may change more statuses than an automatic run.
+ */
 export async function reviewAccountAuto(customer, { kind = 'auto', requestedBy = null } = {}) {
   const evaluation = await evaluateAccount(customer);
   const current = customer.kycStatus || 'pending';
@@ -529,6 +537,7 @@ const RECHECK_STATUSES = ['pending', 'flagged'];
 
 let recheckJob = null;
 
+/** Returns the state of the latest bulk KYC re-check job, or null if none has run. */
 export const getRecheckJob = () => recheckJob;
 
 /** Every open case a bulk re-check would cover → { applications, accounts, skipped }. */
