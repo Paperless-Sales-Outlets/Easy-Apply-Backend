@@ -14,6 +14,7 @@
 const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const MIN_BIRTH_YEAR = 1900;
 
+/** Strips spaces and separators and uppercases a NIC ('' for empty input). */
 export const cleanNic = (raw) =>
   raw === null || raw === undefined ? '' : String(raw).replace(/[\s\-_/.]/g, '').trim().toUpperCase();
 

@@ -97,6 +97,7 @@ export const SINHALA_TAMIL_TOWN_MAP = {
   'கொழும்பு': 'Colombo', 'கண்டி': 'Kandy', 'யாழ்ப்பாணம்': 'Jaffna', 'டிக்கோயா': 'Dickoya', 'ஹற்றன்': 'Hatton'
 };
 
+/** Strips spaces and separators and uppercases a NIC ('' for empty input). */
 export function cleanNIC(raw) {
   if (raw === null || raw === undefined) return '';
   return String(raw).replace(/[\s\-_/.]/g, '').trim().toUpperCase();
@@ -112,6 +113,7 @@ function repairOcrDigits(token) {
   return token.replace(/[OQDILZEASGTB|!]/g, (ch) => OCR_DIGIT_REPAIRS[ch] ?? ch);
 }
 
+/** Finds a valid 9- or 12-digit NIC in noisy OCR text, preferring `options.expectedNIC` when ambiguous; null if none. */
 export function extractNICFromText(text, options = {}) {
   if (!text || typeof text !== 'string') return null;
   const upper = text.toUpperCase();
@@ -158,6 +160,7 @@ export function extractNICFromText(text, options = {}) {
   return null;
 }
 
+/** Decodes date of birth (YYYY-MM-DD) and gender from a 9-digit (old) or 12-digit (new) NIC; null if undecodable. */
 export function deriveGenderAndDOBFromNIC(nicInput) {
   if (!nicInput) return null;
   const cleaned = cleanNIC(nicInput);
@@ -206,17 +209,15 @@ export function deriveGenderAndDOBFromNIC(nicInput) {
   return null;
 }
 
+/** Fixes a generic OCR misread in names ('VV' read for 'W'). Never guesses person-specific spellings. */
 export function repairOcrName(name) {
   if (!name || typeof name !== 'string') return '';
   let repaired = name;
-  repaired = repaired.replace(/\b([A-Za-z]*?)NALINGAM\b/gi, '$1HALINGAM');
-  repaired = repaired.replace(/\bDAWANHAF\b/gi, 'DAWANHAREN');
-  repaired = repaired.replace(/\bDAWANHAR\b/gi, 'DAWANHAREN');
-  repaired = repaired.replace(/\b([A-Za-z]{3,})HAF\b/gi, '$1HAREN');
   repaired = repaired.replace(/\bVV/g, 'W');
   return repaired;
 }
 
+/** Picks the cardholder's full name from raw front-of-card OCR text, ignoring header and label lines. */
 export function extractFullNameFromOCR(text) {
   if (!text || typeof text !== 'string') return '';
 
@@ -301,6 +302,7 @@ export function extractFullNameFromOCR(text) {
   return cleanNameToken(bestCandidate);
 }
 
+/** Picks the address lines from raw back-of-card OCR text ('' when none is found). */
 export function extractAddressFromOCR(text) {
   if (!text || typeof text !== 'string') return '';
 
@@ -366,6 +368,7 @@ export function extractAddressFromOCR(text) {
   return '';
 }
 
+/** Finds the first known town in an address and returns its { town, district, city }; null if none matches. */
 export function deriveServiceAreaFromAddress(addressStr) {
   if (!addressStr || typeof addressStr !== 'string') return null;
   const upper = addressStr.toUpperCase();
