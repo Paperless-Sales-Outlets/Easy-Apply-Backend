@@ -5,7 +5,6 @@ import mongoose from 'mongoose';
 import connectDB from '../config/db.js';
 import User from '../models/User.js';
 import Application from '../models/Application.js';
-import SalesOfficerQr from '../models/SalesOfficerQr.js';
 
 describe('Sales Officer HTTP Endpoints Integration Test Suite', () => {
   const PORT = process.env.PORT || 5050;
@@ -16,7 +15,6 @@ describe('Sales Officer HTTP Endpoints Integration Test Suite', () => {
   let officerUser = null;
   let adminUser = null;
   let trackingToken = '';
-  const testRefPrefix = `API-TEST-SO-${Date.now()}`;
   const createdAppIds = [];
 
   before(async () => {

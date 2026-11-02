@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { scanNicDocuments } from '../services/paddleOcrService.js';
+import { scanNicDocuments } from '../services/ocr/paddleOcrService.js';
 import { extractNICFromText, cleanNIC, deriveGenderAndDOBFromNIC } from '../utils/nicParser.js';
 
 test('Sri Lankan NIC parsing utilities', async (t) => {
@@ -51,4 +51,24 @@ test('PaddleOCR Deep Learning Engine on synthetic NIC card', async (t) => {
     assert.strictEqual(result.suggestedTitle, 'Mr.');
     assert.ok(result.fetchedCount >= 4);
   });
+});
+
+test('NIC scan falls back to local PaddleOCR when Gemini is unavailable', async () => {
+  const savedKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = ''; // empty (dotenv won't override) forces the Gemini engine to throw
+  try {
+    const svg = Buffer.from(`
+      <svg width="600" height="180" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100%" height="100%" fill="white"/>
+        <text x="30" y="85" font-family="Arial" font-size="28" font-weight="bold" fill="black">199212345678</text>
+      </svg>`);
+    const png = await sharp(svg).png().toBuffer();
+    const { scanNic } = await import('../services/ocr/nicScanService.js');
+    const result = await scanNic({ nicFront: png });
+    assert.strictEqual(result.engine, 'PADDLE_OCR_NODE_ONNX');
+    assert.ok(result.fallbackReason);
+    assert.strictEqual(result.nicNumber, '199212345678');
+  } finally {
+    if (savedKey !== undefined) process.env.GEMINI_API_KEY = savedKey;
+  }
 });
