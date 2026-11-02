@@ -244,6 +244,10 @@ export function extractFullNameFromOCR(text) {
       .replace(/[,\s.-]+$/, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
+    // Hologram/background noise after the name often reads as stray single letters
+    // ("KESAVAN AVANEESH C V"); drop them as long as at least two real words remain.
+    const trimmed = cleaned.replace(/(?:\s+[A-Za-z])+$/, '');
+    if (trimmed.split(/\s+/).length >= 2) cleaned = trimmed;
     return repairOcrName(cleaned);
   };
 
@@ -302,6 +306,16 @@ export function extractFullNameFromOCR(text) {
   return cleanNameToken(bestCandidate);
 }
 
+/**
+ * Whole-word keyword test. Plain substring matching let short keywords such as
+ * "NO" match inside OCR noise ("QANOGINY"), pulling garbage lines into the address.
+ */
+const lineHasKeyword = (upper, rawLine, kw) => {
+  if (!/^\p{ASCII}+$/u.test(kw)) return rawLine.includes(kw);
+  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?:$|[^A-Z0-9])`).test(upper);
+};
+
 /** Picks the address lines from raw back-of-card OCR text ('' when none is found). */
 export function extractAddressFromOCR(text) {
   if (!text || typeof text !== 'string') return '';
@@ -334,10 +348,10 @@ export function extractAddressFromOCR(text) {
     if (ignoredAdministrativeKeywords.some((kw) => upper.includes(kw))) continue;
     if (/(?:Registration|Persons|Act|Noo?\s*32|1968|Commissioner|Birth|Issue)/i.test(rawLine) &&
         /(?:32|1968|Act|Persons)/i.test(rawLine)) continue;
-    if (/^\d{4}[/.-]\d{2}[/.-]\d{2}/.test(rawLine.trim())) continue;
+    if (/\d{4}[/.-]\d{2}[/.-]\d{2}/.test(rawLine)) continue;
 
-    const hasAddressKw = addressKeywords.some((kw) => upper.includes(kw));
-    const isHouseNumberLine = /^(?:No\.?|#)?\s*\d+[/\-A-Za-z0-9]*,?\s+[A-Za-z]{3,}/i.test(rawLine);
+    const hasAddressKw = addressKeywords.some((kw) => lineHasKeyword(upper, rawLine, kw));
+    const isHouseNumberLine = /^(?:No\.?|#)?\s*[A-Za-z]?\d+[A-Za-z]?(?:[/-]\d+[A-Za-z]?)*,?\s+[A-Za-z]{3,}/i.test(rawLine);
 
     if (hasAddressKw || isHouseNumberLine) {
       let clean = rawLine
@@ -347,6 +361,9 @@ export function extractAddressFromOCR(text) {
         .replace(/[£§©®™|\\_~@#^*=[\]{}]/g, '')
         .replace(/\s+/g, ' ')
         .trim();
+
+      // Stray OCR tokens after the closing full stop ("…MORATUWA. Q Sef") are noise.
+      clean = clean.replace(/(\.)\s+\S{1,4}(?:\s+\S{1,4})*$/, '$1');
 
       if (clean.length >= 3) {
         candidateLines.push(clean);
