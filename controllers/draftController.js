@@ -208,7 +208,7 @@ export const getDraft = async (req, res, next) => {
     }
 
     // Hand photos back inside formData, exactly as the wizard holds them.
-    const formData = { ...(draft.formData || {}) };
+    const formData = { ...draft.formData };
     await Promise.all(
       PHOTO_FIELDS.map(async (field) => {
         const photo = draft.photos?.[field];

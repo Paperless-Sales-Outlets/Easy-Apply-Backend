@@ -4,7 +4,6 @@ import mongoose from 'mongoose';
 import Customer from '../models/Customer.js';
 import User from '../models/User.js';
 import { findAccountById } from '../middleware/authMiddleware.js';
-import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
 import { recordAudit } from '../services/auditService.js';
 import { requestOtp, validateOtp } from '../services/otpService.js';
@@ -151,7 +150,7 @@ export const getCustomers = getUsers;
 // @desc    Send OTP to mobile number
 // @route   POST /api/auth/send-otp
 // @access  Public
-export const sendOtp = async (req, res, next) => {
+export const sendOtp = async (req, res) => {
   const { phone } = req.body;
 
   if (!phone) {
@@ -182,7 +181,7 @@ export const sendOtp = async (req, res, next) => {
 // @desc    Verify OTP
 // @route   POST /api/auth/verify-otp
 // @access  Public
-export const verifyOtp = async (req, res, next) => {
+export const verifyOtp = async (req, res) => {
   const { phone, otp } = req.body;
 
   if (!phone || !otp) {
@@ -442,7 +441,6 @@ export const otpLogin = async (req, res, next) => {
   try {
     const digitsOnly = String(phone).replace(/\D/g, '');
     const last9 = digitsOnly.slice(-9);
-    const cleanOtp = String(otp).trim();
 
     // 1. Validate OTP with 5-minute expiry enforcement
     await validateOtp(phone, otp);
@@ -596,7 +594,6 @@ export const verifyEntry = async (req, res, next) => {
     const digitsOnly = String(phone).replace(/\D/g, '');
     const last9 = digitsOnly.slice(-9);
     const cleanNic = String(nic).trim().toUpperCase();
-    const cleanOtp = String(otp).trim();
 
     if (last9.length !== 9) {
       res.status(400);
