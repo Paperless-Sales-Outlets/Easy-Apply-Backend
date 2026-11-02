@@ -72,3 +72,34 @@ test('NIC scan falls back to local PaddleOCR when Gemini is unavailable', async 
     if (savedKey !== undefined) process.env.GEMINI_API_KEY = savedKey;
   }
 });
+
+test('Local OCR reads every field from a synthetic two-sided NIC', async () => {
+  const card = (lines) => sharp(Buffer.from(`
+    <svg width="900" height="320" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#fdf6d8"/>
+      ${lines.map(([y, size, text]) => `<text x="30" y="${y}" font-family="Arial" font-size="${size}" font-weight="bold" fill="black">${text}</text>`).join('')}
+    </svg>`)).png().toBuffer();
+
+  const nicFront = await card([
+    [50, 26, 'NATIONAL IDENTITY CARD'],
+    [105, 36, 'No.: 199212345678'],
+    [165, 28, 'Name: KAMAL PERERA'],
+    [225, 26, 'Sex: Male'],
+    [280, 26, 'Date of Birth: 1992/05/02'],
+  ]);
+  const nicBack = await card([
+    [50, 26, 'Address:'],
+    [110, 28, 'C12/3/4, LAKE FLATS,'],
+    [160, 28, 'LAKEPURA, MORATUWA.'],
+    [250, 24, 'Date of Issue: 2020/05/19'],
+  ]);
+
+  const result = await scanNicDocuments({ nicFront, nicBack });
+  assert.strictEqual(result.nicNumber, '199212345678');
+  assert.strictEqual(result.fullName, 'KAMAL PERERA');
+  assert.strictEqual(result.dob, '1992-05-02');
+  assert.strictEqual(result.gender, 'Male');
+  assert.match(result.address, /LAKE FLATS/);
+  assert.match(result.address, /MORATUWA/);
+  assert.strictEqual(result.engine, 'PADDLE_OCR_NODE_ONNX');
+});
