@@ -60,3 +60,10 @@ GET /api/admin/audit-logs?page=1&limit=25&search=REQ-1024&action=STATUS_UPDATE&m
 The endpoint requires an administrator Bearer token. `search`, `action`,
 `module`, `from`/`startDate`, and `to`/`endDate` are optional; results are
 sorted newest first and include pagination metadata.
+
+## NIC OCR
+
+`POST /api/ocr/scan-nic` (and `/api/nic/scan`) go through `services/ocr/nicScanService.js`:
+Gemini Vision is tried first; if it fails (no key, quota, network, unreadable result) the local
+PaddleOCR/ONNX model in `services/ocr/paddleOcrService.js` runs instead. The response includes
+`engine` and, when the fallback ran, `fallbackReason`.
