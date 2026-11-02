@@ -298,7 +298,6 @@ app.use('/api/appointments', appointmentRoutes);
 
 // NIC Verification Routes
 app.use('/api/nic', nicRoutes);
-app.use('/api/ocr', nicRoutes);
 
 // Payment Routes
 app.use('/api/payment', paymentRoutes);
@@ -319,7 +318,7 @@ app.use('/api/files', fileRoutes);
 // Saved progress on New Connection applications
 app.use('/api/drafts', draftRoutes);
 
-// Server-side PaddleOCR Routes
+// OCR Routes (Gemini primary, local PaddleOCR fallback)
 app.use('/api/ocr', ocrRoutes);
 
 // =====================================
