@@ -46,6 +46,8 @@ import sltBannerRoutes from './routes/sltBannerRoutes.js';
 
 // OCR routes (PaddleOCR ONNX deep-learning engine)
 import ocrRoutes from './routes/ocrRoutes.js';
+import { getEngineMode } from './services/ocr/nicScanService.js';
+import { getPaddleOcrInstance } from './services/ocr/paddleOcrService.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -356,6 +358,14 @@ const server = app.listen(
     );
   }
 );
+
+// Load the local OCR model now (unless Gemini-only) so the first NIC scan isn't slow
+// and a missing model download shows up in the logs at startup, not mid-request.
+if (process.env.NODE_ENV !== 'test' && getEngineMode() !== 'gemini') {
+  getPaddleOcrInstance().catch((err) =>
+    console.error('[PaddleOCR] Warm-up failed; NIC scans will retry on demand:', err.message)
+  );
+}
 
 // Handle Unhandled Promise Rejections
 process.on('unhandledRejection', (err) => {
