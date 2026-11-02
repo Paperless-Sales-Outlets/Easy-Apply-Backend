@@ -63,7 +63,27 @@ sorted newest first and include pagination metadata.
 
 ## NIC OCR
 
-`POST /api/ocr/scan-nic` (and `/api/nic/scan`) go through `services/ocr/nicScanService.js`:
-Gemini Vision is tried first; if it fails (no key, quota, network, unreadable result) the local
-PaddleOCR/ONNX model in `services/ocr/paddleOcrService.js` runs instead. The response includes
-`engine` and, when the fallback ran, `fallbackReason`.
+`POST /api/ocr/scan-nic` (and `/api/nic/scan`) go through `services/ocr/nicScanService.js`.
+Set `NIC_OCR_ENGINE` in `.env`:
+
+| Value | Behaviour |
+|---|---|
+| `auto` (default) | Gemini Vision first; if it fails or reads no NIC number, the local PaddleOCR model runs |
+| `local` | Local model only. Gemini is never called and no image leaves the server |
+| `gemini` | Gemini only |
+
+The response includes `engine` and, when the fallback ran, `fallbackReason`. The local model
+(`services/ocr/paddleOcrService.js`, PP-OCRv6 small on ONNX Runtime) is loaded at server start and
+downloaded once on first run (needs internet, then cached in `~/.cache/ppu-paddle-ocr`).
+
+### Measuring accuracy
+
+```bash
+npm run ocr:eval -- <samples-dir> [--gemini]
+```
+
+`<samples-dir>` holds `<name>.front.jpg`, `<name>.back.jpg` and `<name>.json` (expected
+`nicNumber`, `fullName`, `dob`, `gender`, `address`) per card. It prints per-field accuracy per
+engine. Keep real NIC images outside git (an `ocr-eval/` folder is git-ignored). Run it before
+and after any model or parser change; a larger labelled set is also the starting point if the
+local model ever needs fine-tuning.
