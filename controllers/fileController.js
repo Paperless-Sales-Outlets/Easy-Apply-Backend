@@ -1,7 +1,6 @@
-import mongoose from 'mongoose';
-import { GridFSBucket } from 'mongodb';
-import { ObjectId } from 'bson';
 import path from 'path';
+import { getSignedFileUrl, getStorageClient } from '../services/storageService.js';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 
 // MIME type map for common document extensions
 const MIME_TYPES = {
@@ -12,68 +11,32 @@ const MIME_TYPES = {
 };
 
 // ---------------------------------------------------------------------------
-// @desc  Stream a file out of MongoDB GridFS by its ObjectId
+// @desc  Serve/redirect a file from central object storage
 // @route GET /api/files/:id
-// @access Protected (Admin / Staff) — apply authMiddleware in the router
+// @access Protected (Admin / Staff)
 // ---------------------------------------------------------------------------
 export const serveGridFsFile = async (req, res, next) => {
   const { id } = req.params;
 
-  // Basic ObjectId shape check
-  if (!ObjectId.isValid(id)) {
+  if (!id) {
     res.status(400);
-    return next(new Error('Invalid file ID'));
-  }
-
-  if (mongoose.connection.readyState !== 1) {
-    res.status(503);
-    return next(new Error('Database is not connected'));
+    return next(new Error('Invalid file ID or key'));
   }
 
   try {
-    const bucket = new GridFSBucket(mongoose.connection.db, {
-      bucketName: 'uploads',
-    });
+    // Generate signed S3 / Supabase storage URL
+    const fileUrl = await getSignedFileUrl(id, 3600);
 
-    const objectId = new ObjectId(id);
-
-    // Look up the file metadata first so we can set the correct Content-Type
-    const files = await bucket.find({ _id: objectId }).toArray();
-
-    if (!files || files.length === 0) {
-      res.status(404);
-      return next(new Error('File not found'));
+    if (fileUrl && /^https?:\/\//.test(fileUrl)) {
+      // Redirect directly to the signed cloud storage URL
+      return res.redirect(fileUrl);
     }
 
-    const file = files[0];
-    const ext = path.extname(file.filename || '').toLowerCase();
-    const contentType =
-      file.contentType ||
-      file.metadata?.contentType ||
-      file.metadata?.mimetype ||
-      MIME_TYPES[ext] ||
-      'image/jpeg';
-
-    // Stream the file directly to the HTTP response
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.setHeader(
-      'Content-Disposition',
-      `inline; filename="${file.filename || 'document'}"`
-    );
-
-    const downloadStream = bucket.openDownloadStream(objectId);
-
-    downloadStream.on('error', (err) => {
-      if (!res.headersSent) {
-        res.status(500);
-        next(new Error(`File streaming error: ${err.message}`));
-      }
-    });
-
-    downloadStream.pipe(res);
-
+    res.status(404);
+    return next(new Error('File not found in storage'));
   } catch (error) {
     next(error);
   }
 };
+
+export default serveGridFsFile;

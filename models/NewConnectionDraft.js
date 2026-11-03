@@ -1,89 +1,139 @@
-import mongoose from 'mongoose';
+import { query, toCamelCase } from '../config/db.js';
+import {
+  buildWhereClause,
+  createQueryBuilder,
+  createFindOneQueryBuilder,
+  createFindByIdQueryBuilder,
+} from '../db/modelHelper.js';
 
-// How long a customer can continue an unfinished application, counted from
-// the day they started it. Never extended by later saves.
 export const DRAFT_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export const DRAFT_STATUS = {
-  ACTIVE: 'active', // the customer can see and continue it
-  EXPIRED: 'expired', // past its 30 days: hidden from the customer, kept on record
+  ACTIVE: 'active',
+  EXPIRED: 'expired',
 };
 
-// A photo saved with the draft. Captured images are kept as GridFS files so
-// three NIC/selfie images never push the draft past MongoDB's 16MB document
-// limit; a value that is already a reference (e.g. a GridFS id copied from the
-// customer's profile) is stored as-is.
-const draftPhotoSchema = new mongoose.Schema(
-  {
-    fileId: { type: mongoose.Schema.Types.ObjectId },
-    ref: { type: String },
-  },
-  { _id: false }
-);
-
-/**
- * An unfinished New Connection application, so a customer can leave the wizard
- * and pick it up later from any device after verifying their mobile number again.
- *
- * Kept apart from Application on purpose: drafts must never show up in admin
- * lists, KYC review or reports, and they don't have the NIC / reference number
- * an Application requires.
- *
- * Lifecycle: a draft is `active` for 30 days from when it was started
- * (`resumeUntil`). After that it becomes `expired` — the customer no longer
- * sees it and can't continue it, but the record and its photos are kept so it
- * can still be retrieved if needed. A customer has at most one active draft;
- * expired ones accumulate as history.
- */
-const newConnectionDraftSchema = new mongoose.Schema(
-  {
-    // Mobile number (9-digit national form). Always taken from the
-    // OTP-verified draft token, never from the request body.
-    phone: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    status: {
-      type: String,
-      enum: Object.values(DRAFT_STATUS),
-      default: DRAFT_STATUS.ACTIVE,
-    },
-    // Everything the wizard holds except the photos below.
-    formData: { type: mongoose.Schema.Types.Mixed, default: {} },
-    selectedProduct: { type: mongoose.Schema.Types.Mixed, default: null },
-    stepIndex: { type: Number, default: 0, min: 0 },
-    photos: {
-      nicFront: { type: draftPhotoSchema, default: undefined },
-      nicBack: { type: draftPhotoSchema, default: undefined },
-      facePhoto: { type: draftPhotoSchema, default: undefined },
-    },
-    // Last moment the customer can continue: 30 days after the draft was
-    // started. Set once when the draft is created.
-    resumeUntil: {
-      type: Date,
-      default: () => new Date(Date.now() + DRAFT_LIFETIME_MS),
-    },
-    // When the draft was marked expired.
-    expiredAt: { type: Date, default: null },
-  },
-  {
-    timestamps: true,
-    // Mixed fields with nested objects must not be pruned when empty.
-    minimize: false,
+export class DraftInstance {
+  constructor(data = {}) {
+    Object.assign(this, toCamelCase(data));
+    this.formData = this.formData || {};
+    this.photos = this.photos || {};
   }
-);
 
-// At most one active draft per mobile number; expired drafts don't count, so a
-// customer can start again after one expires while the old one stays on record.
-newConnectionDraftSchema.index(
-  { phone: 1 },
-  { unique: true, partialFilterExpression: { status: DRAFT_STATUS.ACTIVE }, name: 'phone_active_unique' }
-);
+  async save() {
+    const res = await query(
+      `UPDATE new_connection_drafts
+       SET status = $1, form_data = $2, selected_product = $3,
+           step_index = $4, photos = $5, resume_until = $6,
+           expired_at = $7, updated_at = NOW()
+       WHERE id = $8
+       RETURNING *`,
+      [
+        this.status || DRAFT_STATUS.ACTIVE,
+        JSON.stringify(this.formData || {}),
+        this.selectedProduct ? JSON.stringify(this.selectedProduct) : null,
+        Number(this.stepIndex || 0),
+        JSON.stringify(this.photos || {}),
+        this.resumeUntil || new Date(Date.now() + DRAFT_LIFETIME_MS),
+        this.expiredAt || null,
+        this.id || this._id,
+      ]
+    );
 
-// For the scheduled job that marks drafts past their 30 days as expired.
-newConnectionDraftSchema.index({ status: 1, resumeUntil: 1 });
+    if (res.rows.length > 0) {
+      Object.assign(this, toCamelCase(res.rows[0]));
+    }
+    return this;
+  }
+}
 
-const NewConnectionDraft = mongoose.model('NewConnectionDraft', newConnectionDraftSchema);
+const NewConnectionDraft = {
+  findById(id) {
+    return createFindByIdQueryBuilder({
+      tableName: 'new_connection_drafts',
+      id,
+      ModelClass: DraftInstance,
+    });
+  },
+
+  findOne(filter = {}) {
+    return createFindOneQueryBuilder({
+      tableName: 'new_connection_drafts',
+      filter,
+      ModelClass: DraftInstance,
+    });
+  },
+
+  find(filter = {}) {
+    return createQueryBuilder({
+      tableName: 'new_connection_drafts',
+      filter,
+      ModelClass: DraftInstance,
+    });
+  },
+
+  async create(data) {
+    const resumeUntil = data.resumeUntil || new Date(Date.now() + DRAFT_LIFETIME_MS);
+
+    const res = await query(
+      `INSERT INTO new_connection_drafts (
+        phone, status, form_data, selected_product, step_index,
+        photos, resume_until, expired_at, created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+       RETURNING *`,
+      [
+        data.phone ? data.phone.trim() : '',
+        data.status || DRAFT_STATUS.ACTIVE,
+        JSON.stringify(data.formData || {}),
+        data.selectedProduct ? JSON.stringify(data.selectedProduct) : null,
+        Number(data.stepIndex || 0),
+        JSON.stringify(data.photos || {}),
+        resumeUntil,
+        data.expiredAt || null,
+      ]
+    );
+
+    return new DraftInstance(res.rows[0]);
+  },
+
+  async countDocuments(filter = {}) {
+    return createQueryBuilder({
+      tableName: 'new_connection_drafts',
+      filter,
+      countQuery: true,
+    });
+  },
+
+  async findByIdAndUpdate(id, update = {}, options = {}) {
+    const existing = await NewConnectionDraft.findById(id);
+    if (!existing) return null;
+    const fields = update.$set || update;
+    Object.assign(existing, fields);
+    return await existing.save();
+  },
+
+  async findByIdAndDelete(id) {
+    if (!id) return null;
+    const existing = await NewConnectionDraft.findById(id);
+    if (!existing) return null;
+    await query(`DELETE FROM new_connection_drafts WHERE id = $1`, [id]);
+    return existing;
+  },
+
+  async updateMany(filter = {}, update = {}) {
+    const { whereText, values } = buildWhereClause(filter);
+    const fields = update.$set || update;
+    if (fields.status) {
+      const idx = values.length + 1;
+      await query(
+        `UPDATE new_connection_drafts 
+         SET status = $${idx}, expired_at = NOW(), updated_at = NOW() 
+         ${whereText}`,
+        [...values, fields.status]
+      );
+    }
+  },
+};
 
 export default NewConnectionDraft;

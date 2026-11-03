@@ -1,8 +1,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
-import connectDB from '../config/db.js';
+import connectDB, { pool } from '../config/db.js';
 import User from '../models/User.js';
 import Application from '../models/Application.js';
 import SalesOfficerQr from '../models/SalesOfficerQr.js';
@@ -21,9 +20,6 @@ describe('Sales Officer HTTP Endpoints Integration Test Suite', () => {
 
   before(async () => {
     await connectDB();
-    if (mongoose.connection.readyState !== 1) {
-      await new Promise((resolve) => mongoose.connection.once('open', resolve));
-    }
 
     // Find or create admin user for test token
     adminUser = await User.findOne({ role: 'Admin' });
@@ -49,7 +45,7 @@ describe('Sales Officer HTTP Endpoints Integration Test Suite', () => {
     if (createdAppIds.length > 0) {
       await Application.deleteMany({ _id: { $in: createdAppIds } });
     }
-    await mongoose.connection.close();
+    await pool.end();
   });
 
   // Admin endpoint: GET /api/v1/admin/sales-officers

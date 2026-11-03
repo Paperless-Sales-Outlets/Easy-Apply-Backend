@@ -1,24 +1,37 @@
-import mongoose from 'mongoose';
+import { query, toCamelCase } from '../config/db.js';
+import { buildWhereClause, createQueryBuilder } from '../db/modelHelper.js';
 
-const auditLogSchema = new mongoose.Schema(
-  {
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-    adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-    userName: { type: String, trim: true, default: null },
-    action: { type: String, required: true, uppercase: true, trim: true },
-    module: { type: String, required: true, trim: true },
-    targetId: { type: String, trim: true, default: null },
-    description: { type: String, required: true, trim: true },
-    metadata: { type: mongoose.Schema.Types.Mixed, default: undefined },
-    timestamp: { type: Date, default: Date.now, index: true },
+const AuditLog = {
+  async create(data) {
+    const res = await query(
+      `INSERT INTO audit_logs (action, actor_id, actor_role, ip_address, details, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       RETURNING *`,
+      [
+        data.action,
+        data.actorId || data.userId || null,
+        data.actorRole || data.role || 'System',
+        data.ipAddress || '',
+        JSON.stringify(data.details || {}),
+      ]
+    );
+    return toCamelCase(res.rows[0]);
   },
-  { collection: 'audit_logs', versionKey: false }
-);
 
-auditLogSchema.index({ action: 1, module: 1, timestamp: -1 });
-auditLogSchema.index({ userId: 1, timestamp: -1 });
-auditLogSchema.index({ targetId: 1, timestamp: -1 });
+  find(filter = {}) {
+    return createQueryBuilder({
+      tableName: 'audit_logs',
+      filter,
+    });
+  },
 
-const AuditLog = mongoose.model('AuditLog', auditLogSchema);
+  async countDocuments(filter = {}) {
+    return createQueryBuilder({
+      tableName: 'audit_logs',
+      filter,
+      countQuery: true,
+    });
+  },
+};
 
 export default AuditLog;

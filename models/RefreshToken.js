@@ -1,26 +1,35 @@
-import mongoose from 'mongoose';
+import { query, toCamelCase } from '../config/db.js';
+import { buildWhereClause } from '../db/modelHelper.js';
 
-const refreshTokenSchema = new mongoose.Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Customer',
-    required: true,
+const RefreshToken = {
+  async findOne(filter = {}) {
+    const { whereText, values } = buildWhereClause(filter);
+    const sql = `SELECT * FROM refresh_tokens ${whereText} LIMIT 1`;
+    const res = await query(sql, values);
+    return res.rows.length ? toCamelCase(res.rows[0]) : null;
   },
 
-  token: {
-    type: String,
-    required: true,
-    unique: true,
+  async create(data) {
+    const res = await query(
+      `INSERT INTO refresh_tokens (user_id, token, expires_at, created_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (token) DO UPDATE
+       SET expires_at = EXCLUDED.expires_at
+       RETURNING *`,
+      [data.userId, data.token, data.expiresAt]
+    );
+    return toCamelCase(res.rows[0]);
   },
-  expiresAt: {
-    type: Date,
-    required: true,
+
+  async deleteOne(filter = {}) {
+    const { whereText, values } = buildWhereClause(filter);
+    await query(`DELETE FROM refresh_tokens ${whereText}`, values);
   },
-});
 
-// TTL Index to delete the document exactly when the expiresAt date is reached
-refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-
-const RefreshToken = mongoose.model('RefreshToken', refreshTokenSchema);
+  async deleteMany(filter = {}) {
+    const { whereText, values } = buildWhereClause(filter);
+    await query(`DELETE FROM refresh_tokens ${whereText}`, values);
+  },
+};
 
 export default RefreshToken;

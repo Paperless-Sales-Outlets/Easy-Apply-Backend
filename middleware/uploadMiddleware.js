@@ -1,10 +1,6 @@
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
-import mongoose from 'mongoose';
-import { GridFsStorage } from 'multer-gridfs-storage';
-import dotenv from 'dotenv';
-dotenv.config();
+import { uploadBuffer, isStorageConfigured } from '../services/storageService.js';
 
 // ---------------------------------------------------------------------------
 // Shared file filter — accepts PDF / JPG / JPEG / PNG up to 5 MB
@@ -34,73 +30,22 @@ const fileFilter = (req, file, cb) => {
 
 const LIMITS = { fileSize: 5 * 1024 * 1024 }; // 5 MB per file
 
-// ---------------------------------------------------------------------------
-// GridFS storage — files are saved directly into MongoDB (fs.files / fs.chunks)
-// ---------------------------------------------------------------------------
-const gridFsStorage = new GridFsStorage({
-  // Instead of trying to share the Mongoose connection and fighting version mismatches,
-  // we let GridFS connect independently using its own built-in driver:
-  url: process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/paperlessoutlet',
-
-  file: (req, file) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = path.extname(file.originalname).toLowerCase();
-    return {
-      bucketName: 'uploads',
-      filename: `${file.fieldname}-${uniqueSuffix}${ext}`,
-      metadata: {
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        uploadedAt: new Date(),
-      },
-    };
-  },
-});
-
-
-const gridFsUpload = multer({
-  storage: gridFsStorage,
+// Use memory storage so file buffers are uploaded directly to centralized object storage
+const memoryUpload = multer({
+  storage: multer.memoryStorage(),
   fileFilter,
   limits: LIMITS,
 });
 
 // ---------------------------------------------------------------------------
-// Disk storage fallback — used only when MongoDB is offline
-// Files are written to uploads/documents/ on the local filesystem.
-// NOTE: this folder is in .gitignore — files here are NEVER committed to git.
-// ---------------------------------------------------------------------------
-const uploadDir = path.join(process.cwd(), 'uploads', 'documents');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const diskStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
-  },
-});
-
-const diskUpload = multer({
-  storage: diskStorage,
-  fileFilter,
-  limits: LIMITS,
-});
-
-// ---------------------------------------------------------------------------
-// handleFileUploads — picks GridFS when DB is connected, disk otherwise.
-// This is the middleware exported and used in routes.
+// handleFileUploads — intercepts multipart files in memory and uploads them
+// to centralized S3/Supabase Storage, attaching storage URLs to req.files.
 // ---------------------------------------------------------------------------
 export const handleFileUploads = (req, res, next) => {
   // JSON payloads (e.g. Base64 signature) skip Multer entirely
   if (req.is('application/json')) return next();
 
-  const dbConnected = mongoose.connection.readyState === 1;
-  const uploader = dbConnected ? gridFsUpload : diskUpload;
-
-  uploader.any()(req, res, (err) => {
+  memoryUpload.any()(req, res, async (err) => {
     if (err instanceof multer.MulterError) {
       console.error('Multer Error:', err);
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -116,14 +61,31 @@ export const handleFileUploads = (req, res, next) => {
       return next(new Error(err.message));
     }
 
-    // Tag each file so the controller knows where it lives
-    if (req.files) {
-      req.files = req.files.map((f) => ({
-        ...f,
-        storageBackend: dbConnected ? 'gridfs' : 'disk',
-      }));
+    // If storage is configured and files were uploaded, upload them to cloud bucket
+    if (req.files && req.files.length > 0 && isStorageConfigured()) {
+      try {
+        await Promise.all(
+          req.files.map(async (f) => {
+            if (f.buffer) {
+              const uploaded = await uploadBuffer({
+                buffer: f.buffer,
+                originalname: f.originalname,
+                mimetype: f.mimetype,
+                folder: 'documents',
+              });
+              f.url = uploaded.url;
+              f.key = uploaded.key;
+              f.storageBackend = 's3';
+            }
+          })
+        );
+      } catch (uploadErr) {
+        console.error('Centralized storage upload error:', uploadErr.message);
+      }
     }
 
     next();
   });
 };
+
+export default handleFileUploads;

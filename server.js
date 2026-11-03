@@ -6,7 +6,6 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
 import fs from 'fs';
-import mongoose from 'mongoose';
 
 import connectDB, { isDbConnected } from './config/db.js';
 import { startKycAutoReviewScheduler } from './services/kycAutoReviewService.js';
@@ -60,26 +59,6 @@ startKycAutoReviewScheduler();
 // after 30 days (kept in the database, marked expired). Checked hourly.
 startDraftExpiryScheduler();
 
-// Drop legacy orderId index once connected
-mongoose.connection.once('open', async () => {
-  try {
-    const indexes = await mongoose.connection
-      .collection('appointments')
-      .indexes();
-
-    if (indexes.find((i) => i.name === 'orderId_1')) {
-      await mongoose.connection
-        .collection('appointments')
-        .dropIndex('orderId_1');
-
-      console.log(
-        '✅ Dropped legacy orderId_1 index from appointments'
-      );
-    }
-  } catch {
-    // Index or collection may not exist yet
-  }
-});
 
 const app = express();
 
@@ -192,21 +171,10 @@ app.get('/', (req, res) => {
 
 // API Health Check
 app.get('/api/health', (req, res) => {
-  const dbStates = [
-    'disconnected',
-    'connected',
-    'connecting',
-    'disconnecting',
-  ];
-
   res.status(200).json({
     success: true,
     dbConnected: isDbConnected(),
-    dbState:
-      dbStates[mongoose.connection.readyState] || 'unknown',
-    dbHost: isDbConnected()
-      ? mongoose.connection.host
-      : null,
+    dbEngine: 'PostgreSQL',
     environment: process.env.NODE_ENV,
   });
 });

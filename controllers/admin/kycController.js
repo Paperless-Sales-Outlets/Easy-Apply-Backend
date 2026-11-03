@@ -1,4 +1,3 @@
-import mongoose from 'mongoose';
 import Application from '../../models/admin/applicationModel.js';
 import Customer from '../../models/Customer.js';
 import KycReview from '../../models/admin/kycReviewModel.js';
@@ -239,9 +238,9 @@ async function annotateIdentity(items) {
 
   const referenceIds = [...new Set(items
     .map((i) => i.caseInfo?.face?.against === 'selfie' && i.caseInfo.face.referenceId)
-    .filter((id) => id && mongoose.isValidObjectId(id)))];
+    .filter(Boolean))];
   const referenceApps = referenceIds.length
-    ? await Application.find({ _id: { $in: referenceIds } }).select('referenceNumber createdAt formData.documents documents').lean()
+    ? await Application.find({ _id: { $in: referenceIds } }).select('referenceNumber createdAt formData documents').lean()
     : [];
   const referenceUrl = new Map();
   for (const ref of referenceApps) {
@@ -362,7 +361,7 @@ export const getKycQueue = async (req, res, next) => {
 };
 
 async function loadSubject(id) {
-  if (!mongoose.isValidObjectId(id)) return null;
+  if (!id || typeof id !== 'string') return null;
   const application = await Application.findById(id);
   if (application) return { type: 'application', doc: application };
   const customer = await Customer.findById(id);

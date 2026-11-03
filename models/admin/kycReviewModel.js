@@ -1,72 +1,121 @@
-import mongoose from 'mongoose';
+import { query, toCamelCase } from '../../config/db.js';
+import {
+  buildWhereClause,
+  createQueryBuilder,
+  createFindOneQueryBuilder,
+  createFindByIdQueryBuilder,
+  genericFindOneAndUpdate,
+  formatColumnOrPath,
+  toSnakeCase,
+} from '../../db/modelHelper.js';
 
-// Audit record for one KYC case. The decision itself still lives where it
-// always has (Application.status / Customer.kycStatus) so nothing else in the
-// app changes; this collection adds the part that was missing — *who* decided
-// (the automated system or a named admin), *why*, and every change since.
-//
-// A case is either a service application or a registered customer account
-// that has captured ID images but no application yet.
-const checkSchema = new mongoose.Schema(
-  {
-    key: { type: String, required: true },
-    label: { type: String, required: true },
-    // pass   – verified and consistent
-    // fail   – a definite contradiction (the only thing that justifies rejecting)
-    // unsure – missing or ambiguous data (flags the case for a person)
-    // manual – cannot be machine-verified here; never blocks approval
-    result: { type: String, enum: ['pass', 'fail', 'unsure', 'manual'], required: true },
-    detail: { type: String, default: '' },
+export class KycReviewInstance {
+  constructor(data = {}) {
+    Object.assign(this, toCamelCase(data));
+    this.checks = Array.isArray(this.checks) ? this.checks : [];
+    this.history = Array.isArray(this.history) ? this.history : [];
+    this.caseInfo = this.caseInfo || null;
+  }
+
+  async save() {
+    const res = await query(
+      `UPDATE kyc_reviews
+       SET subject_type = $1, subject_id = $2, decided_by = $3,
+           decided_by_name = $4, decided_by_id = $5, decided_at = $6,
+           auto_decision = $7, auto_checked_at = $8, case_info = $9,
+           checks = $10, history = $11, updated_at = NOW()
+       WHERE id = $12
+       RETURNING *`,
+      [
+        this.subjectType,
+        this.subjectId,
+        this.decidedBy || null,
+        this.decidedByName || null,
+        this.decidedById || null,
+        this.decidedAt || new Date(),
+        this.autoDecision || null,
+        this.autoCheckedAt || null,
+        this.caseInfo ? JSON.stringify(this.caseInfo) : null,
+        JSON.stringify(this.checks || []),
+        JSON.stringify(this.history || []),
+        this.id || this._id,
+      ]
+    );
+
+    if (res.rows.length > 0) {
+      Object.assign(this, toCamelCase(res.rows[0]));
+    }
+    return this;
+  }
+}
+
+const KycReview = {
+  findById(id) {
+    return createFindByIdQueryBuilder({
+      tableName: 'kyc_reviews',
+      id,
+      ModelClass: KycReviewInstance,
+    });
   },
-  { _id: false }
-);
 
-const historySchema = new mongoose.Schema(
-  {
-    at: { type: Date, default: Date.now },
-    // 'system' = decided by the automated review; 'admin' = a person.
-    actor: { type: String, enum: ['system', 'admin'], required: true },
-    actorName: { type: String, default: '' },
-    actorId: { type: mongoose.Schema.Types.ObjectId, default: null },
-    kind: { type: String, enum: ['auto', 'rerun', 'manual'], required: true },
-    fromStatus: { type: String, default: '' },
-    toStatus: { type: String, required: true },
-    remark: { type: String, default: '', maxlength: 2000 },
+  findOne(filter = {}) {
+    return createFindOneQueryBuilder({
+      tableName: 'kyc_reviews',
+      filter,
+      ModelClass: KycReviewInstance,
+    });
   },
-  { _id: false }
-);
 
-const kycReviewSchema = new mongoose.Schema(
-  {
-    subjectType: { type: String, enum: ['application', 'account'], required: true },
-    subjectId: { type: mongoose.Schema.Types.ObjectId, required: true },
-
-    // Who made the decision that is currently in force (null = no decision
-    // has been recorded by either; the status predates the review log).
-    decidedBy: { type: String, enum: ['system', 'admin', null], default: null },
-    decidedByName: { type: String, default: '' },
-    decidedById: { type: mongoose.Schema.Types.ObjectId, default: null },
-    decidedAt: { type: Date, default: Date.now },
-
-    // Latest automated verdict, kept even after a person overrides it so the
-    // admin can compare the two.
-    autoDecision: { type: String, enum: ['approved', 'rejected', 'flagged'], default: null },
-    autoCheckedAt: { type: Date, default: null },
-    checks: { type: [checkSchema], default: [] },
-
-    // What the latest automated run found about the identity photos:
-    //   customerType – 'new' | 'returning' | 'existing-new-nic' | 'unknown'
-    //   images       – { nicFront|nicBack|facePhoto: { capturedAt, source: 'request'|'on-file'|null } }
-    //   face         – { result, against: 'nic'|'selfie', distance, threshold, referenceNumber? }
-    caseInfo: { type: mongoose.Schema.Types.Mixed, default: null },
-
-    history: { type: [historySchema], default: [] },
+  find(filter = {}) {
+    return createQueryBuilder({
+      tableName: 'kyc_reviews',
+      filter,
+      ModelClass: KycReviewInstance,
+    });
   },
-  { timestamps: true }
-);
 
-kycReviewSchema.index({ subjectType: 1, subjectId: 1 }, { unique: true });
+  async create(data) {
+    const res = await query(
+      `INSERT INTO kyc_reviews (
+        subject_type, subject_id, decided_by, decided_by_name, decided_by_id,
+        decided_at, auto_decision, auto_checked_at, case_info, checks, history,
+        created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+       RETURNING *`,
+      [
+        data.subjectType,
+        data.subjectId,
+        data.decidedBy || null,
+        data.decidedByName || null,
+        data.decidedById || null,
+        data.decidedAt || new Date(),
+        data.autoDecision || null,
+        data.autoCheckedAt || null,
+        data.caseInfo ? JSON.stringify(data.caseInfo) : null,
+        JSON.stringify(data.checks || []),
+        JSON.stringify(data.history || []),
+      ]
+    );
+    return new KycReviewInstance(res.rows[0]);
+  },
 
-const KycReview = mongoose.models.KycReview || mongoose.model('KycReview', kycReviewSchema);
+  async findOneAndUpdate(filter, update = {}, options = {}) {
+    return genericFindOneAndUpdate('kyc_reviews', filter, update, options, KycReviewInstance);
+  },
+
+  async distinct(field, filter = {}) {
+    const col = field === '_id' ? 'id' : field.includes('.') ? formatColumnOrPath(field) : toSnakeCase(field);
+    const { whereText, values } = buildWhereClause(filter);
+    const sql = `SELECT DISTINCT ${col} as val FROM kyc_reviews ${whereText ? `${whereText} AND` : 'WHERE'} ${col} IS NOT NULL`;
+    const res = await query(sql, values);
+    return res.rows.map((r) => r.val);
+  },
+
+  async deleteMany(filter = {}) {
+    const { whereText, values } = buildWhereClause(filter);
+    await query(`DELETE FROM kyc_reviews ${whereText}`, values);
+  },
+};
 
 export default KycReview;

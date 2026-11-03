@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import mongoose from 'mongoose';
 import SalesOfficerQr from '../models/SalesOfficerQr.js';
 import Application from '../models/Application.js';
 import User from '../models/User.js';
@@ -147,10 +146,7 @@ export const getOrCreateOfficerQr = async (officer, { regenerate = false, metada
  * Computes live statistics for an officer from the database.
  */
 export const getOfficerStatistics = async (officerId, employeeNumber, query = {}) => {
-  const cleanOfficerId =
-    officerId && mongoose.Types.ObjectId.isValid(officerId)
-      ? new mongoose.Types.ObjectId(String(officerId))
-      : officerId;
+  const cleanOfficerId = officerId;
   const cleanEmpNumber = String(employeeNumber || '').trim();
 
   const match = {

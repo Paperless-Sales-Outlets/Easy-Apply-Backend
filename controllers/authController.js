@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
+import { uploadBuffer } from '../services/storageService.js';
 import Customer from '../models/Customer.js';
 import User from '../models/User.js';
 import { findAccountById } from '../middleware/authMiddleware.js';
@@ -60,7 +60,7 @@ export const publicStaff = (user) => ({
 
 // Profile for either kind of account, picked by the collection it came from.
 export const publicUser = (account) =>
-  account instanceof User ? publicStaff(account) : publicCustomer(account);
+  account?.role === 'Customer' ? publicCustomer(account) : publicStaff(account);
 
 
 
@@ -80,21 +80,18 @@ export const storeIdentityImage = async (dataUrl, label, userId) => {
   const contentType = (meta.match(/data:(image\/[a-zA-Z+]+);/) || [])[1] || 'image/jpeg';
   const buffer = Buffer.from(base64, 'base64');
 
-  // Guard against oversized payloads reaching the database.
   if (buffer.length > 5 * 1024 * 1024) {
     throw new Error(`${label} exceeds the 5MB limit`);
   }
 
-  const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'uploads' });
-  return new Promise((resolve, reject) => {
-    const stream = bucket.openUploadStream(`${label}-${userId}-${Date.now()}`, {
-      contentType,
-      metadata: { userId, kind: label, uploadedAt: new Date() },
-    });
-    stream.on('error', reject);
-    stream.on('finish', () => resolve(stream.id));
-    stream.end(buffer);
+  const uploaded = await uploadBuffer({
+    buffer,
+    originalname: `${label}-${userId}.jpg`,
+    mimetype: contentType,
+    folder: 'kyc',
   });
+
+  return uploaded.url || uploaded.key;
 };
 
 // Helper to generate access token

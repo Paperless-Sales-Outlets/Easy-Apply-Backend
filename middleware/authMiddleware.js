@@ -34,8 +34,6 @@ export const protect = async (req, res, next) => {
       const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
       // Admin and staff accounts live in `users`, customers in `customers`.
-      // The token carries the role, so look in the matching collection first
-      // and fall back to the other for tokens issued before the split.
       const account = await findAccountById(decoded.id, decoded.role);
 
       if (!account) {
@@ -49,7 +47,7 @@ export const protect = async (req, res, next) => {
       }
 
       req.user = account;
-      if (account instanceof Customer) req.customer = account;
+      if (account.role === 'Customer') req.customer = account;
 
       return next();
     } catch (error) {
@@ -66,8 +64,6 @@ export const protect = async (req, res, next) => {
 };
 
 // Authorize roles (Role-Based Access Control)
-// Roles are matched case-insensitively so 'Admin' / 'Staff' (Customer model enum)
-// also satisfy guards written as 'admin' / 'staff'.
 export const authorize = (...roles) => {
   const normalized = roles.map((role) => String(role).toLowerCase());
   return (req, res, next) => {

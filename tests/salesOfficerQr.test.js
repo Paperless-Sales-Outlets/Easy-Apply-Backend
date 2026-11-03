@@ -1,7 +1,6 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import mongoose from 'mongoose';
-import connectDB from '../config/db.js';
+import connectDB, { pool } from '../config/db.js';
 import User from '../models/User.js';
 import Application from '../models/Application.js';
 import SalesOfficerQr from '../models/SalesOfficerQr.js';
@@ -21,10 +20,6 @@ describe('Sales Officer QR Code Attribution Test Suite', () => {
 
   before(async () => {
     await connectDB();
-    // Wait for connection ready
-    if (mongoose.connection.readyState !== 1) {
-      await new Promise((resolve) => mongoose.connection.once('open', resolve));
-    }
   });
 
   after(async () => {
@@ -36,7 +31,7 @@ describe('Sales Officer QR Code Attribution Test Suite', () => {
     if (testQrRecord && testQrRecord.employeeNumber !== '095756') {
       await SalesOfficerQr.deleteOne({ _id: testQrRecord._id });
     }
-    await mongoose.connection.close();
+    await pool.end();
   });
 
   // 1. Existing Sales Officer 095756 can be found without creating a duplicate account
@@ -44,14 +39,19 @@ describe('Sales Officer QR Code Attribution Test Suite', () => {
     officerUser = await findSalesOfficerByEmployeeNumber('095756');
 
     if (!officerUser) {
-      // If running on a local DB where the account was not yet seeded, create it once
-      officerUser = await User.create({
-        name: 'Sasindu Test Officer',
-        email: 'sasindu@slt.com.lk',
-        employeeNumber: '095756',
-        role: 'Sales Officer',
-        password: 'password123',
-      });
+      const existing = await User.findOne({ email: 'sasindu@slt.com.lk' });
+      if (existing) {
+        officerUser = existing;
+      } else {
+        // If running on a local DB where the account was not yet seeded, create it once
+        officerUser = await User.create({
+          name: 'Sasindu Test Officer',
+          email: 'sasindu@slt.com.lk',
+          employeeNumber: '095756',
+          role: 'Sales Officer',
+          password: 'password123',
+        });
+      }
     }
 
     assert.ok(officerUser, 'Officer user should exist');
@@ -260,7 +260,7 @@ describe('Sales Officer QR Code Attribution Test Suite', () => {
   test('11. Attributed applications are strictly scoped by officer ID / employeeNumber', async () => {
     const otherOfficerQuery = {
       $or: [
-        { salesOfficer: new mongoose.Types.ObjectId() },
+        { salesOfficer: '00000000-0000-0000-0000-000000000000' },
         { salesOfficerEmployeeNumber: '999999' },
       ],
     };

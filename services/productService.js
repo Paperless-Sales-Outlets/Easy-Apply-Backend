@@ -1,5 +1,4 @@
 import Product from '../models/Product.js';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
 /**
@@ -356,12 +355,9 @@ export const getAllProducts = async (options = {}) => {
  * Get a single product by ID
  */
 export const getProductById = async (id) => {
-  let product = null;
-  if (mongoose.Types.ObjectId.isValid(id)) {
-    product = await Product.findById(id).lean();
-  }
+  let product = await Product.findById(id);
   if (!product) {
-    product = await Product.findOne({ productId: id }).lean();
+    product = await Product.findOne({ productId: id });
   }
   if (!product) {
     throw new Error('Product not found');
@@ -372,21 +368,75 @@ export const getProductById = async (id) => {
 /**
  * Check if product exists and has sufficient stock
  */
-export const checkProductAvailability = async (productId, quantity) => {
+export const checkProductAvailability = async (productId, quantity = 1) => {
   let product = null;
-  if (mongoose.Types.ObjectId.isValid(productId)) {
-    product = await Product.findById(productId).lean();
+
+  // 1. Try local DB first (safe lookup)
+  try {
+    product = await Product.findById(productId);
+    if (!product) {
+      product = await Product.findOne({ productId });
+    }
+  } catch (err) {
+    // Gracefully continue to Product Hub API
   }
-  if (!product) {
-    product = await Product.findOne({ productId }).lean();
+
+  // 2. Query Live Product Hub Cart Item API (/public-api/v1/products/{id})
+  if (!product && productId) {
+    try {
+      const liveItem = await fetchProductCartItem(productId);
+      if (liveItem && (liveItem.price || liveItem.monthlyPrice || liveItem.productName || liveItem.name)) {
+        product = {
+          ...liveItem,
+          id: liveItem.id || liveItem.productId || productId,
+          productId: liveItem.productId || liveItem.id || productId,
+          availableQuantity: 999,
+          status: 'active',
+        };
+      }
+    } catch (err) {
+      console.warn(`[Product Hub Availability] Error checking live item "${productId}":`, err.message);
+    }
+  }
+
+  // 3. Fallback: Search all live Product Hub offerings
+  if (!product && productId) {
+    try {
+      const hubProducts = await fetchProductsFromHub();
+      if (Array.isArray(hubProducts)) {
+        product = hubProducts.find(
+          (p) =>
+            String(p.id) === String(productId) ||
+            String(p.productId) === String(productId) ||
+            String(p._id) === String(productId)
+        );
+      }
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  // 4. Fallback: Search local catalog fallback products
+  if (!product && productId) {
+    const fallbackProducts = getFallbackProducts();
+    product = fallbackProducts.find(
+      (p) =>
+        String(p.id) === String(productId) ||
+        String(p.productId) === String(productId) ||
+        String(p._id) === String(productId)
+    );
   }
 
   if (!product) {
     throw new Error('Product not found');
   }
 
-  if (product.status !== 'active') {
+  if (product.status && product.status !== 'active') {
     throw new Error('Product is not available');
+  }
+
+  if (product.availableQuantity === undefined || product.availableQuantity === null) {
+    product.availableQuantity = 999;
   }
 
   return product;

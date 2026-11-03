@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import { isDbConnected } from '../config/db.js';
 import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
 import Customer from '../models/Customer.js';
@@ -104,7 +104,7 @@ export const createApplication = async (req, res, next) => {
     let attribution = null;
 
     // MongoDB available
-    if (mongoose.connection.readyState === 1) {
+    if (isDbConnected()) {
       // 1. Ensure Customer document exists in database
       try {
         let customerRecord = await Customer.findOne({
@@ -190,7 +190,7 @@ export const createApplication = async (req, res, next) => {
 
     if (rawCandidateToken) {
       const candidateToken = String(rawCandidateToken).trim();
-      if (mongoose.connection.readyState === 1) {
+      if (isDbConnected()) {
         const qrRecord = await SalesOfficerQr.findOne({
           trackingToken: candidateToken,
           isActive: true,
@@ -281,7 +281,7 @@ export const createApplication = async (req, res, next) => {
     );
   }
 
-  if (mongoose.connection.readyState === 1) {
+  if (isDbConnected()) {
     await recordAudit({
       req,
       action: 'CREATE',
@@ -316,7 +316,7 @@ export const createApplication = async (req, res, next) => {
           null;
 
         // 3. Fallback: look up Connection by phone for email
-        if (!emailTo && verifiedPhone && mongoose.connection.readyState === 1) {
+        if (!emailTo && verifiedPhone && isDbConnected()) {
           const conn = await Connection.findOne({ telephone: verifiedPhone }).select('email fullName');
           if (conn?.email) emailTo = conn.email;
         }
@@ -549,7 +549,7 @@ export const lookupPackage = async (req, res, next) => {
   try {
     let connection = null;
 
-    if (mongoose.connection.readyState === 1) {
+    if (isDbConnected()) {
       connection = await Connection.findOne({
         $or: [
           { telephone: phone },
