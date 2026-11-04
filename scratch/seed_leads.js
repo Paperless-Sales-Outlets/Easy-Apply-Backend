@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import connectDB from '../config/db.js';
 import dotenv from 'dotenv';
 import path from 'path';
 import Lead from '../models/Lead.js';
@@ -36,12 +36,8 @@ const buildChecks = (results = {}) => {
 
 const seedLeads = async () => {
   try {
-    if (!process.env.MONGO_URI) {
-      throw new Error('MONGO_URI is not defined in your .env file');
-    }
-
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB Connected successfully.');
+    await connectDB();
+    console.log('PostgreSQL Connected successfully.');
 
     const admin = await User.findOne({ role: 'Admin' }).select('_id name').lean();
 
@@ -247,8 +243,8 @@ const seedLeads = async () => {
   } catch (error) {
     console.error('Error seeding leads:', error.message);
   } finally {
-    await mongoose.connection.close();
-    console.log('Database connection closed.');
+    
+    process.exit(0);
   }
 };
 

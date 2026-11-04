@@ -1,5 +1,5 @@
-import mongoose from 'mongoose';
-import NewConnectionDraft, { DRAFT_LIFETIME_MS, DRAFT_STATUS } from '../models/NewConnectionDraft.js';
+import { isDbConnected, query } from '../config/db.js';
+import { DRAFT_STATUS } from '../models/NewConnectionDraft.js';
 
 // Unfinished New Connection applications can be continued for 30 days from
 // when they were started. After that they are marked `expired`: hidden from
@@ -7,66 +7,47 @@ import NewConnectionDraft, { DRAFT_LIFETIME_MS, DRAFT_STATUS } from '../models/N
 // photos) so they can still be retrieved. Nothing here deletes a draft.
 
 /**
- * One-time upgrade of the drafts collection, safe to run on every start.
- *
- * Earlier versions deleted drafts automatically (a TTL index on `expiresAt`)
- * and allowed one draft per number in total (a plain unique index on `phone`).
- * Both must go: the first would keep deleting drafts that should now be kept,
- * the second would stop a customer starting again after a draft expired.
- * Drafts saved before statuses existed become active, with their 30 days
- * counted from when they were started.
+ * Ensures drafts table state is clean on start.
  */
 export async function prepareDraftStorage() {
-  if (mongoose.connection.readyState !== 1) return;
-
-  const collection = mongoose.connection.collection(NewConnectionDraft.collection.collectionName);
-  const indexes = await collection.indexes().catch(() => []); // collection may not exist yet
-
-  for (const index of indexes) {
-    const autoDelete = index.expireAfterSeconds !== undefined;
-    const oneDraftPerNumber = index.key?.phone === 1 && index.unique && !index.partialFilterExpression;
-    if (autoDelete || oneDraftPerNumber) {
-      await collection.dropIndex(index.name);
-      console.log(`[drafts] removed old index ${index.name}`);
-    }
+  if (!isDbConnected()) return;
+  try {
+    await query(
+      `UPDATE new_connection_drafts
+       SET status = 'active'
+       WHERE status IS NULL`
+    );
+  } catch (err) {
+    console.warn('[drafts] storage prep notice:', err.message);
   }
-
-  const upgraded = await collection.updateMany({ status: { $exists: false } }, [
-    {
-      $set: {
-        status: DRAFT_STATUS.ACTIVE,
-        resumeUntil: { $add: [{ $ifNull: ['$createdAt', '$$NOW'] }, DRAFT_LIFETIME_MS] },
-        expiredAt: null,
-      },
-    },
-    { $unset: 'expiresAt' },
-  ]);
-  if (upgraded.modifiedCount) {
-    console.log(`[drafts] set status and 30-day limit on ${upgraded.modifiedCount} existing draft(s)`);
-  }
-
-  // Build the current indexes (one active draft per number, expiry lookup)
-  // now that any conflicting old ones are gone.
-  await NewConnectionDraft.createIndexes();
 }
 
 /** Mark every active draft past its 30 days as expired. Returns how many. */
 export async function runDraftExpiry() {
-  if (mongoose.connection.readyState !== 1) return 0;
+  if (!isDbConnected()) return 0;
 
-  const result = await NewConnectionDraft.updateMany(
-    { status: DRAFT_STATUS.ACTIVE, resumeUntil: { $lte: new Date() } },
-    { $set: { status: DRAFT_STATUS.EXPIRED, expiredAt: new Date() } }
-  );
-  if (result.modifiedCount) {
-    console.log(`[drafts] marked ${result.modifiedCount} draft(s) as expired`);
+  try {
+    const result = await query(
+      `UPDATE new_connection_drafts
+       SET status = $1, expired_at = NOW(), updated_at = NOW()
+       WHERE status = $2 AND resume_until <= NOW()
+       RETURNING id`,
+      [DRAFT_STATUS.EXPIRED, DRAFT_STATUS.ACTIVE]
+    );
+
+    const count = result.rowCount || 0;
+    if (count > 0) {
+      console.log(`[drafts] marked ${count} draft(s) as expired`);
+    }
+    return count;
+  } catch (err) {
+    console.error('[drafts] expiry sweep error:', err.message);
+    return 0;
   }
-  return result.modifiedCount;
 }
 
 /**
- * Prepare the collection once the database is connected, then mark expired
- * drafts straight away and every hour after.
+ * Mark expired drafts straight away and every hour after.
  */
 export function startDraftExpiryScheduler(intervalMs = 60 * 60 * 1000) {
   const tick = () => runDraftExpiry().catch((err) => console.error('[drafts] expiry sweep failed:', err.message));
@@ -76,8 +57,8 @@ export function startDraftExpiryScheduler(intervalMs = 60 * 60 * 1000) {
       .catch((err) => console.error('[drafts] storage upgrade failed:', err.message))
       .finally(tick);
 
-  if (mongoose.connection.readyState === 1) start();
-  else mongoose.connection.once('open', start);
+  // Trigger on start after initial delay to ensure DB is initialized
+  setTimeout(start, 2000);
 
   const timer = setInterval(tick, intervalMs);
   timer.unref?.();

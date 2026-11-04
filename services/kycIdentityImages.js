@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import mongoose from 'mongoose';
-import { getSignedFileUrl } from './s3Service.js';
+
+import { getSignedFileUrl } from './storageService.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Identity images for automated KYC (admin side, read-only)
@@ -31,7 +31,7 @@ export function docRef(raw) {
   if (!raw) return null;
   const s = typeof raw === 'string'
     ? raw
-    : raw._bsontype === 'ObjectId' || raw instanceof mongoose.Types.ObjectId ? String(raw) : raw.url || raw.fileId;
+    : raw._bsontype === 'ObjectId' || (raw && typeof raw.toHexString === 'function') ? String(raw) : raw.url || raw.fileId;
   if (typeof s !== 'string') return null;
   if (s.startsWith('data:image/')) return { kind: 'inline', value: s, key: `inline:${s.length}:${s.slice(-48)}` };
   const m = s.match(/^(?:gridfs:\/\/|\/api\/files\/)?([0-9a-fA-F]{24})$/);
@@ -65,23 +65,8 @@ export function sniffImageType(bytes) {
  * also gets `imageType`, read from its first bytes.
  */
 export async function gridfsInfo(refs, { sniff = false } = {}) {
-  const ids = [...new Set(refs.filter((r) => r?.kind === 'gridfs').map((r) => r.id))]
-    .map((id) => new mongoose.Types.ObjectId(id));
-  if (!ids.length) return new Map();
-  const db = mongoose.connection.db;
-  const files = await db.collection('uploads.files')
-    .find({ _id: { $in: ids } })
-    .project({ length: 1, contentType: 1, uploadDate: 1, metadata: 1 })
-    .toArray();
-  if (sniff && files.length) {
-    const firstChunks = await db.collection('uploads.chunks')
-      .find({ files_id: { $in: files.map((f) => f._id) }, n: 0 })
-      .project({ files_id: 1, data: 1 })
-      .toArray();
-    const head = new Map(firstChunks.map((c) => [String(c.files_id), c.data?.buffer ? Buffer.from(c.data.buffer).subarray(0, 32) : null]));
-    files.forEach((f) => { f.imageType = sniffImageType(head.get(String(f._id))); });
-  }
-  return new Map(files.map((f) => [String(f._id), f]));
+  // GridFS is legacy; with PostgreSQL / Supabase all documents are stored via central storage
+  return new Map();
 }
 
 /** Image format of an inline data URL, from its decoded first bytes. */
@@ -110,20 +95,8 @@ export function captureSource(capturedAt, submittedAt) {
 }
 
 async function readGridfs(id) {
-  const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'uploads' });
-  const chunks = [];
-  let total = 0;
-  await new Promise((resolve, reject) => {
-    bucket.openDownloadStream(new mongoose.Types.ObjectId(id))
-      .on('data', (c) => {
-        total += c.length;
-        if (total > MAX_BYTES) reject(new Error('image too large'));
-        else chunks.push(c);
-      })
-      .on('end', resolve)
-      .on('error', reject);
-  });
-  return Buffer.concat(chunks);
+  // GridFS is legacy; with PostgreSQL / Supabase all documents are stored via central storage
+  return null;
 }
 
 async function readPath(value) {

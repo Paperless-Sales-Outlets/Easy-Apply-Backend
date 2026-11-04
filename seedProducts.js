@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import connectDB, { query } from './config/db.js';
 import dotenv from 'dotenv';
 import Product from './models/Product.js';
 
@@ -148,39 +148,26 @@ const sampleProducts = [
 
 
 const seedProducts = async () => {
-  let connected = false;
-  const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/paperlessoutlet';
-
   try {
-    console.log(`Connecting to MongoDB at: ${mongoUri.split('@').pop()}...`);
-    await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5000 });
-    connected = true;
-  } catch (err) {
-    console.warn(`Primary connection failed (${err.message}). Trying fallback local connection...`);
-    try {
-      await mongoose.connect('mongodb://127.0.0.1:27017/paperlessoutlet', { serverSelectionTimeoutMS: 5000 });
-      connected = true;
-      console.log('Connected to local MongoDB instance.');
-    } catch (localErr) {
-      console.error('Local MongoDB connection also failed:', localErr.message);
+    await connectDB();
+    console.log('Connected to PostgreSQL for product seeding.');
+
+    let seededCount = 0;
+    for (const prod of sampleProducts) {
+      const existing = await Product.findOne({ name: prod.name });
+      if (!existing) {
+        await Product.create(prod);
+        seededCount++;
+      } else {
+        await Product.findOneAndUpdate({ name: prod.name }, prod);
+        seededCount++;
+      }
     }
-  }
 
-  if (!connected) {
-    console.error('Could not establish database connection for seeding.');
-    process.exit(1);
-  }
-
-  try {
-    await Product.deleteMany({});
-    console.log('Cleared existing product records.');
-
-    const createdProducts = await Product.insertMany(sampleProducts);
-    console.log(`Successfully seeded ${createdProducts.length} products to MongoDB!`);
-
+    console.log(`Successfully seeded/updated ${seededCount} products in PostgreSQL!`);
     process.exit(0);
   } catch (error) {
-    console.error('Error seeding products:', error);
+    console.error('Error seeding products:', error.message);
     process.exit(1);
   }
 };

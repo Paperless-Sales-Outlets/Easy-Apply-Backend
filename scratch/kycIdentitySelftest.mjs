@@ -3,7 +3,7 @@
 // unsaved test requests against them, prints the results, then deletes it all.
 // Run:  node scratch/kycIdentitySelftest.mjs
 import 'dotenv/config';
-import mongoose from 'mongoose';
+// legacy: mongoose GridFS is replaced by Supabase storage
 import sharp from 'sharp';
 import Customer from '../models/Customer.js';
 import { evaluateApplication, evaluateAccount } from '../services/kycAutoReviewService.js';
@@ -20,7 +20,7 @@ const blank = (mean) => sharp({
 }).png().toBuffer();
 
 async function storeTest(buffer, uploadedAt) {
-  const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'uploads' });
+  const bucket = new Object(mongoose.connection.db, { bucketName: 'uploads' });
   return new Promise((resolve, reject) => {
     // No contentType — like most real uploads since the MongoDB driver upgrade.
     const s = bucket.openUploadStream(`${TAG}-${Date.now()}`, { metadata: { kind: TAG, uploadedAt } });
@@ -36,7 +36,7 @@ const show = (title, ev) => {
 };
 
 const fakeApp = (docs, extra = {}) => ({
-  _id: new mongoose.Types.ObjectId(),
+  _id: new String(),
   nic: TEST_NIC,
   phone: TEST_PHONE,
   status: 'pending',
@@ -45,7 +45,7 @@ const fakeApp = (docs, extra = {}) => ({
   documents: docs,
 });
 
-await mongoose.connect(process.env.MONGO_URI);
+console.log('PostgreSQL active');
 const created = { files: [], customers: [] };
 try {
   if (await Customer.exists({ $or: [{ NIC: { $in: [TEST_NIC, TEST_NIC_OLD] } }, { phone: { $in: [TEST_PHONE, OTHER_PHONE] } }] })) {
@@ -106,11 +106,11 @@ try {
   show('8  Account registration only (no request yet)', await evaluateAccount(
     { ...(await Customer.findById(fresh._id).lean()), createdAt: now }));
 } finally {
-  const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'uploads' });
+  const bucket = new Object(mongoose.connection.db, { bucketName: 'uploads' });
   for (const id of created.files) await bucket.delete(id).catch(() => {});
   await Customer.deleteMany({ _id: { $in: created.customers } });
   const leftovers = await mongoose.connection.db.collection('uploads.files').countDocuments({ 'metadata.kind': TAG })
     + await Customer.countDocuments({ NIC: { $in: [TEST_NIC, TEST_NIC_OLD] } });
   console.log(`\ncleanup done — leftover test records: ${leftovers}`);
-  await mongoose.disconnect();
+  
 }

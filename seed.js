@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import connectDB, { query } from './config/db.js';
 import dotenv from 'dotenv';
 import Connection from './models/Connection.js';
 import Application from './models/Application.js';
@@ -7,12 +7,8 @@ dotenv.config();
 
 const seedDB = async () => {
   try {
-    const mongoUri =
-      process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/paperlessoutlet';
-
-    await mongoose.connect(mongoUri);
-
-    console.log('MongoDB Connected for Seeding Connection Records');
+    await connectDB();
+    console.log('PostgreSQL Connected for Seeding Connection Records');
 
     const sampleConnections = [
       // ==============================
@@ -386,19 +382,12 @@ const seedDB = async () => {
       }
     }
 
-    console.log(`Successfully seeded ${createdApplications} new application records into MongoDB!`);
-
-    await mongoose.connection.close();
-
-    console.log('MongoDB connection closed successfully.');
-
+    console.log(`Successfully seeded ${createdApplications} new application records into PostgreSQL!`);
     process.exit(0);
   } catch (error) {
     console.error(`Error Seeding Connections: ${error.message}`);
 
-    if (mongoose.connection.readyState !== 0) {
-      await mongoose.connection.close();
-    }
+    
 
     process.exit(1);
   }
