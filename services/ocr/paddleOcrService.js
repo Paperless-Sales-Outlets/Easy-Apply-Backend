@@ -2,7 +2,7 @@
 // High-accuracy server-side OCR engine using PaddleOCR DBNet + SVTR on ONNX Runtime in pure Node.js.
 
 import sharp from 'sharp';
-import { PaddleOcrService, V4_EN_MOBILE_MODEL } from 'ppu-paddle-ocr';
+import { PaddleOcrService, V6_SMALL_MODEL } from 'ppu-paddle-ocr';
 import {
   cleanNIC,
   extractNICFromText,
@@ -10,7 +10,7 @@ import {
   extractAddressFromOCR,
   deriveGenderAndDOBFromNIC,
   deriveServiceAreaFromAddress,
-} from '../utils/nicParser.js';
+} from '../../utils/nicParser.js';
 
 let paddleInstance = null;
 let initPromise = null;
@@ -24,8 +24,8 @@ export async function getPaddleOcrInstance() {
 
   initPromise = (async () => {
     try {
-      console.log('[PaddleOCR] Initializing ONNX Runtime PaddleOCR model (PP-OCRv4)...');
-      const service = new PaddleOcrService({ model: V4_EN_MOBILE_MODEL });
+      console.log('[PaddleOCR] Initializing ONNX Runtime PaddleOCR model (PP-OCRv6 small, multilingual)...');
+      const service = new PaddleOcrService({ model: V6_SMALL_MODEL });
       await service.initialize();
       paddleInstance = service;
       console.log('[PaddleOCR] Model initialized successfully.');
@@ -79,7 +79,8 @@ export async function recognizeImage(imageInput) {
   const arrayBuffer = await prepareImageBuffer(imageInput);
   if (!arrayBuffer) return { text: '', confidence: 0, results: [] };
 
-  const result = await ocrService.recognize(arrayBuffer, { flatten: true });
+  // Grouped (not flattened) output keeps one text line per row; the NIC parsers rely on the line breaks.
+  const result = await ocrService.recognize(arrayBuffer);
   return {
     text: result?.text || '',
     confidence: result?.confidence || 0,

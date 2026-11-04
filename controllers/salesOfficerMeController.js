@@ -1,5 +1,4 @@
 import Application from '../models/Application.js';
-import SalesOfficerQr from '../models/SalesOfficerQr.js';
 import {
   getOfficerStatistics as fetchOfficerStats,
   getOrCreateOfficerQr,

@@ -41,7 +41,7 @@ const fakeApp = (docs, extra = {}) => ({
   phone: TEST_PHONE,
   status: 'pending',
   createdAt: new Date(),
-  formData: { nameFull: 'KYC Selftest Person', documents: docs, ...(extra.formData || {}) },
+  formData: { nameFull: 'KYC Selftest Person', documents: docs, ...extra.formData },
   documents: docs,
 });
 

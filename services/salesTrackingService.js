@@ -119,7 +119,7 @@ export const getOrCreateOfficerQr = async (officer, { regenerate = false, metada
       qrRecord.isActive = true;
       qrRecord.regeneratedAt = new Date();
       if (metadata && Object.keys(metadata).length > 0) {
-        qrRecord.metadata = { ...(qrRecord.metadata || {}), ...metadata };
+        qrRecord.metadata = { ...qrRecord.metadata, ...metadata };
       }
       await qrRecord.save();
     }

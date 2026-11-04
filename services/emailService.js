@@ -140,7 +140,7 @@ function emailShell({ subject, bodyHtml }) {
 // 1. PAYMENT CONFIRMATION EMAIL
 //    Triggered: PayHere IPN status_code=2 (and cart checkout)
 // ─────────────────────────────────────────────────────────────
-function buildPaymentConfirmationBody({ customerName, referenceNumber, orderId, amount, currency, serviceType, paidAt }) {
+function buildPaymentConfirmationBody({ customerName, referenceNumber, orderId, amount, serviceType, paidAt }) {
   const displayRef = referenceNumber || orderId || '—';
   const displayName = customerName || 'Valued Customer';
 
@@ -311,12 +311,12 @@ async function _send({ to, subject, html }) {
  * Send payment confirmation email (after PayHere IPN or cart checkout).
  */
 export async function sendPaymentConfirmationEmail({
-  to, customerName, referenceNumber, orderId, amount, currency = 'LKR', serviceType, paidAt,
+  to, customerName, referenceNumber, orderId, amount, serviceType, paidAt,
 }) {
   const subject = `✅ Payment Confirmed — Ref: ${referenceNumber || orderId}`;
   const html = emailShell({
     subject,
-    bodyHtml: buildPaymentConfirmationBody({ customerName, referenceNumber, orderId, amount, currency, serviceType, paidAt }),
+    bodyHtml: buildPaymentConfirmationBody({ customerName, referenceNumber, orderId, amount, serviceType, paidAt }),
   });
   await _send({ to, subject, html });
 }

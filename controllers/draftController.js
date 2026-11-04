@@ -116,7 +116,7 @@ export const getDraft = async (req, res, next) => {
       });
     }
 
-    const formData = { ...(draft.formData || {}) };
+    const formData = { ...draft.formData };
     PHOTO_FIELDS.forEach((field) => {
       const photo = draft.photos?.[field];
       if (photo?.ref || photo?.url) {

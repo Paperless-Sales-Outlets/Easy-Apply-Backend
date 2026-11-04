@@ -5,6 +5,11 @@ const positiveInt = (value, fallback, max) => {
   return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
 };
 
+/**
+ * @desc    List audit logs with pagination and search/action/module/date filters
+ * @route   GET /api/admin/audit
+ * @access  Private (Admin)
+ */
 export const getAuditLogs = async (req, res, next) => {
   try {
     const {

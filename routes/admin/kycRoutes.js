@@ -6,6 +6,7 @@ import {
   sweepKycAutoReview,
   recheckAllKyc,
   getRecheckAllStatus,
+  getKycDocument,
 } from '../../controllers/admin/kycController.js';
 import { protect, authorize } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
@@ -26,6 +27,9 @@ router.post('/auto-review', sweepKycAutoReview);
 // Re-check every open (pending / flagged) case with the current rules, and its progress
 router.post('/recheck-all', recheckAllKyc);
 router.get('/recheck-all', getRecheckAllStatus);
+
+// Inline document image (kept out of the list so it stays small)
+router.get('/:id/document/:key', getKycDocument);
 
 // Run the automated check again for one case
 router.post('/:id/auto-review', rerunKycAutoReview);

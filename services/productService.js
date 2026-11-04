@@ -1,5 +1,6 @@
 import Product from '../models/Product.js';
 import dotenv from 'dotenv';
+import { AppError } from '../middleware/errorHandler.js';
 
 /**
  * Product Service Layer
@@ -360,7 +361,7 @@ export const getProductById = async (id) => {
     product = await Product.findOne({ productId: id });
   }
   if (!product) {
-    throw new Error('Product not found');
+    throw new AppError('Product not found', 404);
   }
   return product;
 };
@@ -368,7 +369,7 @@ export const getProductById = async (id) => {
 /**
  * Check if product exists and has sufficient stock
  */
-export const checkProductAvailability = async (productId, quantity = 1) => {
+export const checkProductAvailability = async (productId) => {
   let product = null;
 
   // 1. Try local DB first (safe lookup)
@@ -428,11 +429,11 @@ export const checkProductAvailability = async (productId, quantity = 1) => {
   }
 
   if (!product) {
-    throw new Error('Product not found');
+    throw new AppError('Product not found', 404);
   }
 
   if (product.status && product.status !== 'active') {
-    throw new Error('Product is not available');
+    throw new AppError('Product is not available', 409);
   }
 
   if (product.availableQuantity === undefined || product.availableQuantity === null) {

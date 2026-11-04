@@ -89,6 +89,39 @@ const resolveDocUrl = async (raw) => {
   return await getSignedFileUrl(url);
 };
 
+/**
+ * Inline base64 images can be several MB each, which made the review list
+ * take ~10s to load. The list carries a URL to fetch them on demand instead.
+ */
+const lazyDocUrl = (url, subjectId, key) =>
+  url && url.startsWith('data:') ? `/api/admin/kyc/${subjectId}/document/${key}` : url;
+
+/** The customer profile linked to an application by NIC or phone (null if none or lookup fails). */
+async function findLinkedCustomer(app) {
+  try {
+    const last9 = String(app.phone || '').replace(/\D/g, '').slice(-9);
+    return await Customer.findOne({
+      $or: [
+        ...(app.nic ? [{ NIC: app.nic.toUpperCase() }] : []),
+        ...(last9 ? [{ phone: new RegExp(`${last9}$`) }] : []),
+      ],
+    }).lean();
+  } catch (err) {
+    console.warn('[KYC] Linked customer lookup failed:', err.message);
+    return null;
+  }
+}
+
+/** Raw stored value for one document of an application, falling back to the customer's captured identity images. */
+function rawAppDoc(app, customerProfile, key) {
+  const fd = app.formData || {};
+  const docs = fd.documents && typeof fd.documents === 'object' ? fd.documents : {};
+  let raw = docs[key] ?? app.documents?.[key] ?? fd[key];
+  if (key === 'signature' && !raw) raw = fd.signature;
+  if (!raw && customerProfile?.identityDocuments?.[key]) raw = customerProfile.identityDocuments[key];
+  return raw;
+}
+
 const IDENTITY_KEYS = ['nicFront', 'nicBack', 'facePhoto'];
 const USER_DOC_KEYS = DOC_KEYS.filter(({ key }) => IDENTITY_KEYS.includes(key));
 
@@ -135,7 +168,7 @@ async function customerToQueueItem(customer, review) {
     const raw = customer.identityDocuments?.[key];
     const url = await resolveDocUrl(raw);
     if (url) {
-      documents.push({ key, label, url });
+      documents.push({ key, label, url: lazyDocUrl(url, customer._id, key) });
       identityRaw[key] = raw;
     }
   }
@@ -169,33 +202,15 @@ async function toQueueItem(app, review) {
   const docs = fd.documents && typeof fd.documents === 'object' ? fd.documents : {};
 
   // Linked customer profile — holds the NIC + live face photo captured at registration
-  let customerProfile = null;
-  try {
-    const last9 = String(app.phone || '').replace(/\D/g, '').slice(-9);
-    customerProfile = await Customer.findOne({
-      $or: [
-        ...(app.nic ? [{ NIC: app.nic.toUpperCase() }] : []),
-        ...(last9 ? [{ phone: new RegExp(`${last9}$`) }] : []),
-      ],
-    }).lean();
-  } catch {}
+  const customerProfile = await findLinkedCustomer(app);
 
   const documents = [];
   const identityRaw = {};
   for (const { key, label } of DOC_KEYS) {
-    let raw = docs[key] ?? app.documents?.[key] ?? fd[key];
-
-    // Fallback for signature from root form data
-    if (key === 'signature' && !raw) raw = fd.signature;
-
-    // Fallback to Customer identityDocuments (captured during sign-up / OCR)
-    if (!raw && customerProfile?.identityDocuments?.[key]) {
-      raw = customerProfile.identityDocuments[key];
-    }
-
+    const raw = rawAppDoc(app, customerProfile, key);
     const resolved = await resolveDocUrl(raw);
     if (resolved) {
-      documents.push({ key, label, url: resolved });
+      documents.push({ key, label, url: lazyDocUrl(resolved, app._id, key) });
       if (IDENTITY_KEYS.includes(key)) identityRaw[key] = raw;
     }
   }
@@ -245,7 +260,7 @@ async function annotateIdentity(items) {
   const referenceUrl = new Map();
   for (const ref of referenceApps) {
     const docs = { ...ref.formData?.documents, ...ref.documents };
-    const url = await resolveDocUrl(docs.facePhoto);
+    const url = lazyDocUrl(await resolveDocUrl(docs.facePhoto), ref._id, 'facePhoto');
     if (url) referenceUrl.set(String(ref._id), { url, referenceNumber: ref.referenceNumber, capturedAt: ref.createdAt });
   }
 
@@ -355,6 +370,37 @@ export const getKycQueue = async (req, res, next) => {
 
     const all = await annotateIdentity([...queue, ...accounts]);
     res.status(200).json({ success: true, count: all.length, queue: all });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Stream one inline (base64) document image of a KYC case
+// @route   GET /api/admin/kyc/:id/document/:key
+// @access  Private (Admin / Staff only)
+export const getKycDocument = async (req, res, next) => {
+  try {
+    const { id, key } = req.params;
+    if (!DOC_KEYS.some((d) => d.key === key)) {
+      return res.status(400).json({ success: false, message: 'Unknown document type.' });
+    }
+    const subject = await loadSubject(id);
+    if (!subject) {
+      return res.status(404).json({ success: false, message: 'KYC case not found.' });
+    }
+
+    const raw = subject.type === 'application'
+      ? rawAppDoc(subject.doc, await findLinkedCustomer(subject.doc), key)
+      : subject.doc.identityDocuments?.[key];
+    const url = await resolveDocUrl(raw);
+    const match = /^data:(image\/[\w.+-]+);base64,([\s\S]+)$/.exec(url || '');
+    if (!match) {
+      return res.status(404).json({ success: false, message: 'Document image not found.' });
+    }
+
+    res.set('Content-Type', match[1]);
+    res.set('Cache-Control', 'private, max-age=300');
+    return res.send(Buffer.from(match[2], 'base64'));
   } catch (error) {
     next(error);
   }

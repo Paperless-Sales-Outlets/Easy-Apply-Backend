@@ -65,7 +65,7 @@ describe('Sales Officer QR Code Attribution Test Suite', () => {
 
   // 2. A QR tracking record can be created and retrieved for the officer
   test('2. A QR tracking record can be created and retrieved for the officer', async () => {
-    const { qrRecord, created } = await getOrCreateOfficerQr(officerUser);
+    const { qrRecord } = await getOrCreateOfficerQr(officerUser);
     testQrRecord = qrRecord;
 
     assert.ok(qrRecord, 'QR record must exist');
