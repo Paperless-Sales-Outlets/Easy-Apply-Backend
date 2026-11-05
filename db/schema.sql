@@ -381,3 +381,34 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
+
+-- -----------------------------------------------------------------------------
+-- WebAuthn passkeys for admin / staff sign-in
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS passkeys (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    credential_id TEXT NOT NULL UNIQUE,
+    credential_public_key TEXT NOT NULL,          -- base64
+    counter BIGINT NOT NULL DEFAULT 0,
+    device_type VARCHAR(30) DEFAULT 'singleDevice',
+    backed_up BOOLEAN DEFAULT FALSE,
+    transports TEXT[] DEFAULT '{}',
+    device_name VARCHAR(100) DEFAULT 'Passkey Device',
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
+
+CREATE TABLE IF NOT EXISTS passkey_challenges (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    challenge TEXT NOT NULL,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(20) NOT NULL,                    -- 'registration' | 'authentication'
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_passkey_challenges_expires ON passkey_challenges(expires_at);
