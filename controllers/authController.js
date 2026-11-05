@@ -98,7 +98,7 @@ export const storeIdentityImage = async (dataUrl, label, userId) => {
 };
 
 // Helper to generate access token
-const generateAccessToken = (user) => {
+export const generateAccessToken = (user) => {
   return jwt.sign(
     { id: user._id, role: user.role },
     process.env.JWT_ACCESS_SECRET,
@@ -107,7 +107,7 @@ const generateAccessToken = (user) => {
 };
 
 // Helper to generate refresh token
-const generateRefreshToken = (user) => {
+export const generateRefreshToken = (user) => {
   return jwt.sign(
     { id: user._id, jti: crypto.randomUUID() },
     process.env.JWT_REFRESH_SECRET,
