@@ -2,6 +2,8 @@ import { query, toCamelCase } from '../config/db.js';
 
 // Convert camelCase string to snake_case
 export function toSnakeCase(str) {
+  // All-caps keys (NIC, OTP) are single words: 'NIC' must map to "nic", not "_n_i_c".
+  if (/^[A-Z0-9_]+$/.test(str)) return str.toLowerCase();
   return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
