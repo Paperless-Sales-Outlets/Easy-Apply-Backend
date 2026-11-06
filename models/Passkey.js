@@ -10,6 +10,8 @@ const toDoc = (row) => {
   const doc = toCamelCase(row);
   doc.credentialPublicKey = Buffer.from(row.credential_public_key, 'base64');
   doc.transports = row.transports || [];
+  // passkeyController (and WebAuthn) spell it `credentialID`; toCamelCase yields `credentialId`.
+  doc.credentialID = row.credential_id;
   // Persist the fields that change after sign-in (signature counter, last use).
   doc.save = async function save() {
     await query(
