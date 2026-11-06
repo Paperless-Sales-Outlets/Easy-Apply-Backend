@@ -14,7 +14,7 @@ jobs:
 
       - name: Dump Supabase Database
         env:
-          DATABASE_URL: ${{ secrets.postgresql://postgres.yawxtplhzqqtpxmhlftp:XYZ%4012346Hallo@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres }}
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           pg_dump "$DATABASE_URL" \
             --format=custom \
