@@ -8,6 +8,11 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import 'dotenv/config';
+import {
+  encryptBuffer,
+  decryptBuffer,
+  isEncryptedBuffer,
+} from './encryptionService.js';
 
 let s3Client = null;
 
@@ -18,7 +23,7 @@ const getRegion = () => process.env.STORAGE_REGION || process.env.AWS_REGION || 
  * Extracts Supabase project reference if endpoint is a Supabase S3 endpoint
  * e.g. https://yawxtplhzqqtpxmhlftp.storage.supabase.co/storage/v1/s3 => yawxtplhzqqtpxmhlftp
  */
-const getSupabaseRef = () => {
+export const getSupabaseRef = () => {
   const endpoint = process.env.STORAGE_ENDPOINT || process.env.S3_ENDPOINT || '';
   const match = endpoint.match(/https?:\/\/([a-z0-9_-]+)\.storage\.supabase\.co/i);
   return match ? match[1] : null;
@@ -62,7 +67,6 @@ export const getStorageClient = () => {
 
 /**
  * Uploads a file buffer directly to Supabase Storage via REST API
- * Fallback when S3 keys are not provided or have issues
  */
 async function uploadViaSupabaseRest({ buffer, key, mimetype, bucket }) {
   const ref = getSupabaseRef();
@@ -91,7 +95,6 @@ async function uploadViaSupabaseRest({ buffer, key, mimetype, bucket }) {
     throw new Error(`Supabase Storage REST upload failed (${response.status}): ${errText}`);
   }
 
-  // Construct standard Supabase public view URL
   const publicUrl = `${supabaseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${bucket}/${key}`;
   return { key, url: publicUrl };
 }
@@ -103,7 +106,6 @@ export function formatPublicStorageUrl(key) {
   const bucket = getBucket();
   const rawPublicUrl = process.env.STORAGE_PUBLIC_URL || '';
 
-  // If user provided S3 endpoint as STORAGE_PUBLIC_URL, convert to browser-friendly Supabase URL
   if (rawPublicUrl.includes('.storage.supabase.co/storage/v1/s3')) {
     const ref = getSupabaseRef();
     if (ref) {
@@ -126,10 +128,17 @@ export function formatPublicStorageUrl(key) {
 
 /**
  * Uploads a file buffer directly to Supabase Storage bucket.
+ * Encrypts sensitive documents with AES-256-GCM before storage by default.
  * Strictly uploads to Supabase (no local disk storage).
  * Returns the stored key and displayable URL.
  */
-export async function uploadBuffer({ buffer, originalname = 'file', mimetype = 'application/octet-stream', folder = 'documents' }) {
+export async function uploadBuffer({
+  buffer,
+  originalname = 'file',
+  mimetype = 'application/octet-stream',
+  folder = 'documents',
+  encrypt = true,
+}) {
   const ext = path.extname(originalname).toLowerCase() || '.png';
   const cleanFolder = folder.replace(/^\/+|\/+$/g, '');
   const uniqueName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
@@ -140,7 +149,10 @@ export async function uploadBuffer({ buffer, originalname = 'file', mimetype = '
   const secretKey = process.env.STORAGE_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
 
-  // 1. If S3 Access Key ID and Secret are available, use S3 Client
+  // 1. Encrypt buffer at rest if requested
+  const payloadBuffer = encrypt ? encryptBuffer(buffer) : buffer;
+
+  // 2. If S3 Access Key ID and Secret are available, use S3 Client
   if (accessKeyId && secretKey) {
     try {
       const client = getStorageClient();
@@ -148,38 +160,123 @@ export async function uploadBuffer({ buffer, originalname = 'file', mimetype = '
         new PutObjectCommand({
           Bucket: bucket,
           Key: key,
-          Body: buffer,
+          Body: payloadBuffer,
           ContentType: mimetype,
+          Metadata: {
+            'x-encrypted': encrypt ? 'true' : 'false',
+          },
         })
       );
 
       const publicUrl = formatPublicStorageUrl(key);
       if (publicUrl) {
-        return { key, url: publicUrl };
+        return { key, url: publicUrl, encrypted: encrypt };
       }
 
       const presignedUrl = await getSignedFileUrl(key);
-      return { key, url: presignedUrl };
+      return { key, url: presignedUrl, encrypted: encrypt };
     } catch (s3Err) {
       console.warn(`[Supabase Storage S3] Upload failed: ${s3Err.message}`);
-      // If REST credentials are also available, fallback to REST
       if (supabaseKey) {
         console.log('[Supabase Storage] Retrying upload via Supabase Storage REST API...');
-        return await uploadViaSupabaseRest({ buffer, key, mimetype, bucket });
+        return await uploadViaSupabaseRest({ buffer: payloadBuffer, key, mimetype, bucket });
       }
       throw s3Err;
     }
   }
 
-  // 2. If Supabase REST key is available, upload directly via Supabase REST API
+  // 3. If Supabase REST key is available, upload directly via Supabase REST API
   if (supabaseKey) {
-    return await uploadViaSupabaseRest({ buffer, key, mimetype, bucket });
+    return await uploadViaSupabaseRest({ buffer: payloadBuffer, key, mimetype, bucket });
   }
 
-  // 3. Neither credentials available: throw clear actionable error (strictly no local disk)
   throw new Error(
     'Supabase Storage is not configured. Missing STORAGE_ACCESS_KEY in .env. Please see the Supabase S3 guide to obtain your Access Key ID.'
   );
+}
+
+/**
+ * Resolves a raw key or public/signed URL to its relative storage key.
+ */
+export function extractStorageKey(keyOrUrl) {
+  if (!keyOrUrl || typeof keyOrUrl !== 'string') return '';
+  let clean = keyOrUrl.trim();
+
+  // If URL: extract after bucket name
+  const bucket = getBucket();
+  const bucketMarker = `/${bucket}/`;
+  if (clean.includes(bucketMarker)) {
+    clean = clean.split(bucketMarker).pop();
+  }
+
+  // Remove leading query params or slashes
+  clean = clean.split(/[?#]/)[0].replace(/^\/+/, '');
+  if (clean.startsWith('public/')) clean = clean.slice(7);
+  if (clean.startsWith('authenticated/')) clean = clean.slice(14);
+  return clean;
+}
+
+/**
+ * Downloads a file from Supabase Storage and decrypts it on the fly if encrypted.
+ * Returns { buffer, isEncrypted, key }.
+ */
+export async function downloadBuffer(keyOrUrl) {
+  const cleanKey = extractStorageKey(keyOrUrl);
+  if (!cleanKey) {
+    throw new Error('Invalid storage key or URL provided for download.');
+  }
+
+  const bucket = getBucket();
+  const accessKeyId = process.env.STORAGE_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
+  const secretKey = process.env.STORAGE_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+  let rawBuffer = null;
+
+  // 1. Try S3 client download
+  if (accessKeyId && secretKey) {
+    try {
+      const client = getStorageClient();
+      const response = await client.send(
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: cleanKey,
+        })
+      );
+
+      const chunks = [];
+      for await (const chunk of response.Body) {
+        chunks.push(chunk);
+      }
+      rawBuffer = Buffer.concat(chunks);
+    } catch (s3Err) {
+      console.warn(`[Supabase Storage S3] Download for key "${cleanKey}" failed: ${s3Err.message}`);
+    }
+  }
+
+  // 2. Fallback: try direct HTTP fetch from Supabase public / authenticated URL
+  if (!rawBuffer) {
+    const ref = getSupabaseRef();
+    const publicUrl = formatPublicStorageUrl(cleanKey) || (ref ? `https://${ref}.supabase.co/storage/v1/object/public/${bucket}/${cleanKey}` : null);
+    if (publicUrl) {
+      const res = await fetch(publicUrl);
+      if (res.ok) {
+        const arrayBuf = await res.arrayBuffer();
+        rawBuffer = Buffer.from(arrayBuf);
+      }
+    }
+  }
+
+  if (!rawBuffer) {
+    throw new Error(`Failed to download object "${cleanKey}" from Supabase Storage.`);
+  }
+
+  const encrypted = isEncryptedBuffer(rawBuffer);
+  const decryptedBuffer = decryptBuffer(rawBuffer);
+
+  return {
+    buffer: decryptedBuffer,
+    isEncrypted: encrypted,
+    key: cleanKey,
+  };
 }
 
 /**
@@ -197,7 +294,7 @@ export async function getSignedFileUrl(keyOrUrl, expiresInSec = 3600) {
   if (accessKeyId && secretKey) {
     const client = getStorageClient();
     const bucket = getBucket();
-    const cleanKey = keyOrUrl.replace(/^\/+/, '');
+    const cleanKey = extractStorageKey(keyOrUrl);
 
     try {
       const command = new GetObjectCommand({
@@ -210,7 +307,6 @@ export async function getSignedFileUrl(keyOrUrl, expiresInSec = 3600) {
     }
   }
 
-  // Fallback to formatted public URL
   const publicUrl = formatPublicStorageUrl(keyOrUrl);
   return publicUrl || keyOrUrl;
 }
@@ -226,24 +322,26 @@ export async function deleteFile(key) {
   if (accessKeyId && secretKey) {
     const client = getStorageClient();
     const bucket = getBucket();
+    const cleanKey = extractStorageKey(key);
     try {
       await client.send(
         new DeleteObjectCommand({
           Bucket: bucket,
-          Key: key.replace(/^\/+/, ''),
+          Key: cleanKey,
         })
       );
     } catch (err) {
-      console.warn(`Failed to delete storage object "${key}":`, err.message);
+      console.warn(`Failed to delete storage object "${cleanKey}":`, err.message);
     }
   }
 }
 
 export default {
   uploadBuffer,
+  downloadBuffer,
   getSignedFileUrl,
   deleteFile,
   isStorageConfigured,
   formatPublicStorageUrl,
+  extractStorageKey,
 };
-

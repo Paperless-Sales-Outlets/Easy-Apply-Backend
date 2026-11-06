@@ -3,7 +3,7 @@ import NewConnectionDraft, { DRAFT_LIFETIME_MS, DRAFT_STATUS } from '../models/N
 import { uploadBuffer, getSignedFileUrl, deleteFile } from '../services/storageService.js';
 
 // Wizard fields holding images.
-const PHOTO_FIELDS = ['nicFront', 'nicBack', 'facePhoto'];
+const PHOTO_FIELDS = ['nicFront', 'nicBack', 'facePhoto', 'signature'];
 const MAX_STEP_INDEX = 5;
 const MAX_PHOTO_BYTES = 6 * 1024 * 1024;
 

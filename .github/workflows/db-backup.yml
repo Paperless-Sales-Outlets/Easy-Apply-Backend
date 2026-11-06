@@ -1,0 +1,29 @@
+name: Nightly Database Backup
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # Runs daily at 18:00 UTC (11:30 PM SLT)
+  workflow_dispatch:      # Allows manual trigger button in GitHub UI
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL Tools
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Dump Supabase Database
+        env:
+          DATABASE_URL: ${{ secrets.postgresql://postgres.yawxtplhzqqtpxmhlftp:XYZ%4012346Hallo@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres }}
+        run: |
+          pg_dump "$DATABASE_URL" \
+            --format=custom \
+            --schema=public \
+            --file="db_backup_$(date +'%Y-%m-%d').dump"
+
+      - name: Upload Backup Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-database-backup
+          path: "*.dump"
+          retention-days: 14

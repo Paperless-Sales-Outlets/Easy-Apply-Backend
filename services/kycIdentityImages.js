@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { getSignedFileUrl } from './storageService.js';
+import { getSignedFileUrl, downloadBuffer } from './storageService.js';
+import { decryptBuffer } from './encryptionService.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Identity images for automated KYC (admin side, read-only)
@@ -100,17 +101,20 @@ async function readGridfs(id) {
 }
 
 async function readPath(value) {
-  // A full web address came from the submitted form, so it is never fetched —
-  // that would let anyone make this server call an address of their choosing.
-  if (/^https?:\/\//.test(value)) return null;
-  // Local disk first (dev / single server), then our own S3 bucket when configured.
-  const rel = value.replace(/^\/+/, '').split(/[?#]/)[0];
-  const local = path.resolve(BACKEND_ROOT, rel);
-  if (local.startsWith(path.join(BACKEND_ROOT, 'uploads'))) {
-    try { return await fs.readFile(local); } catch { /* not on this disk */ }
+  try {
+    const { buffer } = await downloadBuffer(value);
+    return buffer && buffer.length <= MAX_BYTES ? buffer : null;
+  } catch (err) {
+    const rel = value.replace(/^\/+/, '').split(/[?#]/)[0];
+    const local = path.resolve(BACKEND_ROOT, rel);
+    if (local.startsWith(path.join(BACKEND_ROOT, 'uploads'))) {
+      try {
+        const raw = await fs.readFile(local);
+        return decryptBuffer(raw);
+      } catch { /* not on disk */ }
+    }
+    return null;
   }
-  const signed = await getSignedFileUrl(value);
-  return /^https?:\/\//.test(signed) ? fetchBytes(signed) : null;
 }
 
 async function fetchBytes(url) {

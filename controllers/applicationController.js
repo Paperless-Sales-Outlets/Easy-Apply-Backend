@@ -1,5 +1,6 @@
 import { isDbConnected } from '../config/db.js';
 import Application from '../models/Application.js';
+import { uploadBuffer } from '../services/storageService.js';
 import Connection from '../models/Connection.js';
 import Customer from '../models/Customer.js';
 import Appointment from '../models/Appointment.js';
@@ -12,6 +13,29 @@ import { recordAudit } from '../services/auditService.js';
 // @desc    Submit a new service application
 // @route   POST /api/applications
 // @access  Public
+const uploadBase64Doc = async (dataUrl, fieldName, phone) => {
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    return dataUrl;
+  }
+  try {
+    const [meta, base64] = dataUrl.split(',');
+    const mime = (meta.match(/data:(image\/[a-zA-Z+]+);/) || [])[1] || 'image/jpeg';
+    const buf = Buffer.from(base64, 'base64');
+    const ext = mime.includes('png') ? '.png' : '.jpg';
+    const res = await uploadBuffer({
+      buffer: buf,
+      originalname: `app-${fieldName}-${phone}${ext}`,
+      mimetype: mime,
+      folder: 'documents',
+      encrypt: true,
+    });
+    return res.url || res.key;
+  } catch (err) {
+    console.warn(`Upload of ${fieldName} notice:`, err.message);
+    return dataUrl;
+  }
+};
+
 export const createApplication = async (req, res, next) => {
   let { serviceType, formData, phone } = req.body;
   const files = req.files || {};

@@ -16,6 +16,7 @@ export const publicCustomer = (customer) => {
   const hasNicFront = Boolean(customer.identityDocuments?.nicFront && String(customer.identityDocuments.nicFront).trim());
   const hasNicBack = Boolean(customer.identityDocuments?.nicBack && String(customer.identityDocuments.nicBack).trim());
   const hasFacePhoto = Boolean(customer.identityDocuments?.facePhoto && String(customer.identityDocuments.facePhoto).trim());
+  const hasSignature = Boolean(customer.identityDocuments?.signature && String(customer.identityDocuments.signature).trim());
   const hasNicDocuments = hasNicFront && hasNicBack;
 
   return {
@@ -42,6 +43,7 @@ export const publicCustomer = (customer) => {
     hasNicFront,
     hasNicBack,
     hasNicDocuments,
+    hasSignature,
   };
 };
 

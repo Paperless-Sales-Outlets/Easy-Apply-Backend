@@ -1,7 +1,7 @@
 import Application from '../../models/admin/applicationModel.js';
 import Customer from '../../models/Customer.js';
 import KycReview from '../../models/admin/kycReviewModel.js';
-import { getSignedFileUrl } from '../../services/s3Service.js';
+import { getSignedFileUrl, downloadBuffer, extractStorageKey } from '../../services/storageService.js';
 import {
   reviewApplicationAuto,
   reviewAccountAuto,
@@ -123,7 +123,7 @@ function rawAppDoc(app, customerProfile, key) {
 }
 
 const IDENTITY_KEYS = ['nicFront', 'nicBack', 'facePhoto'];
-const USER_DOC_KEYS = DOC_KEYS.filter(({ key }) => IDENTITY_KEYS.includes(key));
+const USER_DOC_KEYS = DOC_KEYS.filter(({ key }) => ['nicFront', 'nicBack', 'facePhoto', 'signature', 'signatureDoc'].includes(key));
 
 // Customer who registered (NIC + live photo captured) but has no application yet.
 // The audit fields every queue item carries: who decided, the automated
@@ -392,15 +392,42 @@ export const getKycDocument = async (req, res, next) => {
     const raw = subject.type === 'application'
       ? rawAppDoc(subject.doc, await findLinkedCustomer(subject.doc), key)
       : subject.doc.identityDocuments?.[key];
-    const url = await resolveDocUrl(raw);
-    const match = /^data:(image\/[\w.+-]+);base64,([\s\S]+)$/.exec(url || '');
-    if (!match) {
-      return res.status(404).json({ success: false, message: 'Document image not found.' });
+
+    if (!raw) {
+      return res.status(404).json({ success: false, message: 'Document not found.' });
     }
 
-    res.set('Content-Type', match[1]);
-    res.set('Cache-Control', 'private, max-age=300');
-    return res.send(Buffer.from(match[2], 'base64'));
+    // A. Inline base64 data URL
+    if (typeof raw === 'string' && raw.startsWith('data:image/')) {
+      const match = /^data:(image\/[\w.+-]+);base64,([\s\S]+)$/.exec(raw);
+      if (match) {
+        res.set('Content-Type', match[1]);
+        res.set('Cache-Control', 'private, max-age=300');
+        return res.send(Buffer.from(match[2], 'base64'));
+      }
+    }
+
+    // B. Stored cloud object (decrypt on the fly from Supabase storage)
+    try {
+      const { buffer, isEncrypted } = await downloadBuffer(raw);
+      let contentType = 'image/jpeg';
+      if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+        contentType = 'image/png';
+      } else if (buffer.toString('ascii', 0, 4) === 'RIFF') {
+        contentType = 'image/webp';
+      } else if (buffer.toString('ascii', 0, 4) === '%PDF') {
+        contentType = 'application/pdf';
+      }
+
+      res.set('Content-Type', contentType);
+      res.set('Content-Length', buffer.length);
+      res.set('Cache-Control', 'private, max-age=300');
+      if (isEncrypted) res.set('x-decrypted-at-rest', 'true');
+      return res.send(buffer);
+    } catch (storageErr) {
+      console.warn(`[getKycDocument] storage fetch failed for "${raw}": ${storageErr.message}`);
+      return res.status(404).json({ success: false, message: 'Document image not found.' });
+    }
   } catch (error) {
     next(error);
   }

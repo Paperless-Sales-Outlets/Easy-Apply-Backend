@@ -1,52 +1,58 @@
-import { Readable } from 'node:stream';
-import { getSignedFileUrl } from '../services/storageService.js';
+import { downloadBuffer } from '../services/storageService.js';
+
+// MIME type map for common document extensions
+const MIME_TYPES = {
+  '.pdf':  'application/pdf',
+  '.jpg':  'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png':  'image/png',
+  '.webp': 'image/webp',
+};
+
+function sniffMimeType(buf) {
+  if (!buf || buf.length < 4) return 'application/octet-stream';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf.toString('ascii', 0, 4) === 'RIFF') return 'image/webp';
+  if (buf.toString('ascii', 0, 4) === '%PDF') return 'application/pdf';
+  return 'image/jpeg';
+}
 
 // ---------------------------------------------------------------------------
-// @desc  Stream a stored KYC file (NIC photo, selfie, signature) from object storage
-// @route GET /api/files/:id
+// @desc  Serve a stored KYC document with on-the-fly authenticated decryption
+// @route GET /api/files/:id(*)
 // @access Protected (Admin / Staff)
-//
-// The file is fetched server-side and streamed back. Redirecting the browser to the
-// signed storage URL does not work for the admin app: its request carries credentials,
-// and the storage host answers CORS with a wildcard origin, which browsers reject.
 // ---------------------------------------------------------------------------
 export const serveGridFsFile = async (req, res, next) => {
-  const { id } = req.params;
+  const targetKey = req.params.id || req.params[0] || req.path.replace(/^\/+/, '');
 
-  if (!id) {
+  if (!targetKey) {
     res.status(400);
     return next(new Error('Invalid file ID or key'));
   }
 
   try {
-    const fileUrl = await getSignedFileUrl(id, 300);
-    if (!fileUrl || !/^https?:\/\//.test(fileUrl)) {
+    const { buffer, isEncrypted } = await downloadBuffer(targetKey);
+
+    if (!buffer || buffer.length === 0) {
       res.status(404);
       return next(new Error('File not found in storage'));
     }
 
-    const upstream = await fetch(fileUrl, { signal: AbortSignal.timeout(20000) });
-    if (!upstream.ok || !upstream.body) {
-      res.status(upstream.status === 404 || upstream.status === 400 ? 404 : 502);
-      return next(new Error(
-        upstream.status === 404 || upstream.status === 400
-          ? 'File not found in storage'
-          : `Storage responded with status ${upstream.status}`
-      ));
+    const contentType = sniffMimeType(buffer);
+
+    res.set('Content-Type', contentType);
+    res.set('Content-Length', buffer.length);
+    res.set('Cache-Control', 'private, max-age=300');
+    if (isEncrypted) {
+      res.set('x-decrypted-at-rest', 'true');
     }
 
-    res.set('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
-    const length = upstream.headers.get('content-length');
-    if (length) res.set('Content-Length', length);
-    res.set('Cache-Control', 'private, max-age=300');
-
-    // Stop reading from storage if the browser goes away mid-download.
-    const body = Readable.fromWeb(upstream.body);
-    res.on('close', () => body.destroy());
-    body.on('error', next);
-    return body.pipe(res);
+    return res.status(200).send(buffer);
   } catch (error) {
-    next(error);
+    console.error(`[File Controller] Error serving "${targetKey}":`, error.message);
+    res.status(404);
+    return next(new Error('File not found or failed to decrypt'));
   }
 };
 

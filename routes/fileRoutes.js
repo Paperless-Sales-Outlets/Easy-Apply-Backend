@@ -6,10 +6,10 @@ const router = express.Router();
 
 // All file-serving endpoints require a logged-in Admin or Staff member
 // so that sensitive KYC documents (NICs, passports, signatures) are never
-// publicly accessible.
+// publicly accessible and are decrypted securely for authorized staff only.
 router.use(protect, authorize('Admin', 'Staff'));
 
-// Stream a file stored in GridFS
-router.get('/:id', serveGridFsFile);
+// Stream and decrypt any document stored in central storage
+router.get('/:id(*)', serveGridFsFile);
 
 export default router;
