@@ -59,6 +59,12 @@ export const errorHandler = (err, req, res, _next) => {
     error = new AppError(message, 401);
   }
 
+  // Upload limits (multer) are a client mistake, not a server fault.
+  if (err.name === 'MulterError') {
+    const tooLarge = err.code === 'LIMIT_FILE_SIZE';
+    error = new AppError(tooLarge ? 'File too large' : err.message, tooLarge ? 413 : 400);
+  }
+
   // Default to err.status / error.statusCode or res.statusCode or 500 server error
   const statusCode = err.status || error.statusCode || (res.statusCode && res.statusCode !== 200 ? res.statusCode : 500);
   const message = error.message || 'Internal server error';

@@ -417,17 +417,6 @@ export const checkProductAvailability = async (productId) => {
     }
   }
 
-  // 4. Fallback: Search local catalog fallback products
-  if (!product && productId) {
-    const fallbackProducts = getFallbackProducts();
-    product = fallbackProducts.find(
-      (p) =>
-        String(p.id) === String(productId) ||
-        String(p.productId) === String(productId) ||
-        String(p._id) === String(productId)
-    );
-  }
-
   if (!product) {
     throw new AppError('Product not found', 404);
   }
