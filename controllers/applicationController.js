@@ -3,7 +3,9 @@ import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
 import Customer from '../models/Customer.js';
 import Appointment from '../models/Appointment.js';
+import SalesOfficerQr from '../models/SalesOfficerQr.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
+import { checkOSSFeasibility } from '../services/ossService.js';
 import { recordAudit } from '../services/auditService.js';
 
 
@@ -99,6 +101,7 @@ export const createApplication = async (req, res, next) => {
     };
 
     let application;
+    let attribution = null;
 
     // MongoDB available
     if (mongoose.connection.readyState === 1) {
@@ -174,59 +177,124 @@ export const createApplication = async (req, res, next) => {
         console.warn('Auto Customer persistence notice:', customerErr.message);
       }
 
-      // 2. Create Application document
-      application = await Application.create({
-        phone: verifiedPhone,
+    // Resolve Sales Officer QR attribution if a tracking token is supplied
+    attribution = null;
+    const rawCandidateToken =
+      req.body.salesTrackingToken ||
+      req.body.trackingToken ||
+      req.body.salesRef ||
+      req.headers['x-sales-ref'] ||
+      formData?.salesTrackingToken ||
+      formData?.trackingToken ||
+      formData?.salesRef;
+
+    if (rawCandidateToken) {
+      const candidateToken = String(rawCandidateToken).trim();
+      if (mongoose.connection.readyState === 1) {
+        const qrRecord = await SalesOfficerQr.findOne({
+          trackingToken: candidateToken,
+          isActive: true,
+        }).populate('officer', 'name email employeeNumber role isActive');
+
+        if (!qrRecord || !qrRecord.officer || qrRecord.officer.isActive === false) {
+          res.status(400);
+          return next(new Error('Invalid or inactive sales tracking token'));
+        }
+
+        attribution = {
+          officer: qrRecord.officer._id,
+          employeeNumber: qrRecord.employeeNumber || qrRecord.officer.employeeNumber,
+          officerName: qrRecord.officer.name,
+          trackingToken: qrRecord.trackingToken,
+          attributedAt: new Date(),
+        };
+      } else {
+        attribution = {
+          officer: null,
+          employeeNumber: 'OFFLINE_REF',
+          officerName: 'Sales Officer',
+          trackingToken: candidateToken,
+          attributedAt: new Date(),
+        };
+      }
+    }
+
+    // 2. Create Application document
+    const isPaid = Boolean(formData.paymentReference);
+    application = await Application.create({
+      phone: verifiedPhone,
+      serviceType,
+      formData,
+      documents: formData.documents || {},
+      nic: cleanNic,
+      status: 'pending',
+      paymentStatus: isPaid ? 'paid' : 'pending',
+      paymentDetails: isPaid
+        ? {
+            orderId: formData.paymentReference,
+            amount:
+              formData.product?.installationFee ??
+              formData.product?.monthlyPrice ??
+              2500,
+            currency: 'LKR',
+          }
+        : undefined,
+      completedSale: isPaid,
+      completedSaleAt: isPaid ? new Date() : null,
+      salesOfficer: attribution ? attribution.officer : null,
+      salesOfficerEmployeeNumber: attribution ? attribution.employeeNumber : null,
+      salesTrackingToken: attribution ? attribution.trackingToken : null,
+      salesAttribution: attribution
+        ? {
+            officerId: attribution.officer,
+            employeeNumber: attribution.employeeNumber,
+            officerName: attribution.officerName,
+            trackingToken: attribution.trackingToken,
+            attributedAt: attribution.attributedAt,
+          }
+        : undefined,
+    });
+  }
+
+  // Offline fallback mode
+  else {
+    const refDigits = Math.floor(
+      10000000 + Math.random() * 90000000
+    ).toString();
+
+    application = {
+      _id: `mock_app_${refDigits}`,
+      referenceNumber: `REQ-${refDigits}`,
+      serviceType,
+      status: 'pending',
+      nic,
+      formData,
+      createdAt: new Date(),
+      salesOfficer: attribution ? attribution.officer : null,
+      salesOfficerEmployeeNumber: attribution ? attribution.employeeNumber : null,
+      salesTrackingToken: attribution ? attribution.trackingToken : null,
+      salesAttribution: attribution || null,
+    };
+
+    console.log(
+      `\n📝 Application submitted in DB Offline mode. Ref: ${application.referenceNumber}\n`
+    );
+  }
+
+  if (mongoose.connection.readyState === 1) {
+    await recordAudit({
+      req,
+      action: 'CREATE',
+      module: 'Forms/Requests',
+      targetId: application.referenceNumber,
+      description: `Submitted ${serviceType} request${attribution ? ` (Attributed to Sales Officer ${attribution.employeeNumber})` : ''}`,
+      metadata: {
         serviceType,
-        formData,
-        documents: formData.documents || {},
-        nic: cleanNic,
-        status: 'pending',
-        paymentStatus: formData.paymentReference ? 'paid' : 'pending',
-        paymentDetails: formData.paymentReference
-          ? {
-              orderId: formData.paymentReference,
-              amount: formData.product?.monthlyPrice || 2500,
-              currency: 'LKR',
-            }
-          : undefined,
-      });
-    }
-
-    // Offline fallback mode
-    else {
-
-      const refDigits = Math.floor(
-        10000000 + Math.random() * 90000000
-      ).toString();
-
-      application = {
-        _id: `mock_app_${refDigits}`,
-        referenceNumber: `REQ-${refDigits}`,
-        serviceType,
-        status: 'pending',
-        nic,
-        formData,
-        createdAt: new Date(),
-      };
-
-
-      console.log(
-        `\n📝 Application submitted in DB Offline mode. Ref: ${application.referenceNumber}\n`
-      );
-
-    }
-
-    if (mongoose.connection.readyState === 1) {
-      await recordAudit({
-        req,
-        action: 'CREATE',
-        module: 'Forms/Requests',
-        targetId: application.referenceNumber,
-        description: `Submitted ${serviceType} request`,
-        metadata: { serviceType, status: application.status },
-      });
-    }
+        status: application.status,
+        salesOfficerEmployeeNumber: attribution ? attribution.employeeNumber : null,
+      },
+    });
+  }
 
     // ─────────────────────────────────────────────────────────
     // Send application submitted email (non-blocking)
@@ -416,48 +484,148 @@ export const checkApplicationStatus = async (req, res, next) => {
 
 
 
-// @desc    Check loop availability for installation address/city
+// @desc    Lookup connection by phone number
+// @route   GET /api/applications/lookup-connection
+// @access  Public
+export const lookupConnection = async (req, res, next) => {
+  const { phone } = req.query;
+
+  const digitsOnly = String(phone || '').replace(/\D/g, '');
+  const last9 = digitsOnly.slice(-9);
+
+  try {
+    const connections = await Connection.find({
+      $or: [
+        { telephone: phone },
+        { telephone: digitsOnly },
+        { telephone: `0${last9}` },
+        { accountNo: phone },
+        { contactNo: phone },
+        { contactNo: digitsOnly },
+        { contactNo: `0${last9}` },
+      ]
+    });
+
+    if (connections && connections.length > 0) {
+      return res.status(200).json({
+        success: true,
+        data: connections,
+      });
+    }
+
+    res.status(404);
+
+    return next(
+      new Error(
+        'Connection not found for this telephone number.'
+      )
+    );
+
+
+  } catch (error) {
+
+    next(error);
+
+  }
+
+};
+
+
+
+// @desc    Lookup customer current package information by phone number (BRD 5.6)
+// @route   GET /api/applications/lookup-package?phone=
+// @access  Public
+export const lookupPackage = async (req, res, next) => {
+  const { phone } = req.query;
+
+  if (!phone) {
+    res.status(400);
+    return next(new Error('Telephone number (phone) parameter is required.'));
+  }
+
+  const cleanPhone = phone.replace(/\D/g, '');
+  const last9 = cleanPhone.slice(-9);
+
+  try {
+    let connection = null;
+
+    if (mongoose.connection.readyState === 1) {
+      connection = await Connection.findOne({
+        $or: [
+          { telephone: phone },
+          { telephone: cleanPhone },
+          { telephone: `0${last9}` },
+          { accountNo: phone },
+          { contactNo: phone },
+          { contactNo: cleanPhone },
+          { contactNo: `0${last9}` },
+        ],
+      });
+    }
+
+    if (connection) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          telephone: connection.telephone,
+          accountNo: connection.accountNo,
+          customerName: connection.fullName,
+          nic: connection.nic,
+          contactNo: connection.contactNo,
+          packageName: connection.packageName,
+          currentPackage: connection.packageName,
+          speed: connection.speed,
+          monthlyPrice: connection.monthlyPrice,
+          activationDate: connection.createdAt
+            ? connection.createdAt.toISOString().split('T')[0]
+            : null,
+          status: connection.status,
+        },
+      });
+    }
+
+    return res.status(200).json({
+      success: false,
+      data: null,
+      message: 'No customer found for this telephone number.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Check loop availability and OSS service feasibility for installation address/city
+
 // @route   POST /api/applications/check-loop
 // @access  Public
 export const checkLoopAvailability = async (req, res, next) => {
   try {
-    const { address, city, district } = req.body;
-    const searchString = `${address || ''} ${city || ''} ${district || ''}`.toLowerCase();
+    const { address, city, district, latitude, longitude, requestedProduct } = req.body;
 
-    // Check if explicitly unserviced or marked unavailable for testing/demo
-    const isExplicitlyUnavailable =
-      searchString.includes('no loop') ||
-      searchString.includes('no-loop') ||
-      searchString.includes('unavailable') ||
-      searchString.includes('unserviced') ||
-      searchString.includes('remote zone');
+    const ossResult = checkOSSFeasibility({
+      address,
+      city,
+      district,
+      latitude,
+      longitude,
+      requestedProduct,
+    });
 
-    // If address or city is provided and not explicitly marked unavailable
-    const isAvailable = !isExplicitlyUnavailable && (searchString.trim().length > 0);
 
-    if (isAvailable) {
-      return res.status(200).json({
-        success: true,
-        available: true,
-        message: 'Service loop is available in your area.',
-        coverage: {
-          area: city || district || 'Standard Service Area',
-          loopStatus: 'AVAILABLE',
-          estimatedProvisionDays: 3,
-        },
-      });
-    } else {
-      return res.status(200).json({
-        success: true,
-        available: false,
-        message: 'No service loop available in this area. Please contact your nearest SLTMobitel branch.',
-        coverage: {
-          area: city || district || 'Unserviced Area',
-          loopStatus: 'UNAVAILABLE',
-          recommendedAction: 'CONTACT_NEAREST_BRANCH',
-        },
-      });
-    }
+    return res.status(200).json({
+      success: true,
+      available: ossResult.available,
+      overallStatus: ossResult.overallStatus,
+      message: ossResult.available
+        ? 'OSS network feasibility verified successfully.'
+        : 'Service currently unavailable at this exact location.',
+      coverage: {
+        area: city || district || ossResult.location?.servingExchange?.name || 'Service Area',
+        loopStatus: ossResult.fibre?.available ? 'AVAILABLE' : (ossResult.lte?.available ? 'LTE_ONLY' : 'UNAVAILABLE'),
+        estimatedProvisionDays: ossResult.fibre?.available ? 3 : 1,
+      },
+      ...ossResult,
+    });
   } catch (error) {
     next(error);
   }

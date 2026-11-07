@@ -1,10 +1,34 @@
-import { requestOtp, validateOtp, getOtpStatus as checkOtpStatus } from '../services/otpService.js';
+
+import { issueDraftToken } from '../utils/draftToken.js';
+import {
+  requestOtp,
+  validateOtp,
+  getOtpStatus as checkOtpStatus,
+} from '../services/otpService.js';
+
+// Normalize Sri Lankan phone numbers for draft token generation
+const normalizePhone = (phone) => {
+  const digits = String(phone).replace(/\D/g, '');
+
+  if (digits.startsWith('94') && digits.length === 11) {
+    return digits.slice(2);
+  }
+
+  if (digits.startsWith('0') && digits.length === 10) {
+    return digits.slice(1);
+  }
+
+  return digits;
+};
 
 // @desc    Generate and send OTP for phone or email verification
 // @route   POST /api/otp/send, POST /api/otp/send-email
 // @access  Public
 export const sendOtp = async (req, res, next) => {
-  const target = req.body?.email || req.body?.phone || req.body?.target;
+  const target =
+    req.body?.email ||
+    req.body?.phone ||
+    req.body?.target;
 
   if (!target) {
     return res.status(400).json({
@@ -31,6 +55,7 @@ export const sendOtp = async (req, res, next) => {
         lockedUntil: error.lockedUntil,
       });
     }
+
     if (error.status === 400) {
       return res.status(400).json({
         success: false,
@@ -38,7 +63,8 @@ export const sendOtp = async (req, res, next) => {
         message: error.message,
       });
     }
-    next(error);
+
+    return next(error);
   }
 };
 
@@ -46,8 +72,12 @@ export const sendOtp = async (req, res, next) => {
 // @route   POST /api/otp/verify, POST /api/otp/verify-email
 // @access  Public
 export const verifyOtp = async (req, res, next) => {
-  const target = req.body?.email || req.body?.phone || req.body?.target;
-  const { otp } = req.body;
+  const target =
+    req.body?.email ||
+    req.body?.phone ||
+    req.body?.target;
+
+  const otp = req.body?.otp;
 
   if (!target || !otp) {
     return res.status(400).json({
@@ -59,10 +89,27 @@ export const verifyOtp = async (req, res, next) => {
 
   try {
     const result = await validateOtp(target, otp);
+
+    // Issue a draft token only after successful phone OTP verification.
+    // Email verification does not grant phone-based draft access.
+    const isEmail = String(target).includes('@');
+
+    if (result.success === true && !isEmail) {
+      const cleanPhone = normalizePhone(target);
+
+      return res.status(200).json({
+        ...result,
+        draftToken: issueDraftToken(cleanPhone),
+      });
+    }
+
     return res.status(200).json(result);
   } catch (error) {
-    const status = error.status || 400;
-    return res.status(status).json({
+    if (!error.status) {
+      return next(error);
+    }
+
+    return res.status(error.status).json({
       success: false,
       code: error.code || 'OTP_INVALID',
       message: error.message || 'Invalid or expired verification code.',
@@ -74,7 +121,8 @@ export const verifyOtp = async (req, res, next) => {
 };
 
 // @desc    Get OTP and lockout status for a phone number or email address
-// @route   GET /api/otp/status, POST /api/otp/status, GET /api/otp/status-email, POST /api/otp/status-email
+// @route   GET /api/otp/status, POST /api/otp/status
+// @route   GET /api/otp/status-email, POST /api/otp/status-email
 // @access  Public
 export const getOtpStatus = async (req, res, next) => {
   const target =
@@ -97,8 +145,11 @@ export const getOtpStatus = async (req, res, next) => {
     const status = await checkOtpStatus(target);
     return res.status(200).json(status);
   } catch (error) {
-    const code = error.status || 400;
-    return res.status(code).json({
+    if (!error.status) {
+      return next(error);
+    }
+
+    return res.status(error.status).json({
       success: false,
       code: error.code || 'BAD_REQUEST',
       message: error.message,
@@ -106,7 +157,7 @@ export const getOtpStatus = async (req, res, next) => {
   }
 };
 
-// @desc    Generate and send OTP to email address via live SMTP
+// @desc    Generate and send OTP to email address
 // @route   POST /api/otp/send-email
 // @access  Public
 export const sendEmailOtp = async (req, res, next) => {

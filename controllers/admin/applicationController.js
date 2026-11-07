@@ -46,6 +46,10 @@ export const getAdminApplications = async (req, res, next) => {
       if (endDate)   filter.createdAt.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
     }
 
+    if (req.query.salesOfficerEmployeeNumber) {
+      filter.salesOfficerEmployeeNumber = String(req.query.salesOfficerEmployeeNumber).trim();
+    }
+
     // --- Pagination ---
     const pageNum  = Math.max(1, parseInt(page,  10));
     const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10)));
@@ -61,6 +65,7 @@ export const getAdminApplications = async (req, res, next) => {
       Application
         .find(filter)
         .populate('actionedBy', 'name email')
+        .populate('salesOfficer', 'name email employeeNumber')
         .sort({ [sortField]: sortDir })
         .skip(skip)
         .limit(pageSize)
@@ -119,6 +124,10 @@ export const updateApplicationStatus = async (req, res, next) => {
     }
 
     const updates = { status };
+    if (status === 'confirmed' || status === 'completed') {
+      updates.completedSale = true;
+      updates.completedSaleAt = new Date();
+    }
     if (notes !== undefined) updates.notes = notes;
     if (req.user && req.user._id) {
       updates.actionedBy = req.user._id;

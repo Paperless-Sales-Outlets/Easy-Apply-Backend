@@ -1,4 +1,5 @@
 import Appointment from '../../models/Appointment.js';
+import Application from '../../models/Application.js';
 import { recordAudit } from '../../services/auditService.js';
 
 // @desc    Get appointments assigned to the logged-in technician
@@ -60,6 +61,31 @@ export const updateJobStatus = async (req, res, next) => {
     const previousStatus = appointment.status;
     appointment.status = status;
     await appointment.save();
+
+    if (status === 'completed') {
+      try {
+        const appQuery = appointment.applicationId
+          ? { _id: appointment.applicationId }
+          : appointment.referenceNumber
+            ? { referenceNumber: appointment.referenceNumber }
+            : null;
+
+        if (appQuery) {
+          await Application.updateOne(
+            appQuery,
+            {
+              $set: {
+                completedSale: true,
+                completedSaleAt: new Date(),
+                status: 'completed',
+              },
+            }
+          );
+        }
+      } catch (syncErr) {
+        console.warn('Notice: Failed to sync appointment completion to application:', syncErr.message);
+      }
+    }
     await recordAudit({
       req,
       action: 'STATUS_UPDATE',

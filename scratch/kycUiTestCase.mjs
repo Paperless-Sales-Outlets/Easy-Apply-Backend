@@ -1,6 +1,6 @@
 // Creates (or removes) ONE clearly-labelled synthetic KYC case for checking the
-// admin KYC page: a test returning customer with NIC photos on file and a new
-// selfie (blank test images — no real person).
+// admin KYC page: a test registered customer (registered 30 days ago) sending a
+// live selfie and a signature (blank test images — no real person).
 //   node scratch/kycUiTestCase.mjs create
 //   node scratch/kycUiTestCase.mjs remove
 import 'dotenv/config';
@@ -61,7 +61,9 @@ try {
     });
     await Customer.collection.updateOne({ _id: customer._id }, { $set: { createdAt: old } });
 
-    const docs = { nicFront: `gridfs://${nicFront}`, nicBack: `gridfs://${nicBack}`, facePhoto: `gridfs://${newSelfie}` };
+    const signature = await store(await blank(240), new Date());
+    // A registered customer's request: live selfie + signature only.
+    const docs = { facePhoto: `gridfs://${newSelfie}`, signature: `gridfs://${signature}` };
     const app = await Application.create({
       phone: TEST_PHONE, serviceType: 'reconnection', nic: TEST_NIC, status: 'pending',
       formData: { nameFull: TEST_NAME, documents: docs }, documents: docs,

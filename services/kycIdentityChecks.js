@@ -22,17 +22,22 @@ import {
 } from './kycFaceMatchService.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Identity-photo checks for automated KYC, following the customer flow:
+// Identity checks for automated KYC, following the customer flow:
 //
-//   New customer (or existing without NIC photos)
-//        → uploads NIC front + NIC back and takes a live selfie
-//   Returning customer whose NIC photos are on file
-//        → only takes a new live selfie; the NIC photos come from their profile
+//   New customer (registering)
+//        → NIC front + NIC back, a live selfie and a signature.
+//          Only here is the selfie compared with the NIC photo, and the NIC /
+//          phone must not already belong to a registered customer.
+//   Registered customer (any later request)
+//        → a live selfie and a signature. Their details are checked; their
+//          photos are not compared with anything (not built yet).
 //
-// Either way a case needs NIC front, NIC back and a selfie taken for *this*
-// request, and the selfie must show the person on the NIC. Results:
+// A registration on its own (no request yet) has no signature step, so the
+// signature is expected with the customer's first request instead.
+// Results:
 //   pass   – proven (e.g. strong face match, all photos present and fresh)
-//   fail   – proven wrong (the "selfie" is literally the NIC image file)
+//   fail   – proven wrong (the "selfie" is the NIC image file; the NIC is
+//            already registered to another customer)
 //   unsure – anything that cannot be proven → a person decides
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -41,6 +46,8 @@ const IMAGES = [
   { key: 'nicBack', label: 'NIC back' },
   { key: 'facePhoto', label: 'live selfie' },
 ];
+const SIGNATURE_KEYS = ['signature', 'signatureDoc', 'customerSignature'];
+const OTP_SIGNATURE = 'DIGITALLY_VERIFIED_OTP';
 
 // A person-verified case is one whose status a staff member set or confirmed.
 const VERIFIED_STATUSES = ['approved', 'confirmed'];
@@ -54,6 +61,21 @@ const sameIdentity = (a, b) => {
   const y = toNewFormat(b) || cleanNic(b);
   return Boolean(x && y && x === y);
 };
+const last9Of = (phone) => String(phone || '').replace(/\D/g, '').slice(-9);
+
+/** Every way the same NIC can be written (old 9-digit+V/X and new 12-digit). */
+function nicForms(raw) {
+  const nic = cleanNic(raw);
+  const asNew = toNewFormat(nic);
+  const forms = new Set([nic, asNew].filter(Boolean));
+  // 19YYDDD0NNNN ↔ YYDDDNNNN + V / X
+  if (asNew && /^19\d{2}\d{3}0\d{4}$/.test(asNew)) {
+    const old = `${asNew.slice(2, 4)}${asNew.slice(4, 7)}${asNew.slice(8, 12)}`;
+    forms.add(`${old}V`);
+    forms.add(`${old}X`);
+  }
+  return [...forms];
+}
 
 /** Who uploaded a GridFS image, when that owner is a *different* existing person. */
 async function foreignOwners(refs, info, account) {
@@ -71,26 +93,73 @@ async function foreignOwners(refs, info, account) {
   return candidates.filter((c) => ownerNic.has(c.owner) && !sameIdentity(ownerNic.get(c.owner), account.NIC)).map((c) => c.label);
 }
 
+/** A new registration must not reuse a registered customer's NIC or phone. */
+async function notAlreadyRegistered({ rawNic, phone, account }) {
+  const forms = rawNic ? nicForms(rawNic) : [];
+  const last9 = last9Of(phone);
+  const or = [
+    ...(forms.length ? [{ NIC: { $in: forms } }] : []),
+    ...(last9.length === 9 ? [{ phone: new RegExp(`${last9}$`) }] : []),
+  ];
+  if (!or.length) return null;
+  const others = await Customer.find({ ...(account ? { _id: { $ne: account._id } } : {}), $or: or })
+    .select('NIC phone createdAt')
+    .lean();
+
+  const byNic = others.find((o) => sameIdentity(o.NIC, rawNic));
+  if (byNic) {
+    return check('not_registered', 'Not already registered', 'fail',
+      `NIC ${rawNic} is already registered to another customer account${byNic.createdAt ? ` (registered ${fmtDate(byNic.createdAt)})` : ''}. A registered customer cannot register again as a new customer.`);
+  }
+  const byPhone = others.find((o) => last9Of(o.phone) === last9);
+  if (byPhone) {
+    return check('not_registered', 'Not already registered', 'unsure',
+      `Phone ${phone} already belongs to another registered customer (NIC ${byPhone.NIC || 'not recorded'}). It may be a shared family number — check that this is really a new customer.`);
+  }
+  return check('not_registered', 'Not already registered', 'pass',
+    'This NIC and phone number do not belong to any other registered customer.');
+}
+
+/** The signature on a request → { state: 'image'|'otp'|'none', ref } */
+function signatureOf(formDocs, extraSignature) {
+  const raws = [...SIGNATURE_KEYS.map((k) => formDocs?.[k]), extraSignature];
+  for (const raw of raws) {
+    const ref = docRef(raw);
+    if (ref) return { state: 'image', ref };
+  }
+  return raws.some((r) => r === OTP_SIGNATURE) ? { state: 'otp', ref: null } : { state: 'none', ref: null };
+}
+
 /**
  * @param {object} p
  * @param {'application'|'account'} p.subjectKind
  * @param {Date}   p.submittedAt   when the request / registration was made
  * @param {object} p.formDocs      documents stored on the request (may be empty)
+ * @param {string} p.formSignature the request's own signature field, if any
  * @param {object} p.account       the matching Customer (lean) or null
  * @param {string} p.rawNic
+ * @param {string} p.phone
  * @param {Array}  p.related       other applications of this NIC / phone (lean)
  * @returns {{ checks: object[], caseInfo: object }}
  */
-export async function identityChecks({ subjectKind, submittedAt, formDocs, account, rawNic, related = [] }) {
+export async function identityChecks({ subjectKind, submittedAt, formDocs, formSignature, account, rawNic, phone, related = [] }) {
   const checks = [];
 
-  // 1. Where each image is, and when it was captured.
+  // 1. New registration or registered customer?
+  // Registered = the account existed before this request (outside the capture window).
+  const accountAge = account?.createdAt ? new Date(submittedAt) - new Date(account.createdAt) : null;
+  const registered = subjectKind === 'application' && Boolean(account)
+    && (accountAge === null || accountAge > FRESH_CAPTURE_HOURS * 3600 * 1000);
+  const customerType = registered ? 'registered' : 'new';
+
+  // 2. Where each image is, and when it was captured.
   const refs = IMAGES.map(({ key, label }) => ({
     key,
     label,
     ref: docRef(formDocs?.[key]) || docRef(account?.identityDocuments?.[key]),
   }));
-  const info = await gridfsInfo(refs.map((r) => r.ref), { sniff: true });
+  const signature = subjectKind === 'application' ? signatureOf(formDocs, formSignature) : { state: 'none', ref: null };
+  const info = await gridfsInfo([...refs.map((r) => r.ref), signature.ref], { sniff: true });
 
   // Images without a date of their own (inline / file paths) date from the
   // earliest request that already carried them, else from this one.
@@ -105,52 +174,60 @@ export async function identityChecks({ subjectKind, submittedAt, formDocs, accou
     });
   });
 
-  const images = {};
-  const missing = [];
-  const unusable = [];
-  refs.forEach(({ key, label, ref }) => {
-    if (!ref) { missing.push(label); images[key] = null; return; }
+  const usable = (ref) => {
+    if (!ref) return 'missing';
     if (ref.kind === 'gridfs') {
       const file = info.get(ref.id);
-      if (!file) { missing.push(label); images[key] = null; return; }
+      if (!file) return 'missing';
       // The file's own bytes decide whether it is an image (stored types are often missing).
-      if (!file.imageType || (file.length || 0) < MIN_IMAGE_BYTES) unusable.push(label);
-    } else if (ref.kind === 'inline' && (!inlineImageType(ref.value) || ref.value.length * 0.75 < MIN_IMAGE_BYTES)) {
-      unusable.push(label);
+      return file.imageType && (file.length || 0) >= MIN_IMAGE_BYTES ? 'ok' : 'unusable';
     }
+    if (ref.kind === 'inline') return inlineImageType(ref.value) && ref.value.length * 0.75 >= MIN_IMAGE_BYTES ? 'ok' : 'unusable';
+    return 'ok'; // a stored file path — read when needed
+  };
+
+  const images = {};
+  const imageState = {};
+  refs.forEach(({ key, ref }) => {
+    imageState[key] = usable(ref);
+    if (imageState[key] === 'missing') { images[key] = null; return; }
     const seen = firstSeen.get(ref.key);
     const capturedAt = capturedAtOf(ref, info, seen && seen < new Date(submittedAt) ? seen : submittedAt);
     images[key] = { ref, capturedAt, source: captureSource(capturedAt, submittedAt) };
   });
 
-  // 2. Which path through the customer flow this case took.
-  const accountAge = account?.createdAt ? new Date(submittedAt) - new Date(account.createdAt) : 0;
-  const knownBefore = accountAge > FRESH_CAPTURE_HOURS * 3600 * 1000;
-  let customerType = 'unknown';
-  if (subjectKind === 'account') customerType = 'new';
-  else if (images.nicFront?.source === 'on-file') customerType = 'returning';
-  else if (images.nicFront?.source === 'request') customerType = knownBefore ? 'existing-new-nic' : 'new';
-  else if (knownBefore) customerType = 'returning'; // registered earlier, but no NIC photo at all
-  else if (!account) customerType = 'new';
-
-  // 3. Photos complete?
-  const nicMissing = !images.nicFront || !images.nicBack;
+  // 3. The photos this kind of customer must provide.
+  const required = registered ? ['facePhoto'] : ['nicFront', 'nicBack', 'facePhoto'];
+  const missing = required.filter((k) => imageState[k] === 'missing').map((k) => IMAGES.find((i) => i.key === k).label);
+  const unusable = required.filter((k) => imageState[k] === 'unusable').map((k) => IMAGES.find((i) => i.key === k).label);
   if (missing.length || unusable.length) {
     const parts = [];
     if (missing.length) parts.push(`missing: ${missing.join(', ')}`);
     if (unusable.length) parts.push(`unreadable or too small: ${unusable.join(', ')}`);
-    const hint = nicMissing && account && subjectKind === 'application'
-      ? ' This customer has no NIC photos on file, so they should have been asked to upload NIC front and back.'
-      : '';
-    checks.push(check('documents', 'Identity photos', 'unsure', `Identity photos incomplete — ${parts.join('; ')}.${hint}`));
+    checks.push(check('documents', 'Required photos', 'unsure',
+      `${registered ? 'A registered customer needs a live selfie' : 'A new customer needs NIC front, NIC back and a live selfie'} — ${parts.join('; ')}.`));
   } else {
-    checks.push(check('documents', 'Identity photos', 'pass',
-      customerType === 'returning'
-        ? 'NIC front and back are on file from an earlier registration, and a live selfie was taken.'
-        : 'NIC front, NIC back and a live selfie are all present and are valid images.'));
+    checks.push(check('documents', 'Required photos', 'pass', registered
+      ? 'A live selfie was provided (NIC photos are not needed from a registered customer).'
+      : 'NIC front, NIC back and a live selfie are all present and are valid images.'));
   }
 
-  // 4. Was the selfie taken for this request?
+  // 4. Signature — every request needs one. (A registration alone has no
+  // signature step; the signature comes with the first request.)
+  if (subjectKind === 'application') {
+    const sigState = signature.state === 'image' ? usable(signature.ref) : signature.state;
+    if (sigState === 'ok') {
+      checks.push(check('signature', 'Signature', 'pass', 'A signature was provided with this request.'));
+    } else if (sigState === 'otp') {
+      checks.push(check('signature', 'Signature', 'unsure', 'No signature was drawn — the request was only confirmed by OTP.'));
+    } else if (sigState === 'unusable') {
+      checks.push(check('signature', 'Signature', 'unsure', 'The signature image is unreadable or too small.'));
+    } else {
+      checks.push(check('signature', 'Signature', 'unsure', 'No signature was provided with this request.'));
+    }
+  }
+
+  // 5. Was the selfie taken for this request?
   const selfie = images.facePhoto;
   const nicFront = images.nicFront;
   const nicBack = images.nicBack;
@@ -169,16 +246,16 @@ export async function identityChecks({ subjectKind, submittedAt, formDocs, accou
     checks.push(check('selfie_fresh', 'Live selfie for this request', 'unsure', 'It cannot be told when the selfie was taken.'));
   }
 
-  // 5. Photos uploaded by somebody else?
+  // 6. Photos uploaded by somebody else?
   if (account) {
-    const foreign = await foreignOwners(refs, info, account);
+    const foreign = await foreignOwners(refs.filter((r) => required.includes(r.key)), info, account);
     if (foreign.length) {
       checks.push(check('document_owner', 'Photos belong to this customer', 'unsure',
         `${foreign.join(', ')} ${foreign.length === 1 ? 'was' : 'were'} uploaded by a different customer account.`));
     }
   }
 
-  // 6. The same selfie on somebody else's request.
+  // 7. The same selfie on somebody else's request.
   const reusedBy = related.filter((o) => {
     if (!o.nic || sameIdentity(o.nic, rawNic)) return false;
     return sameRef(docRef(docsOf(o).facePhoto), selfie?.ref);
@@ -188,15 +265,22 @@ export async function identityChecks({ subjectKind, submittedAt, formDocs, accou
       `This exact selfie was also used on ${reusedBy.length === 1 ? 'a request' : `${reusedBy.length} requests`} for a different NIC (${[...new Set(reusedBy.map((o) => o.nic))].join(', ')}).`));
   }
 
-  // 7. Does the selfie show the person on the NIC?
-  const face = await faceCheck({ selfie, nicFront, rawNic, related });
-  checks.push(face.check);
+  // 8. New customers only: not already registered, and the selfie shows the person on the NIC.
+  let face = { info: null };
+  if (!registered) {
+    const unique = await notAlreadyRegistered({ rawNic, phone, account });
+    if (unique) checks.push(unique);
+    face = await faceCheck({ selfie, nicFront, rawNic, related });
+    checks.push(face.check);
+  }
 
   const caseInfo = {
     customerType,
     images: Object.fromEntries(IMAGES.map(({ key }) => [key, images[key]
       ? { capturedAt: images[key].capturedAt || null, source: images[key].source }
       : null])),
+    required: subjectKind === 'application' ? [...required, 'signature'] : required,
+    signature: subjectKind === 'application' ? (signature.state === 'image' ? usable(signature.ref) : signature.state) : null,
     face: face.info,
   };
   return { checks, caseInfo };

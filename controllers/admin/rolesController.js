@@ -7,7 +7,7 @@ const RESERVED_NAMES = new Set(['admin', 'customer']);
 
 // Built-in module keys the admin sidebar understands. They are seeded into the
 // Privileges collection on its first listing, so accept them even before that.
-const BUILT_IN_KEYS = ['dashboard', 'kyc', 'appointments', 'technician', 'forms', 'analytics'];
+const BUILT_IN_KEYS = ['dashboard', 'kyc', 'appointments', 'technician', 'forms', 'analytics', 'leads'];
 
 // Returns the first key that is not a privilege defined in the Privileges tab.
 async function findUnknownPrivilege(permissions) {

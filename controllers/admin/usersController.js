@@ -1,6 +1,12 @@
 import User from '../../models/User.js';
 import StaffRole from '../../models/StaffRole.js';
 import { recordAudit } from '../../services/auditService.js';
+import {
+  EMPLOYEE_NUMBER_MESSAGE,
+  cleanEmployeeNumber as tidyEmployeeNumber,
+  isValidEmployeeNumber,
+  escapeRegex,
+} from '../../utils/employeeNumber.js';
 
 const sanitizeUser = (u) => ({
   id: u._id,
@@ -18,7 +24,7 @@ const sanitizeUser = (u) => ({
 // reserved 'Admin' role or a role an Admin has defined in StaffRole.
 async function isAssignableRole(role) {
   if (role === 'Admin') return true;
-  const exists = await StaffRole.findOne({ name: new RegExp(`^${role}$`, 'i') }).select('_id');
+  const exists = await StaffRole.findOne({ name: new RegExp(`^${escapeRegex(role)}$`, 'i') }).select('_id');
   return !!exists;
 }
 
@@ -65,7 +71,11 @@ export const createAdminUser = async (req, res, next) => {
     }
 
     const cleanEmail = String(email).trim().toLowerCase();
-    const cleanEmployeeNumber = String(employeeNumber).trim();
+    const cleanEmployeeNumber = tidyEmployeeNumber(employeeNumber);
+    if (!isValidEmployeeNumber(cleanEmployeeNumber)) {
+      res.status(400);
+      return next(new Error(EMPLOYEE_NUMBER_MESSAGE));
+    }
 
     const existing = await User.findOne({
       $or: [{ email: cleanEmail }, { employeeNumber: cleanEmployeeNumber }],
@@ -152,10 +162,14 @@ export const updateAdminUser = async (req, res, next) => {
       user.email = cleanEmail;
     }
     if (employeeNumber !== undefined) {
-      const cleanEmployeeNumber = String(employeeNumber).trim();
+      const cleanEmployeeNumber = tidyEmployeeNumber(employeeNumber);
       if (!cleanEmployeeNumber) {
         res.status(400);
         return next(new Error('Employee number is required'));
+      }
+      if (!isValidEmployeeNumber(cleanEmployeeNumber)) {
+        res.status(400);
+        return next(new Error(EMPLOYEE_NUMBER_MESSAGE));
       }
       user.employeeNumber = cleanEmployeeNumber;
     }

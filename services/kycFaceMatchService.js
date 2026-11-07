@@ -14,7 +14,7 @@ import path from 'node:path';
 // deliberately much stricter, so it only *passes* a face when the match is
 // strong — anything weaker is handed to a person, never auto-rejected:
 //
-//   distance ≤ KYC_FACE_MATCH_MAX (default 0.45)  → strong match   → pass
+//   distance ≤ KYC_FACE_MATCH_MAX (default 0.5)   → strong match   → pass
 //   anything else / no face / engine unavailable  → not sure       → flagged
 //
 // The packages load lazily, so the server still starts (and KYC still works,
@@ -29,7 +29,7 @@ const envNumber = (name, fallback) => {
 };
 
 // Strongest-match thresholds. Lower = stricter.
-export const FACE_MATCH_MAX = envNumber('KYC_FACE_MATCH_MAX', 0.45);
+export const FACE_MATCH_MAX = envNumber('KYC_FACE_MATCH_MAX', 0.5);
 // Two selfies of the same person are far more alike than a selfie and an ID
 // photo, so the bar against an already-verified selfie is stricter still.
 export const SELFIE_MATCH_MAX = envNumber('KYC_SELFIE_MATCH_MAX', 0.4);

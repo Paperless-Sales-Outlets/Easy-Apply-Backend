@@ -39,9 +39,9 @@ async function getTransporter() {
       port: smtpPort,
       secure: smtpSecure,
       auth: authBlock,
-      connectionTimeout: 8000,
-      greetingTimeout: 8000,
-      socketTimeout: 10000,
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 8000,
       tls: {
         // Accept self-signed / internal corporate TLS certificates
         rejectUnauthorized: false,
@@ -294,7 +294,12 @@ async function _send({ to, subject, html }) {
     if (preview) console.log(`   📬 PREVIEW : ${preview}\n`);
     else console.log('   Delivered via real SMTP.\n');
   } catch (err) {
-    console.error(`\n❌ [emailService] Send failed (${to}): ${err.message}\n`);
+    console.error(`\n❌ [emailService] Send failed (${to}): ${err.message}`);
+    if (err.code === 'ETIMEDOUT' || err.message?.includes('ETIMEDOUT')) {
+      console.warn(`   💡 Tip: Connection to SMTP host timed out. Port 25 is typically blocked by home/WiFi ISPs or requires connecting to the SLT Corporate VPN/Intranet.\n`);
+    } else {
+      console.log('');
+    }
   }
 }
 
