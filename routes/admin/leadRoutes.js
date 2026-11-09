@@ -11,6 +11,11 @@ import {
   deleteLead,
   recalculateLead,
 } from '../../controllers/admin/leadController.js';
+import {
+  getDraftLeads,
+  getDraftLeadStats,
+  getDraftLeadById,
+} from '../../controllers/admin/draftLeadController.js';
 import { protect, authorize } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
 
@@ -23,6 +28,11 @@ router.use(protect, authorize('admin', 'staff'));
 // Static paths first so they are not captured by the /:id route.
 router.get('/check-catalog', getLeadCheckCatalog);
 router.get('/stats', getLeadStats);
+
+// Abandoned New Connection drafts — the real unfinished applications.
+router.get('/drafts', getDraftLeads);
+router.get('/drafts/stats', getDraftLeadStats);
+router.get('/drafts/:id', getDraftLeadById);
 
 router.get('/', getLeads);
 router.post('/', createLead);
