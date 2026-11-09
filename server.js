@@ -39,6 +39,7 @@ import fileRoutes from './routes/fileRoutes.js';
 
 // New Connection Draft routes
 import draftRoutes from './routes/draftRoutes.js';
+import consentRoutes from './routes/consentRoutes.js';
 
 // SLT Banner routes
 import sltBannerRoutes from './routes/sltBannerRoutes.js';
@@ -187,6 +188,9 @@ app.get('/api/health', (req, res) => {
 
 // SLT Banner Routes
 app.use('/api/slt-banners', sltBannerRoutes);
+
+// ConsentHub consent catalog
+app.use('/api/consents', consentRoutes);
 
 // OTP Routes
 app.use('/api/otp', otpRoutes);
