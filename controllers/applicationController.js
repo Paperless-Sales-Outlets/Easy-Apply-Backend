@@ -8,6 +8,7 @@ import SalesOfficerQr from '../models/SalesOfficerQr.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
 import { checkOSSFeasibility } from '../services/ossService.js';
 import { recordAudit } from '../services/auditService.js';
+import { recordConsentAcceptances, registerCustomer } from '../services/consentHubService.js';
 
 
 // @desc    Submit a new service application
@@ -39,6 +40,7 @@ const uploadBase64Doc = async (dataUrl, fieldName, phone) => {
 export const createApplication = async (req, res, next) => {
   let { serviceType, formData, phone } = req.body;
   const files = req.files || {};
+  let consentCodes = [];
 
   try {
     // Parse formData if received as string
@@ -89,6 +91,10 @@ export const createApplication = async (req, res, next) => {
       nic = '';
     }
     const cleanNic = nic ? String(nic).trim().toUpperCase() : '';
+
+    // Consent ticks go to ConsentHub (CMS) only; nothing about them is stored with the application
+    consentCodes = Array.isArray(formData.consentsAccepted) ? formData.consentsAccepted : [];
+    delete formData.consentsAccepted;
 
     // Process uploaded files
     const uploadedDocuments = {};
@@ -303,6 +309,21 @@ export const createApplication = async (req, res, next) => {
     console.log(
       `\n📝 Application submitted in DB Offline mode. Ref: ${application.referenceNumber}\n`
     );
+  }
+
+  // Send the accepted consents to ConsentHub (CMS), which identifies the customer by NIC
+  if (consentCodes.length && application.nic) {
+    const customerId = await registerCustomer({
+      nic: application.nic,
+      name: formData.nameFull,
+      phone: formData.mobileNumber || phone,
+      email: formData.email,
+    });
+    await recordConsentAcceptances(customerId, consentCodes, {
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      verifiedEmail: req.body.verifiedEmail,
+    });
   }
 
   if (isDbConnected()) {
