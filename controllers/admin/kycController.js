@@ -12,6 +12,7 @@ import {
 import { recordAudit } from '../../services/auditService.js';
 import { query, toCamelCase } from '../../config/db.js';
 import { buildWhereClause } from '../../db/modelHelper.js';
+import { pickFrom, trimInline } from '../../db/jsonSelect.js';
 import {
   FRESH_CAPTURE_HOURS,
   docRef,
@@ -103,17 +104,6 @@ const lazyDocUrl = (url, subjectId, key) =>
 // row), and the list only needs to know one exists: the bytes are fetched by
 // getKycDocument when a case is opened. These read everything the list uses and
 // cut each inline image down to its "data:image/..." prefix inside the database.
-// Each JSON column is walked once with jsonb_each: every separate column->'key'
-// would make Postgres unpack the whole multi-MB value again.
-const trimInline = (v) =>
-  `CASE WHEN jsonb_typeof(${v}) = 'string' AND left(${v} #>> '{}', 5) = 'data:' THEN to_jsonb(left(${v} #>> '{}', 32)) ELSE ${v} END`;
-
-const pickFrom = (json, keys, alias, valueOf = trimInline) => `COALESCE((
-  SELECT jsonb_object_agg(${alias}.k, ${valueOf(`${alias}.v`)})
-  FROM jsonb_each(CASE WHEN jsonb_typeof(${json}) = 'object' THEN ${json} END) AS ${alias}(k, v)
-  WHERE ${alias}.k = ANY(ARRAY[${keys.map((key) => `'${key}'`).join(', ')}])
-), '{}'::jsonb)`;
-
 const DOC_FIELD_KEYS = DOC_KEYS.map(({ key }) => key);
 
 const LIST_APPLICATION_COLUMNS = [

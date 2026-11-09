@@ -1,5 +1,8 @@
 import Application from '../../models/admin/applicationModel.js';
 import User from '../../models/User.js';
+import { query as runQuery, toCamelCase } from '../../config/db.js';
+import { buildWhereClause } from '../../db/modelHelper.js';
+import { pickFrom } from '../../db/jsonSelect.js';
 
 const SERVICE_LABELS = {
   'new-connection': 'New Connection',
@@ -126,6 +129,22 @@ const resolveProduct = (fd) => {
   return { name: name || '—', price };
 };
 
+// Only the form fields the report reads. formData also holds the customer's
+// images, and loading those made this report take up to 40 seconds.
+const REPORT_FORM_KEYS = [
+  ...PRODUCT_NAME_KEYS,
+  ...PRODUCT_PRICE_KEYS,
+  'nameFull', 'fullName', 'contactName', 'customerName', 'legalOwner',
+  'nic', 'NIC', 'mobileNumber', 'contactNumber',
+];
+
+const REPORT_COLUMNS = [
+  'id', 'reference_number', 'phone', 'nic', 'service_type', 'status', 'payment_status', 'created_at',
+  `${pickFrom('office_fields', ['amountPaid'], 'o', (v) => v)} AS office_fields`,
+  `${pickFrom('payment_details', ['amount'], 'p', (v) => v)} AS payment_details`,
+  `${pickFrom('form_data', REPORT_FORM_KEYS, 'f', (v) => v)} AS form_data`,
+].join(', ');
+
 // @desc    Analytics data: submissions by service type, daily trend, status breakdown
 // @route   GET /api/admin/analytics?from=&to=&serviceType=&status=
 // @access  Private (Admin / Staff only)
@@ -225,10 +244,12 @@ export const getApplicationReports = async (req, res, next) => {
     }
 
     const CAP = 2000;
-    const applications = await Application.find(query)
-      .sort({ createdAt: -1 })
-      .limit(CAP)
-      .lean();
+    const { whereText, values } = buildWhereClause(query);
+    const found = await runQuery(
+      `SELECT ${REPORT_COLUMNS} FROM applications ${whereText} ORDER BY created_at DESC LIMIT ${CAP}`,
+      values
+    );
+    const applications = found.rows.map((row) => toCamelCase(row));
 
     const rows = applications.map((app) => {
       const fd = app.formData || {};
