@@ -10,6 +10,8 @@ import {
   getRecheckJob,
 } from '../../services/kycAutoReviewService.js';
 import { recordAudit } from '../../services/auditService.js';
+import { query, toCamelCase } from '../../config/db.js';
+import { buildWhereClause } from '../../db/modelHelper.js';
 import {
   FRESH_CAPTURE_HOURS,
   docRef,
@@ -95,6 +97,65 @@ const resolveDocUrl = async (raw) => {
  */
 const lazyDocUrl = (url, subjectId, key) =>
   url && url.startsWith('data:') ? `/api/admin/kyc/${subjectId}/document/${key}` : url;
+
+// ── List queries ─────────────────────────────────────────────────────────────
+// Images are stored as base64 text inside the JSON columns (up to several MB a
+// row), and the list only needs to know one exists: the bytes are fetched by
+// getKycDocument when a case is opened. These read everything the list uses and
+// cut each inline image down to its "data:image/..." prefix inside the database.
+// Each JSON column is walked once with jsonb_each: every separate column->'key'
+// would make Postgres unpack the whole multi-MB value again.
+const trimInline = (v) =>
+  `CASE WHEN jsonb_typeof(${v}) = 'string' AND left(${v} #>> '{}', 5) = 'data:' THEN to_jsonb(left(${v} #>> '{}', 32)) ELSE ${v} END`;
+
+const pickFrom = (json, keys, alias, valueOf = trimInline) => `COALESCE((
+  SELECT jsonb_object_agg(${alias}.k, ${valueOf(`${alias}.v`)})
+  FROM jsonb_each(CASE WHEN jsonb_typeof(${json}) = 'object' THEN ${json} END) AS ${alias}(k, v)
+  WHERE ${alias}.k = ANY(ARRAY[${keys.map((key) => `'${key}'`).join(', ')}])
+), '{}'::jsonb)`;
+
+const DOC_FIELD_KEYS = DOC_KEYS.map(({ key }) => key);
+
+const LIST_APPLICATION_COLUMNS = [
+  'id', 'reference_number', 'phone', 'nic', 'service_type', 'status', 'notes',
+  'actioned_at', 'actioned_by', 'created_at', 'updated_at',
+  `${pickFrom('documents', DOC_FIELD_KEYS, 'd')} AS documents`,
+  `${pickFrom('form_data', [...DOC_FIELD_KEYS, ...NAME_FIELDS, 'documents'], 'f', (v) =>
+    `CASE WHEN f.k = 'documents' THEN ${pickFrom(v, DOC_FIELD_KEYS, 'n')} ELSE ${trimInline(v)} END`)} AS form_data`,
+].join(', ');
+
+const LIST_CUSTOMER_COLUMNS = [
+  'id', 'name', 'nic', 'phone', 'kyc_status', 'kyc_notes', 'kyc_actioned_at', 'created_at', 'updated_at',
+  `${pickFrom('identity_documents', [...DOC_FIELD_KEYS, 'capturedAt'], 'i')} AS identity_documents`,
+].join(', ');
+
+async function listRows(table, columns, filter, suffix = '') {
+  const { whereText, values } = buildWhereClause(filter);
+  const { rows } = await query(`SELECT ${columns} FROM ${table} ${whereText} ${suffix}`, values);
+  return rows.map((row) => {
+    const item = toCamelCase(row);
+    return item.nic ? { ...item, NIC: item.nic } : item;
+  });
+}
+
+const last9Digits = (phone) => String(phone || '').replace(/\D/g, '').slice(-9);
+
+/** One lookup for a whole list, in place of one findLinkedCustomer per application. */
+async function linkedCustomersFor(apps) {
+  const nics = [...new Set(apps.map((a) => a.nic?.toUpperCase()).filter(Boolean))];
+  const phones = [...new Set(apps.map((a) => last9Digits(a.phone)).filter(Boolean))];
+  if (!nics.length && !phones.length) return () => null;
+
+  const { rows } = await query(
+    `SELECT ${LIST_CUSTOMER_COLUMNS} FROM customers
+     WHERE nic = ANY($1) OR right(regexp_replace(phone, '\\D', '', 'g'), 9) = ANY($2)`,
+    [nics, phones]
+  );
+  const customers = rows.map((row) => ({ ...toCamelCase(row), NIC: row.nic }));
+  const byNic = new Map(customers.filter((c) => c.NIC).map((c) => [c.NIC, c]));
+  const byPhone = new Map(customers.map((c) => [last9Digits(c.phone), c]));
+  return (app) => byNic.get(app.nic?.toUpperCase()) || byPhone.get(last9Digits(app.phone)) || null;
+}
 
 /** The customer profile linked to an application by NIC or phone (null if none or lookup fails). */
 async function findLinkedCustomer(app) {
@@ -197,12 +258,12 @@ async function customerToQueueItem(customer, review) {
   };
 }
 
-async function toQueueItem(app, review) {
+async function toQueueItem(app, review, linkedCustomer) {
   const fd = app.formData || {};
   const docs = fd.documents && typeof fd.documents === 'object' ? fd.documents : {};
 
   // Linked customer profile — holds the NIC + live face photo captured at registration
-  const customerProfile = await findLinkedCustomer(app);
+  const customerProfile = linkedCustomer === undefined ? await findLinkedCustomer(app) : linkedCustomer;
 
   const documents = [];
   const identityRaw = {};
@@ -255,7 +316,7 @@ async function annotateIdentity(items) {
     .map((i) => i.caseInfo?.face?.against === 'selfie' && i.caseInfo.face.referenceId)
     .filter(Boolean))];
   const referenceApps = referenceIds.length
-    ? await Application.find({ _id: { $in: referenceIds } }).select('referenceNumber createdAt formData documents').lean()
+    ? await listRows('applications', LIST_APPLICATION_COLUMNS, { _id: { $in: referenceIds } })
     : [];
   const referenceUrl = new Map();
   for (const ref of referenceApps) {
@@ -327,32 +388,35 @@ export const getKycQueue = async (req, res, next) => {
     const reviewedAppIds = await KycReview.find({ subjectType: 'application' }).distinct('subjectId');
 
     const [open, decided] = await Promise.all([
-      Application
-        .find({ status: { $in: REVIEW_STATUSES } })
-        .populate('actionedBy', 'name email role')
-        .sort({ createdAt: 1 })
-        .lean(),
-      Application
-        .find({
+      listRows('applications', LIST_APPLICATION_COLUMNS, { status: { $in: REVIEW_STATUSES } }, 'ORDER BY created_at ASC'),
+      listRows(
+        'applications',
+        LIST_APPLICATION_COLUMNS,
+        {
           status: { $in: ['approved', 'rejected', LOCKED_STATUS] },
           $or: [{ _id: { $in: reviewedAppIds } }, { actionedBy: { $ne: null } }],
-        })
-        .populate('actionedBy', 'name email role')
-        .sort({ updatedAt: -1 })
-        .limit(DECIDED_LIMIT)
-        .lean(),
+        },
+        `ORDER BY updated_at DESC LIMIT ${DECIDED_LIMIT}`
+      ),
     ]);
 
     const applications = [...open, ...decided];
-    const appReviews = await reviewsFor('application', applications.map((a) => a._id));
-    const queue = await Promise.all(applications.map((a) => toQueueItem(a, appReviews.get(String(a._id)))));
+    const [appReviews, linkedCustomerOf] = await Promise.all([
+      reviewsFor('application', applications.map((a) => a._id)),
+      linkedCustomersFor(applications),
+    ]);
+    const queue = await Promise.all(applications.map(
+      (a) => toQueueItem(a, appReviews.get(String(a._id)), linkedCustomerOf(a))
+    ));
 
     // Registered customers with captured ID images and no application yet — once they
     // apply, the application (in any status) carries the decision
     const covered = new Set((await Application.distinct('nic')).map((n) => String(n).toUpperCase()));
     const reviewedAccountIds = await KycReview.find({ subjectType: 'account' }).distinct('subjectId');
-    const customers = await Customer
-      .find({
+    const customers = await listRows(
+      'customers',
+      LIST_CUSTOMER_COLUMNS,
+      {
         'identityDocuments.nicFront': { $exists: true },
         $or: [
           { kycStatus: { $exists: false } },
@@ -360,10 +424,9 @@ export const getKycQueue = async (req, res, next) => {
           { kycStatus: { $in: ['approved', 'rejected'] }, _id: { $in: reviewedAccountIds } },
           { kycStatus: { $in: ['approved', 'rejected'] }, kycActionedAt: { $ne: null } },
         ],
-      })
-      .sort({ 'identityDocuments.capturedAt': 1 })
-      .limit(DECIDED_LIMIT * 2)
-      .lean();
+      },
+      `ORDER BY (identity_documents->>'capturedAt') ASC LIMIT ${DECIDED_LIMIT * 2}`
+    );
     const accountCustomers = customers.filter((u) => !covered.has(String(u.NIC).toUpperCase()));
     const accountReviews = await reviewsFor('account', accountCustomers.map((c) => c._id));
     const accounts = await Promise.all(accountCustomers.map((c) => customerToQueueItem(c, accountReviews.get(String(c._id)))));
