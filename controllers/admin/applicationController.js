@@ -1,5 +1,29 @@
 import Application from '../../models/admin/applicationModel.js';
 import { recordAudit } from '../../services/auditService.js';
+import { query } from '../../config/db.js';
+import { buildWhereClause, formatColumnOrPath } from '../../db/modelHelper.js';
+import { pickFrom, trimInline } from '../../db/jsonSelect.js';
+
+// The list without the base64 images stored inside the JSON columns, for pages
+// that never show them (?lite=true). Inline images keep only their prefix.
+const LITE_COLUMNS = [
+  'id', 'reference_number', 'phone', 'service_type', 'status', 'payment_status', 'payment_details', 'notes',
+  'actioned_by', 'actioned_at', 'nic', 'office_fields', 'sales_officer_id', 'sales_officer_employee_number',
+  'sales_tracking_token', 'sales_attribution', 'completed_sale', 'completed_sale_at', 'created_at', 'updated_at',
+  `${pickFrom('documents', null, 'd')} AS documents`,
+  `${pickFrom('form_data', null, 'f', (v) =>
+    `CASE WHEN f.k = 'documents' THEN ${pickFrom(v, null, 'n')} ELSE ${trimInline(v)} END`)} AS form_data`,
+].join(', ');
+
+const findLiteApplications = async (filter, sortField, sortDir, skip, limit) => {
+  const { whereText, values } = buildWhereClause(filter);
+  const { rows } = await query(
+    `SELECT ${LITE_COLUMNS} FROM applications ${whereText}
+     ORDER BY ${formatColumnOrPath(sortField)} ${sortDir === 1 ? 'ASC' : 'DESC'} LIMIT ${limit} OFFSET ${skip}`,
+    values
+  );
+  return rows.map((row) => new Application(row));
+};
 
 // @desc    Get all applications — paginated, filterable list
 // @route   GET /api/admin/applications
@@ -62,14 +86,16 @@ export const getAdminApplications = async (req, res, next) => {
 
     // --- Execute Queries ---
     const [applications, totalCount] = await Promise.all([
-      Application
-        .find(filter)
-        .populate('actionedBy', 'name email')
-        .populate('salesOfficer', 'name email employeeNumber')
-        .sort({ [sortField]: sortDir })
-        .skip(skip)
-        .limit(pageSize)
-        .lean(),
+      req.query.lite === 'true'
+        ? findLiteApplications(filter, sortField, sortDir, skip, pageSize)
+        : Application
+          .find(filter)
+          .populate('actionedBy', 'name email')
+          .populate('salesOfficer', 'name email employeeNumber')
+          .sort({ [sortField]: sortDir })
+          .skip(skip)
+          .limit(pageSize)
+          .lean(),
       Application.countDocuments(filter),
     ]);
 

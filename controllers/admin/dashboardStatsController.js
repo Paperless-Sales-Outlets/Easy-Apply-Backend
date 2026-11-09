@@ -1,4 +1,7 @@
 import Application from '../../models/admin/applicationModel.js';
+import { query, toCamelCase } from '../../config/db.js';
+import { buildWhereClause } from '../../db/modelHelper.js';
+import { pickFrom } from '../../db/jsonSelect.js';
 
 // The 9 service form types tracked across the operations dashboard.
 const FORM_TYPES = [
@@ -61,6 +64,32 @@ function normalizeApplication(app) {
   };
 }
 
+const countByServiceType = async (filter) => {
+  const { whereText, values } = buildWhereClause(filter);
+  const { rows } = await query(
+    `SELECT service_type AS "_id", COUNT(*)::int AS count FROM applications ${whereText} GROUP BY service_type`,
+    values
+  );
+  return rows;
+};
+
+// Only the form fields normalizeApplication reads, without the customer's images.
+const RECENT_FORM_KEYS = [
+  'address', 'fullAddress', 'residentialAddress', 'serviceAddress', 'permanentAddress', 'billingAddress',
+  'addressLine1', 'addressLine2',
+  'nameFull', 'fullName', 'contactName', 'customerName', 'legalOwner', 'currentCustomerName', 'applicantName',
+  'nic', 'NIC', 'email', 'emailAddress',
+];
+
+const latestApplications = async (limit) => {
+  const { rows } = await query(
+    `SELECT id, reference_number, nic, phone, service_type, status, notes, actioned_by, actioned_at, created_at,
+       ${pickFrom('form_data', RECENT_FORM_KEYS, 'f', (v) => v)} AS form_data
+     FROM applications ORDER BY created_at DESC LIMIT ${limit}`
+  );
+  return rows.map((row) => toCamelCase(row));
+};
+
 // @desc    Operations dashboard statistics
 // @route   GET /api/admin/dashboard-stats
 // @access  Private (Admin / Staff only)
@@ -78,31 +107,20 @@ export const getDashboardStats = async (req, res, next) => {
     if (startDate) rangeMatch.$gte = new Date(startDate);
     if (endDate) rangeMatch.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
     const hasRange = Object.keys(rangeMatch).length > 0;
-    const rangeStage = hasRange ? [{ $match: { createdAt: rangeMatch } }] : [];
+    const range = hasRange ? { createdAt: rangeMatch } : {};
 
     const [statusRows, totalsByType, completedByType, recent] = await Promise.all([
       // Count per status
       Application.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
 
       // Total submissions per service type
-      Application.aggregate([
-        ...rangeStage,
-        { $group: { _id: '$serviceType', count: { $sum: 1 } } },
-      ]),
+      countByServiceType(range),
 
       // Completed submissions per service type
-      Application.aggregate([
-        ...rangeStage,
-        { $match: { status: { $in: COMPLETED_STATUSES } } },
-        { $group: { _id: '$serviceType', count: { $sum: 1 } } },
-      ]),
+      countByServiceType({ ...range, status: { $in: COMPLETED_STATUSES } }),
 
       // Latest applications for the recent history table
-      Application.find()
-        .populate('actionedBy', 'name email')
-        .sort({ createdAt: -1 })
-        .limit(15)
-        .lean(),
+      latestApplications(15),
     ]);
 
     const statusCounts = { pending: 0, 'pending payment': 0, approved: 0, confirmed: 0, rejected: 0, flagged: 0 };

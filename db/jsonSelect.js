@@ -8,9 +8,9 @@
 export const trimInline = (v) =>
   `CASE WHEN jsonb_typeof(${v}) = 'string' AND left(${v} #>> '{}', 5) = 'data:' THEN to_jsonb(left(${v} #>> '{}', 32)) ELSE ${v} END`;
 
-/** A JSON object holding only `keys` of `json`. `alias` must be unique within the query. */
+/** A JSON object holding only `keys` of `json` (every key when null). `alias` must be unique within the query. */
 export const pickFrom = (json, keys, alias, valueOf = trimInline) => `COALESCE((
   SELECT jsonb_object_agg(${alias}.k, ${valueOf(`${alias}.v`)})
   FROM jsonb_each(CASE WHEN jsonb_typeof(${json}) = 'object' THEN ${json} END) AS ${alias}(k, v)
-  WHERE ${alias}.k = ANY(ARRAY[${keys.map((key) => `'${key}'`).join(', ')}])
+  ${keys ? `WHERE ${alias}.k = ANY(ARRAY[${keys.map((key) => `'${key}'`).join(', ')}])` : ''}
 ), '{}'::jsonb)`;
