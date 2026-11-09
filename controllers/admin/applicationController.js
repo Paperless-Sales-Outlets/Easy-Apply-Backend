@@ -3,6 +3,7 @@ import { recordAudit } from '../../services/auditService.js';
 import { query } from '../../config/db.js';
 import { buildWhereClause, formatColumnOrPath } from '../../db/modelHelper.js';
 import { pickFrom, trimInline } from '../../db/jsonSelect.js';
+import { escapeRegex } from '../../utils/employeeNumber.js';
 
 // The list without the base64 images stored inside the JSON columns, for pages
 // that never show them (?lite=true). Inline images keep only their prefix.
@@ -52,14 +53,14 @@ export const getAdminApplications = async (req, res, next) => {
     if (serviceType) filter.serviceType = serviceType;
 
     // Case-insensitive exact match filters
-    if (nic)             filter.nic             = { $regex: new RegExp(`^${nic}$`, 'i') };
-    if (referenceNumber) filter.referenceNumber = { $regex: new RegExp(`^${referenceNumber}$`, 'i') };
+    if (nic)             filter.nic             = { $regex: new RegExp(`^${escapeRegex(nic)}$`, 'i') };
+    if (referenceNumber) filter.referenceNumber = { $regex: new RegExp(`^${escapeRegex(referenceNumber)}$`, 'i') };
 
     // Global search across referenceNumber and nic
     if (search && !nic && !referenceNumber) {
       filter.$or = [
-        { referenceNumber: { $regex: search, $options: 'i' } },
-        { nic:             { $regex: search, $options: 'i' } },
+        { referenceNumber: { $regex: escapeRegex(search), $options: 'i' } },
+        { nic:             { $regex: escapeRegex(search), $options: 'i' } },
       ];
     }
 

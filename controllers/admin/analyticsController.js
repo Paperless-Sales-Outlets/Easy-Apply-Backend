@@ -3,6 +3,7 @@ import User from '../../models/User.js';
 import { query as runQuery, toCamelCase } from '../../config/db.js';
 import { buildWhereClause } from '../../db/modelHelper.js';
 import { pickFrom } from '../../db/jsonSelect.js';
+import { escapeRegex } from '../../utils/employeeNumber.js';
 
 const SERVICE_LABELS = {
   'new-connection': 'New Connection',
@@ -233,13 +234,13 @@ export const getApplicationReports = async (req, res, next) => {
       // Reference numbers are stored as plain text, but the customer fields the
       // operator searches for live in the schemaless formData blob.
       query.$or = [
-        { referenceNumber: { $regex: search, $options: 'i' } },
-        { nic: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } },
-        { 'formData.nameFull': { $regex: search, $options: 'i' } },
-        { 'formData.fullName': { $regex: search, $options: 'i' } },
-        { 'formData.customerName': { $regex: search, $options: 'i' } },
-        { 'formData.product.name': { $regex: search, $options: 'i' } },
+        { referenceNumber: { $regex: escapeRegex(search), $options: 'i' } },
+        { nic: { $regex: escapeRegex(search), $options: 'i' } },
+        { phone: { $regex: escapeRegex(search), $options: 'i' } },
+        { 'formData.nameFull': { $regex: escapeRegex(search), $options: 'i' } },
+        { 'formData.fullName': { $regex: escapeRegex(search), $options: 'i' } },
+        { 'formData.customerName': { $regex: escapeRegex(search), $options: 'i' } },
+        { 'formData.product.name': { $regex: escapeRegex(search), $options: 'i' } },
       ];
     }
 
@@ -311,10 +312,10 @@ export const getUserReports = async (req, res, next) => {
     const userQuery = role ? { role } : {};
     if (search) {
       userQuery.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } },
-        { NIC: { $regex: search, $options: 'i' } },
+        { name: { $regex: escapeRegex(search), $options: 'i' } },
+        { email: { $regex: escapeRegex(search), $options: 'i' } },
+        { phone: { $regex: escapeRegex(search), $options: 'i' } },
+        { NIC: { $regex: escapeRegex(search), $options: 'i' } },
       ];
     }
 

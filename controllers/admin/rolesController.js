@@ -2,6 +2,7 @@ import StaffRole from '../../models/StaffRole.js';
 import User from '../../models/User.js';
 import Privilege from '../../models/Privilege.js';
 import { recordAudit } from '../../services/auditService.js';
+import { escapeRegex } from '../../utils/employeeNumber.js';
 
 const RESERVED_NAMES = new Set(['admin', 'customer']);
 
@@ -64,7 +65,7 @@ export const createStaffRole = async (req, res, next) => {
       return next(new Error(`"${cleanName}" is a reserved role name`));
     }
 
-    const existing = await StaffRole.findOne({ name: new RegExp(`^${cleanName}$`, 'i') });
+    const existing = await StaffRole.findOne({ name: new RegExp(`^${escapeRegex(cleanName)}$`, 'i') });
     if (existing) {
       res.status(409);
       return next(new Error('A role with this name already exists'));
@@ -121,7 +122,7 @@ export const updateStaffRole = async (req, res, next) => {
         return next(new Error(`"${cleanName}" is a reserved role name`));
       }
       if (cleanName.toLowerCase() !== oldName.toLowerCase()) {
-        const existing = await StaffRole.findOne({ name: new RegExp(`^${cleanName}$`, 'i'), _id: { $ne: id } });
+        const existing = await StaffRole.findOne({ name: new RegExp(`^${escapeRegex(cleanName)}$`, 'i'), _id: { $ne: id } });
         if (existing) {
           res.status(409);
           return next(new Error('A role with this name already exists'));
