@@ -65,7 +65,8 @@ const resolveRange = (query = {}) => {
 
 const buildFilter = (query, { requireActioned = false } = {}) => {
   const { from, to, days } = resolveRange(query);
-  const match = { createdAt: { $gte: from, $lte: to } };
+  // Two conditions, not one { $gte, $lte }: the query helper only applies the first comparison on a field.
+  const match = { $and: [{ createdAt: { $gte: from } }, { createdAt: { $lte: to } }] };
 
   if (query.serviceType && query.serviceType !== 'all') {
     match.serviceType = query.serviceType;
@@ -129,6 +130,18 @@ const resolveProduct = (fd) => {
   return { name: name || '—', price };
 };
 
+// One row per group of the applications matching `match`.
+const groupApplications = async (match, select, groupBy, orderBy = '') => {
+  const { whereText, values } = buildWhereClause(match);
+  const { rows } = await runQuery(
+    `SELECT ${select} FROM applications ${whereText} GROUP BY ${groupBy} ${orderBy}`,
+    values
+  );
+  return rows;
+};
+
+const countWhere = (condition) => `(COUNT(*) FILTER (WHERE ${condition}))::int`;
+
 // Only the form fields the report reads. formData also holds the customer's
 // images, and loading those made this report take up to 40 seconds.
 const REPORT_FORM_KEYS = [
@@ -153,30 +166,17 @@ export const getAnalytics = async (req, res, next) => {
     const { match, from, to, days } = buildFilter(req.query);
 
     const [byServiceType, dailySubmissions, statusBreakdown] = await Promise.all([
-      Application.aggregate([
-        { $match: match },
-        { $group: { _id: '$serviceType', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-      ]),
+      groupApplications(match, 'service_type AS "_id", COUNT(*)::int AS count', 'service_type', 'ORDER BY count DESC'),
 
-      Application.aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: {
-              $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'UTC' },
-            },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ]),
+      // UTC days, the same frame as the range and the zero-filled trend below
+      groupApplications(
+        match,
+        `to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS "_id", COUNT(*)::int AS count`,
+        '1',
+        'ORDER BY 1'
+      ),
 
-      Application.aggregate([
-        { $match: match },
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-      ]),
+      groupApplications(match, 'status AS "_id", COUNT(*)::int AS count', 'status', 'ORDER BY count DESC'),
     ]);
 
     // Zero-fill so a quiet day still renders a point on the trend line.
@@ -320,58 +320,32 @@ export const getUserReports = async (req, res, next) => {
 
     const [users, taskRows, serviceRows] = await Promise.all([
       User.find(userQuery)
-        .select('name email phone role NIC createdAt')
+        .select('_id name email phone role NIC createdAt')
         .sort({ name: 1 })
         .lean(),
 
-      Application.aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: '$actionedBy',
-            total: { $sum: 1 },
-            approved: {
-              $sum: { $cond: [{ $eq: ['$status', 'approved'] }, 1, 0] },
-            },
-            confirmed: {
-              $sum: { $cond: [{ $eq: ['$status', 'confirmed'] }, 1, 0] },
-            },
-            rejected: {
-              $sum: { $cond: [{ $eq: ['$status', 'rejected'] }, 1, 0] },
-            },
-            flagged: {
-              $sum: { $cond: [{ $eq: ['$status', 'flagged'] }, 1, 0] },
-            },
-            open: {
-              $sum: { $cond: [{ $in: ['$status', OPEN_STATUSES] }, 1, 0] },
-            },
-            lastActionedAt: { $max: '$actionedAt' },
-            handleMs: {
-              $sum: {
-                $cond: [
-                  { $and: [{ $ne: ['$actionedAt', null] }, { $ne: ['$actionedAt', '$createdAt'] }] },
-                  { $subtract: ['$actionedAt', '$createdAt'] },
-                  0,
-                ],
-              },
-            },
-            handledSamples: {
-              $sum: { $cond: [{ $ne: ['$actionedAt', null] }, 1, 0] },
-            },
-          },
-        },
-      ]),
+      groupApplications(
+        match,
+        `actioned_by AS "_id",
+         COUNT(*)::int AS total,
+         ${countWhere("status = 'approved'")} AS approved,
+         ${countWhere("status = 'confirmed'")} AS confirmed,
+         ${countWhere("status = 'rejected'")} AS rejected,
+         ${countWhere("status = 'flagged'")} AS flagged,
+         ${countWhere(`status IN (${OPEN_STATUSES.map((status) => `'${status}'`).join(', ')})`)} AS open,
+         MAX(actioned_at) AS "lastActionedAt",
+         COALESCE(SUM(EXTRACT(EPOCH FROM (actioned_at - created_at)) * 1000)
+           FILTER (WHERE actioned_at IS NOT NULL AND actioned_at <> created_at), 0)::float AS "handleMs",
+         COUNT(actioned_at)::int AS "handledSamples"`,
+        'actioned_by'
+      ),
 
-      Application.aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: { user: '$actionedBy', service: '$serviceType' },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { count: -1 } },
-      ]),
+      groupApplications(
+        match,
+        'actioned_by AS user_id, service_type, COUNT(*)::int AS count',
+        'actioned_by, service_type',
+        'ORDER BY count DESC'
+      ),
     ]);
 
     const taskByUser = new Map();
@@ -381,10 +355,10 @@ export const getUserReports = async (req, res, next) => {
 
     const servicesByUser = new Map();
     serviceRows.forEach((row) => {
-      const key = String(row._id.user);
+      const key = String(row.user_id);
       if (!servicesByUser.has(key)) servicesByUser.set(key, []);
       servicesByUser.get(key).push({
-        service: labelFor(SERVICE_LABELS, row._id.service),
+        service: labelFor(SERVICE_LABELS, row.service_type),
         count: row.count,
       });
     });
