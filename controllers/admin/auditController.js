@@ -1,8 +1,29 @@
 import AuditLog from '../../models/AuditLog.js';
+import User from '../../models/User.js';
+import { escapeRegex } from '../../utils/employeeNumber.js';
 
 const positiveInt = (value, fallback, max) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
+};
+
+// Module, description, target and user name live in the `details` JSON column.
+const presentLog = (log, names) => ({
+  ...log,
+  timestamp: log.createdAt,
+  userName: log.details?.userName || names.get(log.actorId) || null,
+  module: log.details?.module || null,
+  targetId: log.details?.targetId || null,
+  description: log.details?.description || null,
+  metadata: log.details?.metadata || null,
+});
+
+// Entries written before the details were stored only have the actor's id.
+const staffNames = async (logs) => {
+  const ids = [...new Set(logs.filter((log) => !log.details?.userName && log.actorId).map((log) => log.actorId))];
+  if (!ids.length) return new Map();
+  const users = await User.find({ _id: { $in: ids } }).select('_id name').lean();
+  return new Map(users.map((user) => [user.id, user.name]));
 };
 
 /**
@@ -28,40 +49,42 @@ export const getAuditLogs = async (req, res, next) => {
     const filter = {};
 
     if (action) filter.action = String(action).trim().toUpperCase();
-    if (module) filter.module = { $regex: String(module).trim(), $options: 'i' };
+    if (module) filter['details.module'] = { $regex: escapeRegex(String(module).trim()), $options: 'i' };
     if (search) {
-      const expression = { $regex: String(search).trim(), $options: 'i' };
+      const expression = { $regex: escapeRegex(String(search).trim()), $options: 'i' };
       filter.$or = [
         { action: expression },
-        { module: expression },
-        { targetId: expression },
-        { description: expression },
-        { userName: expression },
+        { 'details.module': expression },
+        { 'details.targetId': expression },
+        { 'details.description': expression },
+        { 'details.userName': expression },
       ];
     }
 
     const lowerDate = from || startDate;
     const upperDate = to || endDate;
     if (lowerDate || upperDate) {
-      filter.timestamp = {};
+      filter.createdAt = {};
       if (lowerDate) {
         const date = new Date(lowerDate);
         if (Number.isNaN(date.getTime())) return res.status(400).json({ success: false, message: 'Invalid from date' });
-        filter.timestamp.$gte = date;
+        filter.createdAt.$gte = date;
       }
       if (upperDate) {
         const date = new Date(upperDate);
         if (Number.isNaN(date.getTime())) return res.status(400).json({ success: false, message: 'Invalid to date' });
         date.setHours(23, 59, 59, 999);
-        filter.timestamp.$lte = date;
+        filter.createdAt.$lte = date;
       }
     }
 
     const skip = (pageNumber - 1) * pageSize;
-    const [logs, totalCount] = await Promise.all([
-      AuditLog.find(filter).sort({ timestamp: -1 }).skip(skip).limit(pageSize).lean(),
+    const [rows, totalCount] = await Promise.all([
+      AuditLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean(),
       AuditLog.countDocuments(filter),
     ]);
+    const names = await staffNames(rows);
+    const logs = rows.map((row) => presentLog(row, names));
 
     res.status(200).json({
       success: true,
