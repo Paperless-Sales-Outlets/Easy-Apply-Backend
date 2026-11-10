@@ -86,7 +86,7 @@ export const createStaffRole = async (req, res, next) => {
     await recordAudit({ req, action: 'CREATE', module: 'User Management', targetId: role._id, description: `Created staff role ${role.name}` });
     res.status(201).json({ success: true, role: sanitizeRole(role, 0) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('A role with this name already exists'));
     }
@@ -149,7 +149,7 @@ export const updateStaffRole = async (req, res, next) => {
     const userCount = await User.countDocuments({ role: role.name });
     res.status(200).json({ success: true, role: sanitizeRole(role, userCount) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('A role with this name already exists'));
     }
@@ -176,7 +176,7 @@ export const deleteStaffRole = async (req, res, next) => {
       return next(new Error(`${inUse} user(s) still have this role — reassign them first`));
     }
 
-    await StaffRole.deleteOne({ _id: id });
+    await StaffRole.findByIdAndDelete(id);
     await recordAudit({ req, action: 'DELETE', module: 'User Management', targetId: role._id, description: `Deleted staff role ${role.name}` });
     res.status(200).json({ success: true, message: 'Role removed' });
   } catch (error) {

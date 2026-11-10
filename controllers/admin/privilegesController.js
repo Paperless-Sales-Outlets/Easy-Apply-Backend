@@ -42,10 +42,11 @@ async function ensureSystemPrivileges() {
 
 async function usageFor(key) {
   const [roles, users] = await Promise.all([
-    StaffRole.countDocuments({ permissions: key }),
-    User.countDocuments({ permissions: key }),
+    StaffRole.find().select('permissions').lean(),
+    User.find().select('permissions').lean(),
   ]);
-  return { roles, users };
+  const holding = (docs) => docs.filter((d) => (d.permissions || []).includes(key)).length;
+  return { roles: holding(roles), users: holding(users) };
 }
 
 const slugify = (name) =>
@@ -108,7 +109,7 @@ export const createPrivilege = async (req, res, next) => {
 
     const base = slugify(name) || 'privilege';
     let key = base;
-    for (let i = 2; await Privilege.exists({ key }); i += 1) key = `${base}-${i}`;
+    for (let i = 2; await Privilege.findOne({ key }); i += 1) key = `${base}-${i}`;
 
     const privilege = await Privilege.create({ key, name, description, createdBy: req.user?._id });
     await recordAudit({ req, action: 'CREATE', module: 'User Management', targetId: privilege._id, description: `Created privilege ${privilege.name}` });
@@ -188,7 +189,7 @@ export const deletePrivilege = async (req, res, next) => {
       return next(new Error(`Still assigned to ${usage.roles} role(s) and ${usage.users} user(s) — remove it from them first`));
     }
 
-    await Privilege.deleteOne({ _id: privilege._id });
+    await Privilege.findByIdAndDelete(privilege._id);
     await recordAudit({ req, action: 'DELETE', module: 'User Management', targetId: privilege._id, description: `Deleted privilege ${privilege.name}` });
     res.status(200).json({ success: true, message: 'Privilege removed' });
   } catch (error) {
