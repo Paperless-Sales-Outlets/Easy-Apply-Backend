@@ -557,7 +557,7 @@ export const logout = async (req, res, next) => {
 
   try {
     // Delete refresh token from DB to invalidate it
-    const savedToken = await RefreshToken.findOne({ token: refreshToken }).select('userId');
+    const savedToken = await RefreshToken.findOne({ token: refreshToken });
     await RefreshToken.deleteOne({ token: refreshToken });
     const account = savedToken ? await findAccountById(savedToken.userId) : null;
     await recordAudit({
