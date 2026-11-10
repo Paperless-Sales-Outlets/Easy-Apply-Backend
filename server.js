@@ -10,7 +10,7 @@ import mongoose from 'mongoose';
 
 import connectDB, { isDbConnected } from './config/db.js';
 import { startKycAutoReviewScheduler } from './services/kycAutoReviewService.js';
-import { startDraftExpiryScheduler } from './services/draftExpiryService.js';
+import { prepareDraftStorage } from './services/draftExpiryService.js';
 
 import applicationRoutes from './routes/applicationRoutes.js';
 import adminApplicationRoutes from './routes/admin/applicationRoutes.js';
@@ -56,9 +56,10 @@ connectDB();
 // Automated KYC review (set KYC_AUTO_REVIEW=off to disable)
 startKycAutoReviewScheduler();
 
-// Unfinished New Connection applications: hide them from the customer
-// after 30 days (kept in the database, marked expired). Checked hourly.
-startDraftExpiryScheduler();
+// Migrate drafts from the previous expiry-based implementation.
+mongoose.connection.once('open', () => {
+  prepareDraftStorage().catch((err) => console.error('[drafts] storage migration failed:', err.message));
+});
 
 // Drop legacy orderId index once connected
 mongoose.connection.once('open', async () => {

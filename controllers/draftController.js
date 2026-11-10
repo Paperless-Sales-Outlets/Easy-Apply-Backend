@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import NewConnectionDraft, { DRAFT_LIFETIME_MS, DRAFT_STATUS } from '../models/NewConnectionDraft.js';
+import NewConnectionDraft, { DRAFT_STATUS } from '../models/NewConnectionDraft.js';
 
 // Wizard fields holding images. They are stored as GridFS files rather than
 // inside the draft document (see models/NewConnectionDraft.js).
@@ -83,79 +83,33 @@ const removePhotos = async (fileIds) => {
 const photoFileIds = (draft) =>
   PHOTO_FIELDS.map((field) => draft?.photos?.[field]?.fileId).filter(Boolean);
 
-const isPastResumeLimit = (draft) =>
-  Boolean(draft?.resumeUntil) && new Date(draft.resumeUntil).getTime() <= Date.now();
-
 /** Delete a draft and its photo files (start over, or after the application is submitted). */
 const destroyDraft = async (draft) => {
   await NewConnectionDraft.deleteOne({ _id: draft._id });
   await removePhotos(photoFileIds(draft));
 };
 
-/**
- * Mark a draft past its 30 days as expired. The record and its photos are
- * kept; the customer just can't see or continue it any more.
- */
-const markExpired = (draft) =>
-  NewConnectionDraft.updateOne(
-    { _id: draft._id, status: DRAFT_STATUS.ACTIVE },
-    { $set: { status: DRAFT_STATUS.EXPIRED, expiredAt: new Date() } }
-  );
-
-/**
- * The customer's active draft. One that has passed its 30 days (but hasn't
- * been marked yet by the hourly job) is marked expired here and returned as
- * `expiredDraft` instead.
- */
 const loadActiveDraft = async (phone, select) => {
-  let query = NewConnectionDraft.findOne({ phone, status: DRAFT_STATUS.ACTIVE });
-  if (select) query = query.select(`${select} resumeUntil status`);
-  const draft = await query;
-  if (draft && isPastResumeLimit(draft)) {
-    await markExpired(draft);
-    return { draft: null, expiredDraft: draft };
-  }
-  return { draft, expiredDraft: null };
+  let query = NewConnectionDraft.findOne({
+    phone,
+    status: { $in: [DRAFT_STATUS.ACTIVE, 'expired'] },
+  }).sort({ status: 1 });
+  if (select) query = query.select(`${select} status`);
+  return { draft: await query };
 };
 
 /**
- * The wizard sends the id of the draft it is editing. If that draft has since
- * expired (for example the hourly job ran while the form was open), saving
- * must not quietly start a new draft from the old form — return it so the
- * request can be refused.
- */
-const expiredClientDraft = async (phone, draftId) => {
-  if (!draftId || !mongoose.isValidObjectId(draftId)) return null;
-  const draft = await NewConnectionDraft.findOne({ _id: draftId, phone }).select('status resumeUntil');
-  if (!draft) return null;
-  if (draft.status === DRAFT_STATUS.EXPIRED) return draft;
-  if (isPastResumeLimit(draft)) {
-    await markExpired(draft);
-    return draft;
-  }
-  return null;
-};
-
-// 410 Gone: the application passed its 30 days. The wizard starts a new one.
-const draftExpiredResponse = (res, draft) =>
-  res.status(410).json({
-    success: false,
-    expired: true,
-    expiredOn: draft.resumeUntil,
-    message: 'This application passed its 30-day limit and can no longer be continued. Please start a new application.',
-  });
-
-/**
- * Update the customer's active draft, or create one. The 30-day limit is set
- * only when the draft is created and is never extended. The form and each
- * photo are saved by separate requests that can arrive together, so if both
- * try to create the draft at once the loser simply retries as an update.
+ * Update the customer's active draft, or create one. The form and each photo
+ * are saved by separate requests that can arrive together, so if both try to
+ * create the draft at once the loser simply retries as an update.
  */
 const upsertDraft = async (phone, update) => {
-  const filter = { phone, status: DRAFT_STATUS.ACTIVE };
+  const filter = {
+    phone,
+    status: { $in: [DRAFT_STATUS.ACTIVE, 'expired'] },
+  };
   const fullUpdate = {
     ...update,
-    $setOnInsert: { resumeUntil: new Date(Date.now() + DRAFT_LIFETIME_MS) },
   };
   const options = { upsert: true, new: true, setDefaultsOnInsert: true };
   try {
@@ -168,9 +122,7 @@ const upsertDraft = async (phone, update) => {
 
 // @desc    Get the verified mobile number's unfinished New Connection application.
 //          ?summary=true skips the form and photos, for the home page banner.
-//          Only an active draft within its 30 days is returned. When there is
-//          none, `expired` describes the most recent expired one (if any) so the
-//          wizard can tell the customer once.
+//          Only an active draft is returned.
 // @route   GET /api/drafts/new-connection
 // @access  Private (OTP-verified mobile, x-draft-token)
 export const getDraft = async (req, res, next) => {
@@ -178,17 +130,12 @@ export const getDraft = async (req, res, next) => {
 
   try {
     const serverTime = new Date();
-    const { draft, expiredDraft } = await loadActiveDraft(req.draftPhone);
+    const { draft } = await loadActiveDraft(req.draftPhone);
 
     if (!draft) {
-      const lastExpired = expiredDraft
-        || await NewConnectionDraft.findOne({ phone: req.draftPhone, status: DRAFT_STATUS.EXPIRED })
-          .sort({ expiredAt: -1 })
-          .select('resumeUntil');
       return res.status(200).json({
         success: true,
         draft: null,
-        expired: lastExpired ? { id: lastExpired._id, expiredOn: lastExpired.resumeUntil } : null,
         serverTime,
       });
     }
@@ -201,7 +148,6 @@ export const getDraft = async (req, res, next) => {
           stepIndex: draft.stepIndex,
           selectedProduct: draft.selectedProduct,
           updatedAt: draft.updatedAt,
-          resumeUntil: draft.resumeUntil,
         },
         serverTime,
       });
@@ -229,7 +175,6 @@ export const getDraft = async (req, res, next) => {
         selectedProduct: draft.selectedProduct,
         stepIndex: draft.stepIndex,
         updatedAt: draft.updatedAt,
-        resumeUntil: draft.resumeUntil,
       },
       serverTime,
     });
@@ -241,8 +186,7 @@ export const getDraft = async (req, res, next) => {
 // @desc    Create or update the verified mobile number's draft: form fields,
 //          package and step. Small and quick on purpose — photos are saved
 //          separately (PUT /photos/:field) so a slow upload never holds back
-//          the customer's progress. Refused with 410 once the draft being
-//          edited (`draftId`) has passed its 30 days.
+//          the customer's progress.
 // @route   PUT /api/drafts/new-connection
 // @access  Private (OTP-verified mobile, x-draft-token)
 export const saveDraft = async (req, res, next) => {
@@ -257,11 +201,6 @@ export const saveDraft = async (req, res, next) => {
 
   try {
     const phone = req.draftPhone;
-
-    const staleDraft = await expiredClientDraft(phone, draftId);
-    if (staleDraft) return draftExpiredResponse(res, staleDraft);
-    const { expiredDraft } = await loadActiveDraft(phone, '_id');
-    if (expiredDraft) return draftExpiredResponse(res, expiredDraft);
 
     // Photos never live inside formData on the server.
     const cleanForm = { ...formData };
@@ -283,7 +222,6 @@ export const saveDraft = async (req, res, next) => {
         id: draft._id,
         stepIndex: draft.stepIndex,
         updatedAt: draft.updatedAt,
-        resumeUntil: draft.resumeUntil,
       },
       serverTime: new Date(),
     });
@@ -294,8 +232,7 @@ export const saveDraft = async (req, res, next) => {
 
 // @desc    Save one photo (nicFront, nicBack or facePhoto) on the draft.
 //          `image` is a base64 data URL, a reference to a file already on
-//          record, or an empty string to remove the photo. Refused with 410
-//          once the draft being edited (`draftId`) has passed its 30 days.
+//          record, or an empty string to remove the photo.
 // @route   PUT /api/drafts/new-connection/photos/:field
 // @access  Private (OTP-verified mobile, x-draft-token)
 export const saveDraftPhoto = async (req, res, next) => {
@@ -313,10 +250,7 @@ export const saveDraftPhoto = async (req, res, next) => {
   let newFileId = null;
 
   try {
-    const staleDraft = await expiredClientDraft(phone, draftId);
-    if (staleDraft) return draftExpiredResponse(res, staleDraft);
-    const { draft: existing, expiredDraft } = await loadActiveDraft(phone, `photos.${field}`);
-    if (expiredDraft) return draftExpiredResponse(res, expiredDraft);
+    const { draft: existing } = await loadActiveDraft(phone, `photos.${field}`);
 
     const previousFileId = existing?.photos?.[field]?.fileId;
 
@@ -342,7 +276,7 @@ export const saveDraftPhoto = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      draft: { id: draft._id, resumeUntil: draft.resumeUntil },
+      draft: { id: draft._id },
       serverTime: new Date(),
     });
   } catch (error) {
@@ -361,15 +295,18 @@ export const removeDraftPhoto = (req, res, next) => {
   return saveDraftPhoto(req, res, next);
 };
 
-// @desc    Delete the verified mobile number's active draft (start over, or
-//          after the application is submitted). Expired drafts are kept.
+// @desc    Delete the verified mobile number's unfinished draft (start over,
+//          or after the application is submitted).
 // @route   DELETE /api/drafts/new-connection
 // @access  Private (OTP-verified mobile, x-draft-token)
 export const deleteDraft = async (req, res, next) => {
   if (mongoose.connection.readyState !== 1) return dbUnavailable(res, next);
 
   try {
-    const draft = await NewConnectionDraft.findOne({ phone: req.draftPhone, status: DRAFT_STATUS.ACTIVE });
+    const draft = await NewConnectionDraft.findOne({
+      phone,
+      status: { $in: [DRAFT_STATUS.ACTIVE, 'expired'] },
+    });
     if (draft) await destroyDraft(draft);
 
     res.status(200).json({ success: true, message: 'Draft deleted' });
