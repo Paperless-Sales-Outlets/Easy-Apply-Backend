@@ -65,9 +65,22 @@ export const getSalesOfficers = async (req, res, next) => {
       qrMap.set(String(qr.officer), qr);
     });
 
-    const sanitized = officers.map((officer) =>
-      sanitizeOfficer(officer, qrMap.get(String(officer._id)))
+    // Applications credited to each officer, counted the same way as their statistics
+    const applicationCounts = await Promise.all(
+      officers.map((officer) =>
+        Application.countDocuments({
+          $or: [
+            { salesOfficer: officer._id },
+            { salesOfficerEmployeeNumber: String(officer.employeeNumber || '').trim() },
+          ],
+        })
+      )
     );
+
+    const sanitized = officers.map((officer, index) => ({
+      ...sanitizeOfficer(officer, qrMap.get(String(officer._id))),
+      applicationCount: Number(applicationCounts[index]) || 0,
+    }));
 
     res.status(200).json({
       success: true,
