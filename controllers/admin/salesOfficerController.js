@@ -146,9 +146,9 @@ export const createSalesOfficer = async (req, res, next) => {
       metadata: { employeeNumber: officer.employeeNumber, role: officer.role },
     });
 
-    res.status(201).json({ success: true, salesOfficer: sanitizeOfficer(officer.toObject()) });
+    res.status(201).json({ success: true, salesOfficer: sanitizeOfficer(officer) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('An account with this email or employee number already exists'));
     }
