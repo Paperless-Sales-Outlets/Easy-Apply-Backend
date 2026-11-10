@@ -567,7 +567,7 @@ export const deleteLead = async (req, res, next) => {
       return next(new Error('Lead not found'));
     }
 
-    await Lead.deleteOne({ _id: id });
+    await Lead.findByIdAndDelete(id);
 
     await recordAudit({
       req,
