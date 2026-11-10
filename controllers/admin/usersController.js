@@ -106,7 +106,7 @@ export const createAdminUser = async (req, res, next) => {
     });
     res.status(201).json({ success: true, user: sanitizeUser(user) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('A user with this email or employee number already exists'));
     }
@@ -200,7 +200,7 @@ export const updateAdminUser = async (req, res, next) => {
     });
     res.status(200).json({ success: true, user: sanitizeUser(user) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('A user with this email or employee number already exists'));
     }
