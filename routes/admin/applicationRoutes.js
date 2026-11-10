@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   getAdminApplications,
+  getApplicationDocuments,
   updateApplicationStatus,
   updateOfficeFields,
 } from '../../controllers/admin/applicationController.js';
@@ -15,6 +16,9 @@ router.use(requireDb);
 router.use(protect);
 
 router.get('/', requirePrivilege('dashboard', 'forms'), getAdminApplications);
+
+// One application's images and other form data, for the Forms detail popup
+router.get('/:id/documents', requirePrivilege('forms'), getApplicationDocuments);
 
 // Update application status (approve / reject / flag / pending) + staff notes
 router.patch('/:id/status', requirePrivilege('forms'), validateUpdateApplicationStatus, updateApplicationStatus);

@@ -153,6 +153,23 @@ export const getAdminApplications = async (req, res, next) => {
   }
 };
 
+// @desc    One application's full form data, including the customer's images.
+//          The Forms list leaves these out and asks for them when Documents is opened.
+// @route   GET /api/admin/applications/:id/documents
+// @access  Private (Forms privilege)
+export const getApplicationDocuments = async (req, res, next) => {
+  try {
+    const application = await Application.findById(req.params.id).select('formData');
+    if (!application) {
+      res.status(404);
+      return next(new Error('Application not found'));
+    }
+    res.status(200).json({ success: true, formData: application.formData || {} });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Update an application's status (approve / reject / flag / etc.)
 //          Saves staff notes and records which admin/staff actioned the change.
 // @route   PATCH /api/admin/applications/:id/status
