@@ -142,9 +142,8 @@ export const updateStaffRole = async (req, res, next) => {
 
     await role.save();
 
-    if (role.name !== oldName) {
-      await User.updateMany({ role: oldName }, { $set: { role: role.name } });
-    }
+    // Everyone holding this role follows its current name and privileges.
+    await User.updateMany({ role: oldName }, { $set: { role: role.name, permissions: role.permissions } });
 
     await recordAudit({ req, action: 'UPDATE', module: 'User Management', targetId: role._id, description: `Updated staff role ${role.name}` });
     const userCount = await User.countDocuments({ role: role.name });

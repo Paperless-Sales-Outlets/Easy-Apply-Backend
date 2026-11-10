@@ -5,13 +5,13 @@ import {
   assignTechnician,
   createAppointment,
 } from '../../controllers/admin/appointmentController.js';
-import { protect, authorize } from '../../middleware/authMiddleware.js';
+import { protect, requirePrivilege } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
 
 const router = express.Router();
 
 router.use(requireDb);
-router.use(protect, authorize('admin', 'staff'));
+router.use(protect, requirePrivilege('appointments'));
 
 // List technicians (must be before /:id routes)
 router.get('/technicians', getTechnicians);

@@ -8,7 +8,7 @@ import {
   getRecheckAllStatus,
   getKycDocument,
 } from '../../controllers/admin/kycController.js';
-import { protect, authorize } from '../../middleware/authMiddleware.js';
+import { protect, requirePrivilege } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
 import { validateKycReview } from '../../middleware/validationMiddleware.js';
 
@@ -16,7 +16,7 @@ const router = express.Router();
 
 // KYC review queue & actions (Admin/Staff only)
 router.use(requireDb);
-router.use(protect, authorize('admin', 'staff'));
+router.use(protect, requirePrivilege('kyc'));
 
 // Get pending KYC review queue
 router.get('/', getKycQueue);
