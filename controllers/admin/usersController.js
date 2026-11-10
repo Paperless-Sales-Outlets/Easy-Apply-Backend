@@ -187,6 +187,7 @@ export const updateAdminUser = async (req, res, next) => {
         return next(new Error('Password must be at least 6 characters'));
       }
       user.password = password;
+      user._passwordModified = true;
     }
 
     await user.save();
