@@ -27,6 +27,14 @@ const findLiteApplications = async (filter, sortField, sortDir, skip, limit) => 
   return rows.map((row) => new Application(row));
 };
 
+// What the Forms search looks through. The form-data fields are the ones the
+// admin list reads the applicant's name and NIC from.
+const SEARCH_FIELDS = [
+  'referenceNumber', 'nic', 'phone', 'formData.nic', 'formData.NIC',
+  'formData.nameFull', 'formData.fullName', 'formData.contactName', 'formData.customerName',
+  'formData.legalOwner', 'formData.currentCustomerName', 'formData.applicantName',
+];
+
 // Replaces each application's actionedBy id with who that staff member is.
 const withActioners = async (applications) => {
   const ids = [...new Set(applications.map((app) => app.actionedBy).filter(Boolean))];
@@ -68,12 +76,11 @@ export const getAdminApplications = async (req, res, next) => {
     if (nic)             filter.nic             = { $regex: new RegExp(`^${escapeRegex(nic)}$`, 'i') };
     if (referenceNumber) filter.referenceNumber = { $regex: new RegExp(`^${escapeRegex(referenceNumber)}$`, 'i') };
 
-    // Global search across referenceNumber and nic
+    // Global search across the reference, NIC, phone and applicant name
     if (search && !nic && !referenceNumber) {
-      filter.$or = [
-        { referenceNumber: { $regex: escapeRegex(search), $options: 'i' } },
-        { nic:             { $regex: escapeRegex(search), $options: 'i' } },
-      ];
+      filter.$or = SEARCH_FIELDS.map((field) => ({
+        [field]: { $regex: escapeRegex(search), $options: 'i' },
+      }));
     }
 
     // Date range filter on createdAt
