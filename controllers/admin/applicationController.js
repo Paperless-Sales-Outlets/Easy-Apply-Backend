@@ -1,4 +1,5 @@
 import Application from '../../models/admin/applicationModel.js';
+import User from '../../models/User.js';
 import { recordAudit } from '../../services/auditService.js';
 import { query } from '../../config/db.js';
 import { buildWhereClause, formatColumnOrPath } from '../../db/modelHelper.js';
@@ -24,6 +25,17 @@ const findLiteApplications = async (filter, sortField, sortDir, skip, limit) => 
     values
   );
   return rows.map((row) => new Application(row));
+};
+
+// Replaces each application's actionedBy id with who that staff member is.
+const withActioners = async (applications) => {
+  const ids = [...new Set(applications.map((app) => app.actionedBy).filter(Boolean))];
+  if (!ids.length) return;
+  const staff = await User.find({ _id: { $in: ids } }).select('_id name email role').lean();
+  const byId = new Map(staff.map(({ _id, name, email, role }) => [_id, { _id, name, email, role }]));
+  applications.forEach((app) => {
+    app.actionedBy = byId.get(app.actionedBy) || app.actionedBy;
+  });
 };
 
 // @desc    Get all applications — paginated, filterable list
@@ -100,6 +112,8 @@ export const getAdminApplications = async (req, res, next) => {
       Application.countDocuments(filter),
     ]);
 
+    await withActioners(applications);
+
     const totalPages  = Math.ceil(totalCount / pageSize);
     const hasNextPage = pageNum < totalPages;
     const hasPrevPage = pageNum > 1;
@@ -166,21 +180,22 @@ export const updateApplicationStatus = async (req, res, next) => {
       id,
       { $set: updates },
       { new: true, runValidators: true }
-    )
-      .populate('actionedBy', 'name email role')
-      .lean();
+    );
 
     if (!application) {
       res.status(404);
       return next(new Error('Application not found'));
     }
+    await withActioners([application]);
 
     await recordAudit({
       req,
-      action: 'STATUS_UPDATE',
+      action: previous?.status === application.status ? 'ADD_COMMENT' : 'STATUS_UPDATE',
       module: 'Application',
       targetId: application.referenceNumber || id,
-      description: `Changed status from ${previous?.status || 'unknown'} to ${application.status}`,
+      description: previous?.status === application.status
+        ? `Updated the comment (status stays ${application.status})`
+        : `Changed status from ${previous?.status || 'unknown'} to ${application.status}`,
       metadata: { serviceType: application.serviceType, previousStatus: previous?.status, newStatus: application.status },
     });
     res.status(200).json({ success: true, application });
@@ -213,14 +228,13 @@ export const updateOfficeFields = async (req, res, next) => {
       id,
       { $set: { officeFields } },
       { new: true, runValidators: true }
-    )
-      .populate('actionedBy', 'name email role')
-      .lean();
+    );
 
     if (!application) {
       res.status(404);
       return next(new Error('Application not found'));
     }
+    await withActioners([application]);
 
     await recordAudit({
       req,
