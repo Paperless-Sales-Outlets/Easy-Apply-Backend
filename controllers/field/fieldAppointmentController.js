@@ -71,13 +71,13 @@ export const updateJobStatus = async (req, res, next) => {
             : null;
 
         if (appQuery) {
-          await Application.updateOne(
+          // Records the sale only: the admin pages don't track a 'completed' application status.
+          await Application.findOneAndUpdate(
             appQuery,
             {
               $set: {
                 completedSale: true,
                 completedSaleAt: new Date(),
-                status: 'completed',
               },
             }
           );
