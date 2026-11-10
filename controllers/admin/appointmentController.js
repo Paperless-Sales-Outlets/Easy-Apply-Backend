@@ -19,9 +19,14 @@ export const getAppointments = async (req, res, next) => {
     if (status) filter.status = status;
 
     const appointments = await Appointment.find(filter)
-      .populate('technicianId', 'name email phone')
       .sort({ scheduledAt: 1 })
       .lean();
+
+    const assignedIds = [...new Set(appointments.map((apt) => apt.technicianId).filter(Boolean))];
+    const assignedStaff = assignedIds.length
+      ? await User.find({ _id: { $in: assignedIds } }).select('_id name').lean()
+      : [];
+    const staffNames = new Map(assignedStaff.map(({ _id, name }) => [_id, name]));
 
     const mapped = appointments.map(apt => ({
       id: apt._id,
@@ -32,8 +37,8 @@ export const getAppointments = async (req, res, next) => {
       address: apt.address,
       serviceType: apt.serviceType,
       scheduledAt: apt.scheduledAt,
-      technicianId: apt.technicianId?._id || null,
-      technicianName: apt.technicianId?.name || null,
+      technicianId: apt.technicianId || null,
+      technicianName: staffNames.get(apt.technicianId) || null,
       status: apt.status,
       notes: apt.notes || '',
       createdAt: apt.createdAt,
@@ -45,15 +50,19 @@ export const getAppointments = async (req, res, next) => {
   }
 };
 
-// @desc    Get all staff users who can be assigned as technicians
+// @desc    Get the active staff who hold the My Jobs privilege and can be assigned jobs
 // @route   GET /api/admin/appointments/technicians
 // @access  Private (Admin / Staff only)
 export const getTechnicians = async (req, res, next) => {
   try {
-    const technicians = await User.find({ isActive: { $ne: false } })
-      .select('name email phone role')
+    const staff = await User.find({ isActive: { $ne: false } })
+      .select('_id name email phone role permissions')
       .sort({ name: 1 })
       .lean();
+
+    const technicians = staff
+      .filter((user) => (user.permissions || []).includes('technician'))
+      .map(({ _id, name, email, phone, role }) => ({ _id, name, email, phone, role }));
 
     res.status(200).json({ success: true, technicians });
   } catch (error) {
@@ -70,6 +79,7 @@ export const assignTechnician = async (req, res, next) => {
     const { technicianId } = req.body;
 
     const updates = {};
+    let technicianName = null;
     if (technicianId) {
       const tech = await User.findById(technicianId).select('name');
       if (!tech) {
@@ -77,6 +87,7 @@ export const assignTechnician = async (req, res, next) => {
         return next(new Error('Technician not found'));
       }
       updates.technicianId = technicianId;
+      technicianName = tech.name;
     } else {
       updates.technicianId = null;
     }
@@ -86,9 +97,7 @@ export const assignTechnician = async (req, res, next) => {
       id,
       { $set: updates },
       { new: true, runValidators: true }
-    )
-      .populate('technicianId', 'name email phone')
-      .lean();
+    );
 
     if (!appointment) {
       res.status(404);
@@ -101,7 +110,7 @@ export const assignTechnician = async (req, res, next) => {
       module: 'Appointments',
       targetId: appointment.referenceNumber || id,
       description: `Updated appointment technician assignment`,
-      metadata: { previousTechnicianId: previous?.technicianId || null, technicianId: appointment.technicianId?._id || null },
+      metadata: { previousTechnicianId: previous?.technicianId || null, technicianId: updates.technicianId },
     });
     res.status(200).json({
       success: true,
@@ -114,8 +123,8 @@ export const assignTechnician = async (req, res, next) => {
         address: appointment.address,
         serviceType: appointment.serviceType,
         scheduledAt: appointment.scheduledAt,
-        technicianId: appointment.technicianId?._id || null,
-        technicianName: appointment.technicianId?.name || null,
+        technicianId: updates.technicianId,
+        technicianName,
         status: appointment.status,
         notes: appointment.notes || '',
       },
