@@ -1,5 +1,6 @@
 import User from '../../models/User.js';
 import StaffRole from '../../models/StaffRole.js';
+import RefreshToken from '../../models/RefreshToken.js';
 import { recordAudit } from '../../services/auditService.js';
 import {
   EMPLOYEE_NUMBER_MESSAGE,
@@ -191,6 +192,8 @@ export const updateAdminUser = async (req, res, next) => {
     }
 
     await user.save();
+    // A new password ends every existing session for this account.
+    if (password) await RefreshToken.deleteMany({ userId: user._id });
     await recordAudit({
       req,
       action: 'UPDATE',
