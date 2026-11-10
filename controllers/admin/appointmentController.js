@@ -1,6 +1,7 @@
 import Appointment from '../../models/Appointment.js';
 import { recordAudit } from '../../services/auditService.js';
 import User from '../../models/User.js';
+import { sriLankaDayRange } from '../../utils/sriLankaDate.js';
 
 // @desc    Get appointments — filterable by date range, technician, status
 // @route   GET /api/admin/appointments
@@ -11,17 +12,8 @@ export const getAppointments = async (req, res, next) => {
 
     const filter = {};
 
-    if (date) {
-      const dayStart = new Date(date);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(date);
-      dayEnd.setHours(23, 59, 59, 999);
-      filter.scheduledAt = { $gte: dayStart, $lte: dayEnd };
-    } else if (startDate || endDate) {
-      filter.scheduledAt = {};
-      if (startDate) filter.scheduledAt.$gte = new Date(startDate);
-      if (endDate) filter.scheduledAt.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-    }
+    const scheduledRange = date ? sriLankaDayRange(date, date) : sriLankaDayRange(startDate, endDate);
+    if (scheduledRange) filter.scheduledAt = scheduledRange;
 
     if (technicianId) filter.technicianId = technicianId;
     if (status) filter.status = status;

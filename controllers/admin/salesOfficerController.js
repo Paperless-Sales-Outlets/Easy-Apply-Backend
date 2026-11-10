@@ -15,6 +15,7 @@ import {
   cleanEmployeeNumber,
   isValidEmployeeNumber,
 } from '../../utils/employeeNumber.js';
+import { sriLankaDayRange } from '../../utils/sriLankaDate.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SALES_OFFICER_ROLE = /^sales\s*officer$/i;
@@ -333,11 +334,8 @@ export const getOfficerApplications = async (req, res, next) => {
       filter.status = status;
     }
 
-    if (startDate || endDate) {
-      filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = new Date(startDate);
-      if (endDate) filter.createdAt.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-    }
+    const createdRange = sriLankaDayRange(startDate, endDate);
+    if (createdRange) filter.createdAt = createdRange;
 
     const pageNum = Math.max(1, parseInt(page, 10));
     const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10)));

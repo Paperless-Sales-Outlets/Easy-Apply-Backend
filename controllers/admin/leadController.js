@@ -15,6 +15,7 @@ import {
   suggestStatus,
 } from '../../services/leadService.js';
 import { recordAudit } from '../../services/auditService.js';
+import { sriLankaDayRange } from '../../utils/sriLankaDate.js';
 
 const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -118,12 +119,8 @@ export const getLeads = async (req, res, next) => {
       });
     }
 
-    if (startDate || endDate) {
-      const range = {};
-      if (startDate) range.$gte = new Date(startDate);
-      if (endDate) range.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-      conditions.push({ createdAt: range });
-    }
+    const createdRange = sriLankaDayRange(startDate, endDate);
+    if (createdRange) conditions.push({ createdAt: createdRange });
 
     const filter = conditions.length ? { $and: conditions } : {};
 

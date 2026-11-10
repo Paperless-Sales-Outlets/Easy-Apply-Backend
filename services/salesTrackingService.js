@@ -3,6 +3,7 @@ import SalesOfficerQr from '../models/SalesOfficerQr.js';
 import Application from '../models/Application.js';
 import User from '../models/User.js';
 import { escapeRegex } from '../utils/employeeNumber.js';
+import { sriLankaDayRange } from '../utils/sriLankaDate.js';
 
 export const COMPLETED_SALE_DEFINITION =
   "An application is classified as a completed sale when its status is 'confirmed' (payment & appointment confirmed), status is 'completed' (installation verified), paymentStatus is 'paid', or completedSale is true.";
@@ -158,11 +159,8 @@ export const getOfficerStatistics = async (officerId, employeeNumber, query = {}
   const start = startDate || from;
   const end = endDate || to;
 
-  if (start || end) {
-    match.createdAt = {};
-    if (start) match.createdAt.$gte = new Date(start);
-    if (end) match.createdAt.$lte = new Date(new Date(end).setHours(23, 59, 59, 999));
-  }
+  const createdRange = sriLankaDayRange(start, end);
+  if (createdRange) match.createdAt = createdRange;
 
   // 1. Total Attributed Applications
   const totalApplications = await Application.countDocuments(match);

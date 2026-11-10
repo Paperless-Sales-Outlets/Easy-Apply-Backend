@@ -1,6 +1,7 @@
 import AuditLog from '../../models/AuditLog.js';
 import User from '../../models/User.js';
 import { escapeRegex } from '../../utils/employeeNumber.js';
+import { startOfSriLankaDay, endOfSriLankaDay } from '../../utils/sriLankaDate.js';
 
 const positiveInt = (value, fallback, max) => {
   const parsed = Number.parseInt(value, 10);
@@ -66,14 +67,13 @@ export const getAuditLogs = async (req, res, next) => {
     if (lowerDate || upperDate) {
       filter.createdAt = {};
       if (lowerDate) {
-        const date = new Date(lowerDate);
-        if (Number.isNaN(date.getTime())) return res.status(400).json({ success: false, message: 'Invalid from date' });
+        const date = startOfSriLankaDay(lowerDate);
+        if (!date) return res.status(400).json({ success: false, message: 'Invalid from date' });
         filter.createdAt.$gte = date;
       }
       if (upperDate) {
-        const date = new Date(upperDate);
-        if (Number.isNaN(date.getTime())) return res.status(400).json({ success: false, message: 'Invalid to date' });
-        date.setHours(23, 59, 59, 999);
+        const date = endOfSriLankaDay(upperDate);
+        if (!date) return res.status(400).json({ success: false, message: 'Invalid to date' });
         filter.createdAt.$lte = date;
       }
     }

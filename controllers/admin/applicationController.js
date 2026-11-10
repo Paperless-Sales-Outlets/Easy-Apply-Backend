@@ -5,6 +5,7 @@ import { query } from '../../config/db.js';
 import { buildWhereClause, formatColumnOrPath } from '../../db/modelHelper.js';
 import { pickFrom, trimInline } from '../../db/jsonSelect.js';
 import { escapeRegex } from '../../utils/employeeNumber.js';
+import { sriLankaDayRange } from '../../utils/sriLankaDate.js';
 
 // The list without the base64 images stored inside the JSON columns, for pages
 // that never show them (?lite=true). Inline images keep only their prefix.
@@ -84,11 +85,8 @@ export const getAdminApplications = async (req, res, next) => {
     }
 
     // Date range filter on createdAt
-    if (startDate || endDate) {
-      filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = new Date(startDate);
-      if (endDate)   filter.createdAt.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-    }
+    const createdRange = sriLankaDayRange(startDate, endDate);
+    if (createdRange) filter.createdAt = createdRange;
 
     if (req.query.salesOfficerEmployeeNumber) {
       filter.salesOfficerEmployeeNumber = String(req.query.salesOfficerEmployeeNumber).trim();

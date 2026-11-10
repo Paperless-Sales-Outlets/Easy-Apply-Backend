@@ -4,6 +4,7 @@ import { query as runQuery, toCamelCase } from '../../config/db.js';
 import { buildWhereClause } from '../../db/modelHelper.js';
 import { pickFrom } from '../../db/jsonSelect.js';
 import { escapeRegex } from '../../utils/employeeNumber.js';
+import { sriLankaDay, startOfSriLankaDay, endOfSriLankaDay } from '../../utils/sriLankaDate.js';
 
 const SERVICE_LABELS = {
   'new-connection': 'New Connection',
@@ -22,46 +23,29 @@ const OPEN_STATUSES = ['pending', 'pending payment'];
 
 const MAX_RANGE_DAYS = 366;
 
-// Whole UTC days covered by the window, both ends inclusive.
-const countDays = (from, to) => {
-  const fromDay = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate());
-  const toDay = Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate());
-  return Math.round((toDay - fromDay) / 86400000) + 1;
-};
+const ONE_DAY_MS = 86400000;
+const daysBetween = (fromDay, toDay) => Math.round((Date.parse(toDay) - Date.parse(fromDay)) / ONE_DAY_MS);
+const shiftDay = (day, by) => new Date(Date.parse(day) + by * ONE_DAY_MS).toISOString().slice(0, 10);
 
 // Resolves the `from` / `to` window shared by every report on this page.
 // Defaults to the last 30 days, and is clamped so a stray year typo cannot
 // ask the database for an unbounded aggregation.
 //
-// Days are treated as UTC days end-to-end: the range boundaries, the Mongo
-// `$dateToString` buckets and the zero-filled trend below all use the same
-// frame, so a day's bucket can never disagree with the filter that produced it.
+// Days are Sri Lanka days end-to-end: the range boundaries, the SQL day buckets
+// and the zero-filled trend below all use the same frame, so a day's bucket can
+// never disagree with the filter that produced it.
 const resolveRange = (query = {}) => {
-  const parsedTo = query.to ? new Date(query.to) : new Date();
-  const parsedFrom = query.from ? new Date(query.from) : null;
+  let toDay = (query.to && sriLankaDay(query.to)) || sriLankaDay();
+  let fromDay = (query.from && sriLankaDay(query.from)) || shiftDay(toDay, -29);
 
-  const to = Number.isNaN(parsedTo.getTime()) ? new Date() : parsedTo;
-  let from = parsedFrom && !Number.isNaN(parsedFrom.getTime()) ? parsedFrom : null;
+  if (fromDay > toDay) [fromDay, toDay] = [toDay, fromDay];
+  if (daysBetween(fromDay, toDay) > MAX_RANGE_DAYS) fromDay = shiftDay(toDay, -MAX_RANGE_DAYS);
 
-  if (!from) {
-    from = new Date(to);
-    from.setUTCDate(from.getUTCDate() - 29);
-  }
-  if (from > to) {
-    const swap = from.getTime();
-    from = new Date(to);
-    to.setTime(swap);
-  }
-
-  if (Math.ceil((to - from) / 86400000) > MAX_RANGE_DAYS) {
-    from = new Date(to);
-    from.setUTCDate(from.getUTCDate() - MAX_RANGE_DAYS);
-  }
-
-  from.setUTCHours(0, 0, 0, 0);
-  to.setUTCHours(23, 59, 59, 999);
-
-  return { from, to, days: countDays(from, to) };
+  return {
+    from: startOfSriLankaDay(fromDay),
+    to: endOfSriLankaDay(toDay),
+    days: daysBetween(fromDay, toDay) + 1,
+  };
 };
 
 const buildFilter = (query, { requireActioned = false } = {}) => {
@@ -169,10 +153,10 @@ export const getAnalytics = async (req, res, next) => {
     const [byServiceType, dailySubmissions, statusBreakdown] = await Promise.all([
       groupApplications(match, 'service_type AS "_id", COUNT(*)::int AS count', 'service_type', 'ORDER BY count DESC'),
 
-      // UTC days, the same frame as the range and the zero-filled trend below
+      // Sri Lanka days, the same frame as the range and the zero-filled trend below
       groupApplications(
         match,
-        `to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS "_id", COUNT(*)::int AS count`,
+        `to_char(created_at AT TIME ZONE 'Asia/Colombo', 'YYYY-MM-DD') AS "_id", COUNT(*)::int AS count`,
         '1',
         'ORDER BY 1'
       ),
@@ -187,7 +171,7 @@ export const getAnalytics = async (req, res, next) => {
     });
 
     const dailyTrend = [];
-    const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+    const cursor = new Date(Date.parse(sriLankaDay(from)));
     for (let i = 0; i < days; i++) {
       const dateStr = cursor.toISOString().slice(0, 10);
       dailyTrend.push({

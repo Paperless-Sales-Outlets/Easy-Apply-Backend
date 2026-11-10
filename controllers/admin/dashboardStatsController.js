@@ -2,6 +2,7 @@ import Application from '../../models/admin/applicationModel.js';
 import { query, toCamelCase } from '../../config/db.js';
 import { buildWhereClause } from '../../db/modelHelper.js';
 import { pickFrom } from '../../db/jsonSelect.js';
+import { sriLankaDayRange, startOfSriLankaDay } from '../../utils/sriLankaDate.js';
 
 // The 9 service form types tracked across the operations dashboard.
 const FORM_TYPES = [
@@ -97,16 +98,13 @@ export const getDashboardStats = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
 
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfToday = startOfSriLankaDay(new Date());
 
     // Optional submission-date range. When supplied (by the Forms page summary
     // cards) the per-service-type totals and completions are scoped to the
     // window; without it the figures stay all-time.
-    const rangeMatch = {};
-    if (startDate) rangeMatch.$gte = new Date(startDate);
-    if (endDate) rangeMatch.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-    const hasRange = Object.keys(rangeMatch).length > 0;
+    const rangeMatch = sriLankaDayRange(startDate, endDate);
+    const hasRange = Boolean(rangeMatch);
     const range = hasRange ? { createdAt: rangeMatch } : {};
 
     const [statusRows, totalsByType, completedByType, recent] = await Promise.all([
