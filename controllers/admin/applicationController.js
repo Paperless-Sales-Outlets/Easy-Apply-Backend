@@ -186,8 +186,32 @@ export const updateApplicationStatus = async (req, res, next) => {
       return next(new Error('Status is required'));
     }
 
+    const previous = await Application.findById(id).select('status referenceNumber serviceType');
+    if (!previous) {
+      res.status(404);
+      return next(new Error('Application not found'));
+    }
+
+    // Saving a comment keeps the status; changing it is a KYC decision. Until the
+    // business sets its own rules, only Admins and KYC reviewers may decide, and a
+    // confirmed application (payment / appointment done) is locked, as in KYC Review.
+    const currentStatus = String(previous.status || 'pending').toLowerCase();
+    const statusChanges = currentStatus !== status;
+    if (statusChanges) {
+      const isAdmin = String(req.user?.role || '').toLowerCase() === 'admin';
+      const canDecide = isAdmin || (req.user?.permissions || []).includes('kyc');
+      if (!canDecide) {
+        res.status(403);
+        return next(new Error('Approving, rejecting or flagging an application needs the KYC Review privilege.'));
+      }
+      if (currentStatus === 'confirmed') {
+        res.status(409);
+        return next(new Error('This application is already confirmed (payment / appointment completed), so its status can no longer be changed.'));
+      }
+    }
+
     const updates = { status };
-    if (status === 'confirmed' || status === 'completed') {
+    if (statusChanges && (status === 'confirmed' || status === 'completed')) {
       updates.completedSale = true;
       updates.completedSaleAt = new Date();
     }
@@ -197,7 +221,6 @@ export const updateApplicationStatus = async (req, res, next) => {
       updates.actionedAt = new Date();
     }
 
-    const previous = await Application.findById(id).select('status referenceNumber serviceType');
     const application = await Application.findByIdAndUpdate(
       id,
       { $set: updates },
