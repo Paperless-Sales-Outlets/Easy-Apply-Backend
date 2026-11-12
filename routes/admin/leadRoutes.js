@@ -18,12 +18,15 @@ import {
 } from '../../controllers/admin/draftLeadController.js';
 import { protect, authorize, requirePrivilege } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
+import { rejectInvalidId, rejectInvalidDates } from '../../middleware/adminParamsMiddleware.js';
 
 const router = express.Router();
 
 // Lead Management — the serviceability pipeline for new connections.
 router.use(requireDb);
 router.use(protect, requirePrivilege('leads'));
+router.use(rejectInvalidDates);
+router.param('id', rejectInvalidId('Record'));
 
 // Static paths first so they are not captured by the /:id route.
 router.get('/check-catalog', getLeadCheckCatalog);
