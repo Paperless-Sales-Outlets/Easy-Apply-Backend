@@ -79,13 +79,29 @@ export const assignTechnician = async (req, res, next) => {
     const { id } = req.params;
     const { technicianId } = req.body;
 
+    const previous = await Appointment.findById(id).select('technicianId referenceNumber status');
+    if (!previous) {
+      res.status(404);
+      return next(new Error('Appointment not found'));
+    }
+    // A finished job keeps the technician who did it.
+    if (['completed', 'cancelled'].includes(previous.status)) {
+      res.status(409);
+      return next(new Error(`This job is already ${previous.status}, so its technician can no longer be changed.`));
+    }
+
     const updates = {};
     let technicianName = null;
     if (technicianId) {
-      const tech = await User.findById(technicianId).select('name');
-      if (!tech) {
+      // Only active staff with the My Jobs privilege — the same people the dropdown lists.
+      const tech = await User.findById(technicianId).select('name permissions isActive');
+      if (!tech || tech.isActive === false) {
         res.status(404);
         return next(new Error('Technician not found'));
+      }
+      if (!(tech.permissions || []).includes('technician')) {
+        res.status(400);
+        return next(new Error(`${tech.name} does not have the My Jobs privilege, so jobs can't be assigned to them.`));
       }
       updates.technicianId = technicianId;
       technicianName = tech.name;
@@ -93,7 +109,6 @@ export const assignTechnician = async (req, res, next) => {
       updates.technicianId = null;
     }
 
-    const previous = await Appointment.findById(id).select('technicianId referenceNumber');
     const appointment = await Appointment.findByIdAndUpdate(
       id,
       { $set: updates },

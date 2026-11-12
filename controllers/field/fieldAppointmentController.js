@@ -59,7 +59,20 @@ export const updateJobStatus = async (req, res, next) => {
       return next(new Error('Appointment not found or not assigned to you'));
     }
 
-    const previousStatus = appointment.status;
+    // A job only moves forward: Scheduled → In progress → Completed.
+    const previousStatus = appointment.status || 'scheduled';
+    const NEXT_STATUS = { scheduled: 'in-progress', 'in-progress': 'completed' };
+    const LABEL = { scheduled: 'Scheduled', 'in-progress': 'In progress', completed: 'Completed' };
+    if (NEXT_STATUS[previousStatus] !== status) {
+      res.status(409);
+      return next(new Error(
+        previousStatus === 'completed' || previousStatus === 'cancelled'
+          ? `This job is already ${previousStatus}, so its status can no longer be changed.`
+          : NEXT_STATUS[previousStatus]
+            ? `This job is ${LABEL[previousStatus]}, so it can only be moved to ${LABEL[NEXT_STATUS[previousStatus]]}.`
+            : 'This job\'s status can no longer be changed.'
+      ));
+    }
     appointment.status = status;
     await appointment.save();
 
@@ -71,8 +84,10 @@ export const updateJobStatus = async (req, res, next) => {
             ? { referenceNumber: appointment.referenceNumber }
             : null;
 
-        if (appQuery) {
-          // Records the sale only: the admin pages don't track a 'completed' application status.
+        // Records the sale only: the admin pages don't track a 'completed' application status.
+        // An application whose sale is already recorded keeps its original sale date.
+        const application = appQuery ? await Application.findOne(appQuery).select('completedSale') : null;
+        if (application && !application.completedSale) {
           await Application.findOneAndUpdate(
             appQuery,
             {
