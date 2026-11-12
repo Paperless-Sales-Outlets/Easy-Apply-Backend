@@ -22,6 +22,7 @@ export const getMyAppointments = async (req, res, next) => {
       address: apt.address,
       serviceType: apt.serviceType,
       scheduledAt: apt.scheduledAt,
+      timeSlot: apt.timeSlot || null,
       status: apt.status,
       notes: apt.notes || '',
     }));
@@ -104,6 +105,7 @@ export const updateJobStatus = async (req, res, next) => {
         address: appointment.address,
         serviceType: appointment.serviceType,
         scheduledAt: appointment.scheduledAt,
+        timeSlot: appointment.timeSlot || null,
         status: appointment.status,
         notes: appointment.notes || '',
       },
