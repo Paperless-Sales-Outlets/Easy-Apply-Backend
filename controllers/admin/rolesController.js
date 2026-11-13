@@ -3,6 +3,7 @@ import User from '../../models/User.js';
 import Privilege from '../../models/Privilege.js';
 import { recordAudit } from '../../services/auditService.js';
 import { escapeRegex } from '../../utils/employeeNumber.js';
+import { query } from '../../config/db.js';
 
 const RESERVED_NAMES = new Set(['admin', 'customer']);
 
@@ -110,6 +111,7 @@ export const updateStaffRole = async (req, res, next) => {
     }
 
     const oldName = role.name;
+    const oldPermissions = Array.isArray(role.permissions) ? [...role.permissions] : [];
 
     if (name !== undefined) {
       const cleanName = String(name).trim();
@@ -142,10 +144,25 @@ export const updateStaffRole = async (req, res, next) => {
 
     await role.save();
 
-    // Everyone holding this role follows its current name and privileges.
-    await User.updateMany({ role: oldName }, { $set: { role: role.name, permissions: role.permissions } });
+    // Everyone holding this role follows its new name. Privileges change by
+    // difference only: what the role gained is added to each member and what it
+    // lost is taken away, so privileges set on individual users are kept.
+    const newPermissions = Array.isArray(role.permissions) ? role.permissions : [];
+    const added = newPermissions.filter((key) => !oldPermissions.includes(key));
+    const removed = oldPermissions.filter((key) => !newPermissions.includes(key));
+    await query(
+      `UPDATE users
+       SET role = $1,
+           permissions = ARRAY(
+             SELECT DISTINCT key FROM unnest(array_cat(COALESCE(permissions, '{}'), $2::text[])) AS key
+             WHERE NOT (key = ANY($3::text[]))
+           ),
+           updated_at = NOW()
+       WHERE role = $4`,
+      [role.name, added, removed, oldName]
+    );
 
-    await recordAudit({ req, action: 'UPDATE', module: 'User Management', targetId: role._id, description: `Updated staff role ${role.name}` });
+    await recordAudit({ req, action: 'UPDATE', module: 'User Management', targetId: role._id, description: `Updated staff role ${role.name}`, metadata: { renamedFrom: oldName !== role.name ? oldName : undefined, addedPrivileges: added, removedPrivileges: removed } });
     const userCount = await User.countDocuments({ role: role.name });
     res.status(200).json({ success: true, role: sanitizeRole(role, userCount) });
   } catch (error) {
