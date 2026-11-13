@@ -1,5 +1,10 @@
 import Application from '../../models/admin/applicationModel.js';
 import User from '../../models/User.js';
+import { query as runQuery, toCamelCase } from '../../config/db.js';
+import { buildWhereClause } from '../../db/modelHelper.js';
+import { pickFrom } from '../../db/jsonSelect.js';
+import { escapeRegex } from '../../utils/employeeNumber.js';
+import { sriLankaDay, startOfSriLankaDay, endOfSriLankaDay } from '../../utils/sriLankaDate.js';
 
 const SERVICE_LABELS = {
   'new-connection': 'New Connection',
@@ -18,51 +23,35 @@ const OPEN_STATUSES = ['pending', 'pending payment'];
 
 const MAX_RANGE_DAYS = 366;
 
-// Whole UTC days covered by the window, both ends inclusive.
-const countDays = (from, to) => {
-  const fromDay = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate());
-  const toDay = Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate());
-  return Math.round((toDay - fromDay) / 86400000) + 1;
-};
+const ONE_DAY_MS = 86400000;
+const daysBetween = (fromDay, toDay) => Math.round((Date.parse(toDay) - Date.parse(fromDay)) / ONE_DAY_MS);
+const shiftDay = (day, by) => new Date(Date.parse(day) + by * ONE_DAY_MS).toISOString().slice(0, 10);
 
 // Resolves the `from` / `to` window shared by every report on this page.
 // Defaults to the last 30 days, and is clamped so a stray year typo cannot
 // ask the database for an unbounded aggregation.
 //
-// Days are treated as UTC days end-to-end: the range boundaries, the Mongo
-// `$dateToString` buckets and the zero-filled trend below all use the same
-// frame, so a day's bucket can never disagree with the filter that produced it.
+// Days are Sri Lanka days end-to-end: the range boundaries, the SQL day buckets
+// and the zero-filled trend below all use the same frame, so a day's bucket can
+// never disagree with the filter that produced it.
 const resolveRange = (query = {}) => {
-  const parsedTo = query.to ? new Date(query.to) : new Date();
-  const parsedFrom = query.from ? new Date(query.from) : null;
+  let toDay = (query.to && sriLankaDay(query.to)) || sriLankaDay();
+  let fromDay = (query.from && sriLankaDay(query.from)) || shiftDay(toDay, -29);
 
-  const to = Number.isNaN(parsedTo.getTime()) ? new Date() : parsedTo;
-  let from = parsedFrom && !Number.isNaN(parsedFrom.getTime()) ? parsedFrom : null;
+  if (fromDay > toDay) [fromDay, toDay] = [toDay, fromDay];
+  if (daysBetween(fromDay, toDay) > MAX_RANGE_DAYS) fromDay = shiftDay(toDay, -MAX_RANGE_DAYS);
 
-  if (!from) {
-    from = new Date(to);
-    from.setUTCDate(from.getUTCDate() - 29);
-  }
-  if (from > to) {
-    const swap = from.getTime();
-    from = new Date(to);
-    to.setTime(swap);
-  }
-
-  if (Math.ceil((to - from) / 86400000) > MAX_RANGE_DAYS) {
-    from = new Date(to);
-    from.setUTCDate(from.getUTCDate() - MAX_RANGE_DAYS);
-  }
-
-  from.setUTCHours(0, 0, 0, 0);
-  to.setUTCHours(23, 59, 59, 999);
-
-  return { from, to, days: countDays(from, to) };
+  return {
+    from: startOfSriLankaDay(fromDay),
+    to: endOfSriLankaDay(toDay),
+    days: daysBetween(fromDay, toDay) + 1,
+  };
 };
 
 const buildFilter = (query, { requireActioned = false } = {}) => {
   const { from, to, days } = resolveRange(query);
-  const match = { createdAt: { $gte: from, $lte: to } };
+  // Two conditions, not one { $gte, $lte }: the query helper only applies the first comparison on a field.
+  const match = { $and: [{ createdAt: { $gte: from } }, { createdAt: { $lte: to } }] };
 
   if (query.serviceType && query.serviceType !== 'all') {
     match.serviceType = query.serviceType;
@@ -126,6 +115,34 @@ const resolveProduct = (fd) => {
   return { name: name || '—', price };
 };
 
+// One row per group of the applications matching `match`.
+const groupApplications = async (match, select, groupBy, orderBy = '') => {
+  const { whereText, values } = buildWhereClause(match);
+  const { rows } = await runQuery(
+    `SELECT ${select} FROM applications ${whereText} GROUP BY ${groupBy} ${orderBy}`,
+    values
+  );
+  return rows;
+};
+
+const countWhere = (condition) => `(COUNT(*) FILTER (WHERE ${condition}))::int`;
+
+// Only the form fields the report reads. formData also holds the customer's
+// images, and loading those made this report take up to 40 seconds.
+const REPORT_FORM_KEYS = [
+  ...PRODUCT_NAME_KEYS,
+  ...PRODUCT_PRICE_KEYS,
+  'nameFull', 'fullName', 'contactName', 'customerName', 'legalOwner',
+  'nic', 'NIC', 'mobileNumber', 'contactNumber',
+];
+
+const REPORT_COLUMNS = [
+  'id', 'reference_number', 'phone', 'nic', 'service_type', 'status', 'payment_status', 'created_at',
+  `${pickFrom('office_fields', ['amountPaid'], 'o', (v) => v)} AS office_fields`,
+  `${pickFrom('payment_details', ['amount'], 'p', (v) => v)} AS payment_details`,
+  `${pickFrom('form_data', REPORT_FORM_KEYS, 'f', (v) => v)} AS form_data`,
+].join(', ');
+
 // @desc    Analytics data: submissions by service type, daily trend, status breakdown
 // @route   GET /api/admin/analytics?from=&to=&serviceType=&status=
 // @access  Private (Admin / Staff only)
@@ -134,30 +151,17 @@ export const getAnalytics = async (req, res, next) => {
     const { match, from, to, days } = buildFilter(req.query);
 
     const [byServiceType, dailySubmissions, statusBreakdown] = await Promise.all([
-      Application.aggregate([
-        { $match: match },
-        { $group: { _id: '$serviceType', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-      ]),
+      groupApplications(match, 'service_type AS "_id", COUNT(*)::int AS count', 'service_type', 'ORDER BY count DESC'),
 
-      Application.aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: {
-              $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'UTC' },
-            },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ]),
+      // Sri Lanka days, the same frame as the range and the zero-filled trend below
+      groupApplications(
+        match,
+        `to_char(created_at AT TIME ZONE 'Asia/Colombo', 'YYYY-MM-DD') AS "_id", COUNT(*)::int AS count`,
+        '1',
+        'ORDER BY 1'
+      ),
 
-      Application.aggregate([
-        { $match: match },
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-      ]),
+      groupApplications(match, 'status AS "_id", COUNT(*)::int AS count', 'status', 'ORDER BY count DESC'),
     ]);
 
     // Zero-fill so a quiet day still renders a point on the trend line.
@@ -167,7 +171,7 @@ export const getAnalytics = async (req, res, next) => {
     });
 
     const dailyTrend = [];
-    const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+    const cursor = new Date(Date.parse(sriLankaDay(from)));
     for (let i = 0; i < days; i++) {
       const dateStr = cursor.toISOString().slice(0, 10);
       dailyTrend.push({
@@ -214,21 +218,23 @@ export const getApplicationReports = async (req, res, next) => {
       // Reference numbers are stored as plain text, but the customer fields the
       // operator searches for live in the schemaless formData blob.
       query.$or = [
-        { referenceNumber: { $regex: search, $options: 'i' } },
-        { nic: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } },
-        { 'formData.nameFull': { $regex: search, $options: 'i' } },
-        { 'formData.fullName': { $regex: search, $options: 'i' } },
-        { 'formData.customerName': { $regex: search, $options: 'i' } },
-        { 'formData.product.name': { $regex: search, $options: 'i' } },
+        { referenceNumber: { $regex: escapeRegex(search), $options: 'i' } },
+        { nic: { $regex: escapeRegex(search), $options: 'i' } },
+        { phone: { $regex: escapeRegex(search), $options: 'i' } },
+        { 'formData.nameFull': { $regex: escapeRegex(search), $options: 'i' } },
+        { 'formData.fullName': { $regex: escapeRegex(search), $options: 'i' } },
+        { 'formData.customerName': { $regex: escapeRegex(search), $options: 'i' } },
+        { 'formData.product.name': { $regex: escapeRegex(search), $options: 'i' } },
       ];
     }
 
     const CAP = 2000;
-    const applications = await Application.find(query)
-      .sort({ createdAt: -1 })
-      .limit(CAP)
-      .lean();
+    const { whereText, values } = buildWhereClause(query);
+    const found = await runQuery(
+      `SELECT ${REPORT_COLUMNS} FROM applications ${whereText} ORDER BY created_at DESC LIMIT ${CAP}`,
+      values
+    );
+    const applications = found.rows.map((row) => toCamelCase(row));
 
     const rows = applications.map((app) => {
       const fd = app.formData || {};
@@ -290,67 +296,41 @@ export const getUserReports = async (req, res, next) => {
     const userQuery = role ? { role } : {};
     if (search) {
       userQuery.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } },
-        { NIC: { $regex: search, $options: 'i' } },
+        { name: { $regex: escapeRegex(search), $options: 'i' } },
+        { email: { $regex: escapeRegex(search), $options: 'i' } },
+        { phone: { $regex: escapeRegex(search), $options: 'i' } },
+        { NIC: { $regex: escapeRegex(search), $options: 'i' } },
       ];
     }
 
     const [users, taskRows, serviceRows] = await Promise.all([
       User.find(userQuery)
-        .select('name email phone role NIC createdAt')
+        .select('_id name email phone role NIC createdAt')
         .sort({ name: 1 })
         .lean(),
 
-      Application.aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: '$actionedBy',
-            total: { $sum: 1 },
-            approved: {
-              $sum: { $cond: [{ $eq: ['$status', 'approved'] }, 1, 0] },
-            },
-            confirmed: {
-              $sum: { $cond: [{ $eq: ['$status', 'confirmed'] }, 1, 0] },
-            },
-            rejected: {
-              $sum: { $cond: [{ $eq: ['$status', 'rejected'] }, 1, 0] },
-            },
-            flagged: {
-              $sum: { $cond: [{ $eq: ['$status', 'flagged'] }, 1, 0] },
-            },
-            open: {
-              $sum: { $cond: [{ $in: ['$status', OPEN_STATUSES] }, 1, 0] },
-            },
-            lastActionedAt: { $max: '$actionedAt' },
-            handleMs: {
-              $sum: {
-                $cond: [
-                  { $and: [{ $ne: ['$actionedAt', null] }, { $ne: ['$actionedAt', '$createdAt'] }] },
-                  { $subtract: ['$actionedAt', '$createdAt'] },
-                  0,
-                ],
-              },
-            },
-            handledSamples: {
-              $sum: { $cond: [{ $ne: ['$actionedAt', null] }, 1, 0] },
-            },
-          },
-        },
-      ]),
+      groupApplications(
+        match,
+        `actioned_by AS "_id",
+         COUNT(*)::int AS total,
+         ${countWhere("status = 'approved'")} AS approved,
+         ${countWhere("status = 'confirmed'")} AS confirmed,
+         ${countWhere("status = 'rejected'")} AS rejected,
+         ${countWhere("status = 'flagged'")} AS flagged,
+         ${countWhere(`status IN (${OPEN_STATUSES.map((status) => `'${status}'`).join(', ')})`)} AS open,
+         MAX(actioned_at) AS "lastActionedAt",
+         COALESCE(SUM(EXTRACT(EPOCH FROM (actioned_at - created_at)) * 1000)
+           FILTER (WHERE actioned_at IS NOT NULL AND actioned_at <> created_at), 0)::float AS "handleMs",
+         COUNT(actioned_at)::int AS "handledSamples"`,
+        'actioned_by'
+      ),
 
-      Application.aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: { user: '$actionedBy', service: '$serviceType' },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { count: -1 } },
-      ]),
+      groupApplications(
+        match,
+        'actioned_by AS user_id, service_type, COUNT(*)::int AS count',
+        'actioned_by, service_type',
+        'ORDER BY count DESC'
+      ),
     ]);
 
     const taskByUser = new Map();
@@ -360,10 +340,10 @@ export const getUserReports = async (req, res, next) => {
 
     const servicesByUser = new Map();
     serviceRows.forEach((row) => {
-      const key = String(row._id.user);
+      const key = String(row.user_id);
       if (!servicesByUser.has(key)) servicesByUser.set(key, []);
       servicesByUser.get(key).push({
-        service: labelFor(SERVICE_LABELS, row._id.service),
+        service: labelFor(SERVICE_LABELS, row.service_type),
         count: row.count,
       });
     });

@@ -19,6 +19,7 @@ import adminAnalyticsRoutes from './routes/admin/analyticsRoutes.js';
 import adminAppointmentRoutes from './routes/admin/appointmentRoutes.js';
 import adminUsersRoutes from './routes/admin/usersRoutes.js';
 import adminRolesRoutes from './routes/admin/rolesRoutes.js';
+import adminBranchesRoutes from './routes/admin/branchesRoutes.js';
 import adminPrivilegesRoutes from './routes/admin/privilegesRoutes.js';
 import adminAuditRoutes from './routes/admin/auditRoutes.js';
 import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
@@ -230,6 +231,9 @@ app.use('/api/admin/users', adminUsersRoutes);
 
 // Admin Role Management
 app.use('/api/admin/roles', adminRolesRoutes);
+
+// Admin Branches (regions, provinces, RTOs, teleshops)
+app.use('/api/admin/branches', adminBranchesRoutes);
 
 // Admin Privilege Management
 app.use(

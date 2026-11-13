@@ -1,6 +1,10 @@
 import User from '../../models/User.js';
 import StaffRole from '../../models/StaffRole.js';
+import RefreshToken from '../../models/RefreshToken.js';
 import { recordAudit } from '../../services/auditService.js';
+import { findUnknownPrivilege } from './rolesController.js';
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 import {
   EMPLOYEE_NUMBER_MESSAGE,
   cleanEmployeeNumber as tidyEmployeeNumber,
@@ -71,6 +75,17 @@ export const createAdminUser = async (req, res, next) => {
     }
 
     const cleanEmail = String(email).trim().toLowerCase();
+    if (!EMAIL_PATTERN.test(cleanEmail)) {
+      res.status(400);
+      return next(new Error('Enter a valid email address'));
+    }
+
+    const unknownPrivilege = await findUnknownPrivilege(permissions);
+    if (unknownPrivilege) {
+      res.status(400);
+      return next(new Error(`Unknown privilege "${unknownPrivilege}"`));
+    }
+
     const cleanEmployeeNumber = tidyEmployeeNumber(employeeNumber);
     if (!isValidEmployeeNumber(cleanEmployeeNumber)) {
       res.status(400);
@@ -106,7 +121,7 @@ export const createAdminUser = async (req, res, next) => {
     });
     res.status(201).json({ success: true, user: sanitizeUser(user) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('A user with this email or employee number already exists'));
     }
@@ -159,6 +174,10 @@ export const updateAdminUser = async (req, res, next) => {
         res.status(400);
         return next(new Error('Email address is required'));
       }
+      if (!EMAIL_PATTERN.test(cleanEmail)) {
+        res.status(400);
+        return next(new Error('Enter a valid email address'));
+      }
       user.email = cleanEmail;
     }
     if (employeeNumber !== undefined) {
@@ -173,7 +192,14 @@ export const updateAdminUser = async (req, res, next) => {
       }
       user.employeeNumber = cleanEmployeeNumber;
     }
-    if (Array.isArray(permissions)) user.permissions = permissions;
+    if (Array.isArray(permissions)) {
+      const unknownPrivilege = await findUnknownPrivilege(permissions);
+      if (unknownPrivilege) {
+        res.status(400);
+        return next(new Error(`Unknown privilege "${unknownPrivilege}"`));
+      }
+      user.permissions = permissions;
+    }
     if (typeof isActive === 'boolean') {
       if (isActive === false && String(req.user?._id) === String(user._id)) {
         res.status(400);
@@ -187,9 +213,12 @@ export const updateAdminUser = async (req, res, next) => {
         return next(new Error('Password must be at least 6 characters'));
       }
       user.password = password;
+      user._passwordModified = true;
     }
 
     await user.save();
+    // A new password ends every existing session for this account.
+    if (password) await RefreshToken.deleteMany({ userId: user._id });
     await recordAudit({
       req,
       action: 'UPDATE',
@@ -200,7 +229,7 @@ export const updateAdminUser = async (req, res, next) => {
     });
     res.status(200).json({ success: true, user: sanitizeUser(user) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('A user with this email or employee number already exists'));
     }
@@ -226,7 +255,7 @@ export const deleteAdminUser = async (req, res, next) => {
       return next(new Error('User not found'));
     }
 
-    await User.deleteOne({ _id: id });
+    await User.findByIdAndDelete(id);
     await recordAudit({
       req,
       action: 'DELETE',

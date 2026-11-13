@@ -1,38 +1,23 @@
 import express from 'express';
 import {
-  getLeads,
-  getLeadStats,
-  getLeadCheckCatalog,
-  getLeadById,
-  createLead,
-  updateLead,
-  updateLeadChecks,
-  resolveLead,
-  deleteLead,
-  recalculateLead,
-} from '../../controllers/admin/leadController.js';
-import { protect, authorize } from '../../middleware/authMiddleware.js';
+  getDraftLeads,
+  getDraftLeadStats,
+  getDraftLeadById,
+} from '../../controllers/admin/draftLeadController.js';
+import { protect, requirePrivilege } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
+import { rejectInvalidId, rejectInvalidDates } from '../../middleware/adminParamsMiddleware.js';
 
 const router = express.Router();
 
-// Lead Management — the serviceability pipeline for new connections.
+// Lead Management — customers' unfinished New Connection applications.
 router.use(requireDb);
-router.use(protect, authorize('admin', 'staff'));
+router.use(protect, requirePrivilege('leads'));
+router.use(rejectInvalidDates);
+router.param('id', rejectInvalidId('Draft'));
 
-// Static paths first so they are not captured by the /:id route.
-router.get('/check-catalog', getLeadCheckCatalog);
-router.get('/stats', getLeadStats);
-
-router.get('/', getLeads);
-router.post('/', createLead);
-router.get('/:id', getLeadById);
-router.patch('/:id', updateLead);
-router.patch('/:id/checks', updateLeadChecks);
-router.patch('/:id/resolve', resolveLead);
-router.post('/:id/recalculate', recalculateLead);
-
-// Removing a lead is destructive — Admin only.
-router.delete('/:id', authorize('admin'), deleteLead);
+router.get('/drafts', getDraftLeads);
+router.get('/drafts/stats', getDraftLeadStats);
+router.get('/drafts/:id', getDraftLeadById);
 
 export default router;

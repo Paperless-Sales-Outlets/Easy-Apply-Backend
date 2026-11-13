@@ -63,6 +63,21 @@ export const protect = async (req, res, next) => {
   return next(new Error('Not authorized, no token provided'));
 };
 
+// Allow Admins, and anyone assigned at least one of these privileges in User Management.
+export const requirePrivilege = (...keys) => (req, res, next) => {
+  const account = req.user;
+  if (!account) {
+    res.status(401);
+    return next(new Error('Authentication required'));
+  }
+  const held = Array.isArray(account.permissions) ? account.permissions : [];
+  if (String(account.role).toLowerCase() !== 'admin' && !keys.some((key) => held.includes(key))) {
+    res.status(403);
+    return next(new Error('You do not have access to this module'));
+  }
+  next();
+};
+
 // Authorize roles (Role-Based Access Control)
 export const authorize = (...roles) => {
   const normalized = roles.map((role) => String(role).toLowerCase());
