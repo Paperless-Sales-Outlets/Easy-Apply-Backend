@@ -12,7 +12,7 @@ const RESERVED_NAMES = new Set(['admin', 'customer']);
 const BUILT_IN_KEYS = ['dashboard', 'kyc', 'appointments', 'technician', 'forms', 'analytics', 'leads'];
 
 // Returns the first key that is not a privilege defined in the Privileges tab.
-async function findUnknownPrivilege(permissions) {
+export async function findUnknownPrivilege(permissions) {
   if (!Array.isArray(permissions) || permissions.length === 0) return null;
   const known = new Set((await Privilege.find({ key: { $in: permissions } }).select('key').lean()).map((p) => p.key));
   return permissions.find((k) => !known.has(k) && !BUILT_IN_KEYS.includes(k)) || null;

@@ -2,6 +2,9 @@ import User from '../../models/User.js';
 import StaffRole from '../../models/StaffRole.js';
 import RefreshToken from '../../models/RefreshToken.js';
 import { recordAudit } from '../../services/auditService.js';
+import { findUnknownPrivilege } from './rolesController.js';
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 import {
   EMPLOYEE_NUMBER_MESSAGE,
   cleanEmployeeNumber as tidyEmployeeNumber,
@@ -72,6 +75,17 @@ export const createAdminUser = async (req, res, next) => {
     }
 
     const cleanEmail = String(email).trim().toLowerCase();
+    if (!EMAIL_PATTERN.test(cleanEmail)) {
+      res.status(400);
+      return next(new Error('Enter a valid email address'));
+    }
+
+    const unknownPrivilege = await findUnknownPrivilege(permissions);
+    if (unknownPrivilege) {
+      res.status(400);
+      return next(new Error(`Unknown privilege "${unknownPrivilege}"`));
+    }
+
     const cleanEmployeeNumber = tidyEmployeeNumber(employeeNumber);
     if (!isValidEmployeeNumber(cleanEmployeeNumber)) {
       res.status(400);
@@ -160,6 +174,10 @@ export const updateAdminUser = async (req, res, next) => {
         res.status(400);
         return next(new Error('Email address is required'));
       }
+      if (!EMAIL_PATTERN.test(cleanEmail)) {
+        res.status(400);
+        return next(new Error('Enter a valid email address'));
+      }
       user.email = cleanEmail;
     }
     if (employeeNumber !== undefined) {
@@ -174,7 +192,14 @@ export const updateAdminUser = async (req, res, next) => {
       }
       user.employeeNumber = cleanEmployeeNumber;
     }
-    if (Array.isArray(permissions)) user.permissions = permissions;
+    if (Array.isArray(permissions)) {
+      const unknownPrivilege = await findUnknownPrivilege(permissions);
+      if (unknownPrivilege) {
+        res.status(400);
+        return next(new Error(`Unknown privilege "${unknownPrivilege}"`));
+      }
+      user.permissions = permissions;
+    }
     if (typeof isActive === 'boolean') {
       if (isActive === false && String(req.user?._id) === String(user._id)) {
         res.status(400);
