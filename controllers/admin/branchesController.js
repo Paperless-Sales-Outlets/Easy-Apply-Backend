@@ -182,7 +182,7 @@ export const deleteBranch = async (req, res, next) => {
       const { rows } = await query(`SELECT COUNT(*)::int AS n FROM ${childLevel.table} WHERE ${childLevel.parent.column} = $1`, [id]);
       if (rows[0].n > 0) {
         res.status(409);
-        return next(new Error(`${existing.name} still has ${rows[0].n} ${rows[0].n === 1 ? noun(childLevel.label) : plural(childLevel.label)} under it. Move or delete them first.`));
+        return next(new Error(`${existing.name} still has ${rows[0].n} ${rows[0].n === 1 ? noun(childLevel.label) : plural(childLevel.label)} under it. Move or delete ${rows[0].n === 1 ? 'it' : 'them'} first.`));
       }
     }
 
