@@ -5,6 +5,7 @@ import {
   isCompletedSale,
   isSalesOfficerRole,
   buildQrUrl,
+  findOfficerApplications,
 } from '../services/salesTrackingService.js';
 import { sriLankaDayRange } from '../utils/sriLankaDate.js';
 
@@ -86,11 +87,7 @@ export const getMyApplications = async (req, res, next) => {
     const sortDir = sortOrder === 'asc' ? 1 : -1;
 
     const [applications, totalCount] = await Promise.all([
-      Application.find(filter)
-        .sort({ [sortField]: sortDir })
-        .skip(skip)
-        .limit(pageSize)
-        .lean(),
+      findOfficerApplications(filter, { sortField, sortDir, skip, limit: pageSize }),
       Application.countDocuments(filter),
     ]);
 

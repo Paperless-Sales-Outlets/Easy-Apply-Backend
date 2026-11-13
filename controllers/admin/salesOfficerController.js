@@ -7,6 +7,7 @@ import {
   getOrCreateOfficerQr,
   getOfficerStatistics as fetchOfficerStats,
   isCompletedSale,
+  findOfficerApplications,
   buildQrUrl,
 } from '../../services/salesTrackingService.js';
 import { recordAudit } from '../../services/auditService.js';
@@ -359,12 +360,7 @@ export const getOfficerApplications = async (req, res, next) => {
     const sortDir = sortOrder === 'asc' ? 1 : -1;
 
     const [applications, totalCount] = await Promise.all([
-      Application.find(filter)
-        .populate('salesOfficer', 'name employeeNumber email')
-        .sort({ [sortField]: sortDir })
-        .skip(skip)
-        .limit(pageSize)
-        .lean(),
+      findOfficerApplications(filter, { sortField, sortDir, skip, limit: pageSize }),
       Application.countDocuments(filter),
     ]);
 
