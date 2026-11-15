@@ -45,6 +45,9 @@ import consentRoutes from './routes/consentRoutes.js';
 // SLT Banner routes
 import sltBannerRoutes from './routes/sltBannerRoutes.js';
 
+// Email Template Preview routes
+import emailPreviewRoutes from './routes/emailPreviewRoutes.js';
+
 // OCR routes (PaddleOCR ONNX deep-learning engine)
 import ocrRoutes from './routes/ocrRoutes.js';
 import { getEngineMode } from './services/ocr/nicScanService.js';
@@ -298,6 +301,9 @@ app.use('/api/drafts', draftRoutes);
 
 // OCR Routes (Gemini primary, local PaddleOCR fallback)
 app.use('/api/ocr', ocrRoutes);
+
+// Email Template Previewer (Interactive Dev/Review Endpoint)
+app.use('/api/email-preview', emailPreviewRoutes);
 
 // =====================================
 // Error Handling
