@@ -1,5 +1,9 @@
 import Application from '../../models/admin/applicationModel.js';
 import { recordAudit } from '../../services/auditService.js';
+import {
+  generateAndStoreCustomerApplication,
+  getCustomerApplicationPdf,
+} from '../../services/applicationDocumentService.js';
 
 // @desc    Get all applications — paginated, filterable list
 // @route   GET /api/admin/applications
@@ -203,8 +207,44 @@ export const updateOfficeFields = async (req, res, next) => {
       description: 'Updated application office fields',
       metadata: { fields: Object.keys(officeFields) },
     });
+
+    // When staff/sales officer signs, automatically update and regenerate the customer application
+    if (staffSignature || application.officeFields?.staffSignature) {
+      try {
+        await generateAndStoreCustomerApplication(application, {
+          staffSignature: staffSignature || application.officeFields?.staffSignature,
+          salesOfficerName: req.user?.name,
+          salesOfficerEmployeeNumber: req.user?.employeeNumber || application.salesOfficerEmployeeNumber,
+        });
+      } catch (docErr) {
+        console.warn('[adminApplicationController] Notice regenerating application PDF with staff signature:', docErr.message);
+      }
+    }
+
     res.status(200).json({ success: true, application });
   } catch (error) {
     next(error);
   }
 };
+
+// @desc    Download or view official digitally signed customer application PDF (Admin / Staff)
+// @route   GET /api/admin/applications/:id/pdf
+// @access  Private (Admin / Staff)
+export const downloadAdminApplicationPdf = async (req, res, next) => {
+  const { id } = req.params;
+  try {
+    const { buffer, fileName } = await getCustomerApplicationPdf(id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${fileName}"`,
+      'Content-Length': buffer.length,
+      'Cache-Control': 'private, max-age=60',
+    });
+    return res.status(200).send(buffer);
+  } catch (err) {
+    console.error('[adminApplicationController] PDF download error:', err.message);
+    res.status(404);
+    return next(new Error('Application document not found or could not be generated'));
+  }
+};
+

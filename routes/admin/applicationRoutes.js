@@ -3,6 +3,7 @@ import {
   getAdminApplications,
   updateApplicationStatus,
   updateOfficeFields,
+  downloadAdminApplicationPdf,
 } from '../../controllers/admin/applicationController.js';
 import { protect, authorize } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
@@ -21,5 +22,8 @@ router.patch('/:id/status', validateUpdateApplicationStatus, updateApplicationSt
 
 // Update office fields (CR Number, Amount Paid, Staff Signature, Appointment Date)
 router.patch('/:id/office-fields', validateOfficeFields, updateOfficeFields);
+
+// Download or view official digitally signed customer application PDF
+router.get('/:id/pdf', downloadAdminApplicationPdf);
 
 export default router;
