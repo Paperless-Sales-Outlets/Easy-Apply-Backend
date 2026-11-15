@@ -162,6 +162,14 @@ const Product = {
     return await existing.save();
   },
 
+  async findOneAndUpdate(filter = {}, update = {}, options = {}) {
+    const existing = await Product.findOne(filter);
+    if (!existing) return null;
+    const fields = update.$set || update;
+    Object.assign(existing, fields);
+    return await existing.save();
+  },
+
   async findByIdAndDelete(id) {
     if (!id) return null;
     const existing = await Product.findById(id);

@@ -1,4 +1,5 @@
 import Product from '../models/Product.js';
+import { demoProducts, seedProducts } from '../seedProducts.js';
 import dotenv from 'dotenv';
 import { AppError } from '../middleware/errorHandler.js';
 
@@ -378,14 +379,59 @@ export const getAllProducts = async (options = {}) => {
   }
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const pageSize = Math.max(1, parseInt(limit, 10) || 50);
-  const [products, total] = await Promise.all([
-    Product.find(query)
-      .sort({ [sortBy]: sortOrder === 'asc' ? 1 : -1 })
-      .skip((pageNum - 1) * pageSize)
-      .limit(pageSize)
-      .lean(),
-    Product.countDocuments(query),
-  ]);
+
+  let products = [];
+  let total = 0;
+
+  try {
+    const [dbProducts, dbTotal] = await Promise.all([
+      Product.find(query)
+        .sort({ [sortBy]: sortOrder === 'asc' ? 1 : -1 })
+        .skip((pageNum - 1) * pageSize)
+        .limit(pageSize)
+        .lean(),
+      Product.countDocuments(query),
+    ]);
+    products = dbProducts || [];
+    total = dbTotal || 0;
+  } catch (dbErr) {
+    console.warn('[Product Service] DB query error on products table:', dbErr.message);
+  }
+
+  // If local database table products is empty, serve demoProducts and trigger auto-seed
+  if (!products || products.length === 0) {
+    console.warn('[Product Service] No products found in database table products. Serving local demo products fallback.');
+    let filteredDemo = demoProducts;
+    if (status && status !== 'all') {
+      filteredDemo = filteredDemo.filter((p) => p.status === status);
+    }
+    if (category && category !== 'All Products') {
+      const cleanCat = category.replace('-', ' ').toLowerCase();
+      filteredDemo = filteredDemo.filter((p) => (p.category || '').toLowerCase().includes(cleanCat));
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      filteredDemo = filteredDemo.filter(
+        (p) =>
+          p.name?.toLowerCase().includes(q) ||
+          p.description?.toLowerCase().includes(q) ||
+          p.category?.toLowerCase().includes(q) ||
+          p.speed?.toLowerCase().includes(q)
+      );
+    }
+    if (maxPrice) {
+      filteredDemo = filteredDemo.filter((p) => (p.monthlyPrice || p.price || 0) <= Number(maxPrice));
+    }
+
+    const startIndex = (pageNum - 1) * pageSize;
+    products = filteredDemo.slice(startIndex, startIndex + pageSize);
+    total = filteredDemo.length;
+
+    // Auto-seed in the background to re-populate the products table
+    seedProducts().catch((seedErr) =>
+      console.warn('[Product Service] Background seed failed:', seedErr.message)
+    );
+  }
 
   return {
     products,
@@ -399,9 +445,20 @@ export const getAllProducts = async (options = {}) => {
  * Get a single product by ID
  */
 export const getProductById = async (id) => {
-  let product = await Product.findById(id);
+  let product = null;
+  try {
+    product = await Product.findById(id);
+    if (!product) {
+      product = await Product.findOne({ productId: id });
+    }
+  } catch (err) {
+    // continue
+  }
   if (!product) {
-    product = await Product.findOne({ productId: id });
+    const demo = demoProducts.find(
+      (p) => String(p.id) === String(id) || String(p.productId) === String(id) || String(p.productCode) === String(id)
+    );
+    if (demo) product = demo;
   }
   if (!product) {
     throw new AppError('Product not found', 404);
@@ -458,6 +515,16 @@ export const checkProductAvailability = async (productId) => {
     } catch (err) {
       // ignore
     }
+  }
+
+  // 4. Fallback: Search local demo products
+  if (!product && productId) {
+    product = demoProducts.find(
+      (p) =>
+        String(p.id) === String(productId) ||
+        String(p.productId) === String(productId) ||
+        String(p.productCode) === String(productId)
+    );
   }
 
   if (!product) {
