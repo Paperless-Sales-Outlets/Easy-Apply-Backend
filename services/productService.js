@@ -119,7 +119,7 @@ export const fetchLiveProductHubTemplates = async () => {
     }
 
     // Helper: Normalize single product node
-    const normalizeProductNode = (t, parentCategory) => {
+    const normalizeProductNode = (t, parentCategory, parentInstallationFee = null) => {
       const fv = t.fieldValues || {};
       const dataObj = t.data || {};
       const attr = t.attributes || {};
@@ -155,7 +155,29 @@ export const fetchLiveProductHubTemplates = async () => {
         else if (lowerName.includes('starter') || lowerName.includes('basic')) price = 1490;
       }
 
-      const installationFee = Number(dataObj['Installation Charge'] ?? dataObj.installationFee ?? fv['Installation Fee'] ?? attr['Installation Fee'] ?? (price > 5000 ? 0 : 2500));
+      // Resolve installation fee: check child node first, then inherit from parent, fallback to 0 (free)
+      const rawInstFee =
+        dataObj['Installation Charge'] ??
+        dataObj['Installation Fee'] ??
+        dataObj.installationFee ??
+        dataObj.installation_fee ??
+        fv['Installation Charge'] ??
+        fv['Installation Fee'] ??
+        fv.installationFee ??
+        attr['Installation Charge'] ??
+        attr['Installation Fee'] ??
+        attr.installationFee ??
+        t.installationFee ??
+        t.installation_fee;
+
+      let installationFee = 0;
+      if (rawInstFee !== undefined && rawInstFee !== null && String(rawInstFee).trim() !== '') {
+        installationFee = Number(rawInstFee) || 0;
+      } else if (parentInstallationFee !== undefined && parentInstallationFee !== null && String(parentInstallationFee).trim() !== '') {
+        installationFee = Number(parentInstallationFee) || 0;
+      } else {
+        installationFee = 0; // If no installation fee from API, keep as free installation
+      }
 
       // Speed detection
       const speedStr = dataObj['Download Speed'] || t.speed;
@@ -219,7 +241,7 @@ export const fetchLiveProductHubTemplates = async () => {
     };
 
     // Helper: Recursively flatten arbitrary tree hierarchy
-    const flattenHierarchy = (nodes, parentCategory = null) => {
+    const flattenHierarchy = (nodes, parentCategory = null, parentInstallationFee = null) => {
       if (!Array.isArray(nodes) || nodes.length === 0) return [];
       const results = [];
 
@@ -231,18 +253,39 @@ export const fetchLiveProductHubTemplates = async () => {
         const rawPrice = t.monthlyPrice || t.price || t.data?.monthlyPrice || t.data?.price || t.fieldValues?.['Monthly Rental'];
         const hasValidPrice = rawPrice !== null && rawPrice !== undefined && rawPrice !== '' && Number(rawPrice) > 0;
 
+        // Check if this node specifies an installation fee that children could inherit
+        const fv = t.fieldValues || {};
+        const dataObj = t.data || {};
+        const attr = t.attributes || {};
+        const rawNodeFee =
+          dataObj['Installation Charge'] ??
+          dataObj['Installation Fee'] ??
+          dataObj.installationFee ??
+          dataObj.installation_fee ??
+          fv['Installation Charge'] ??
+          fv['Installation Fee'] ??
+          attr['Installation Charge'] ??
+          attr['Installation Fee'] ??
+          t.installationFee ??
+          t.installation_fee;
+
+        const effectiveParentFee =
+          rawNodeFee !== undefined && rawNodeFee !== null && String(rawNodeFee).trim() !== ''
+            ? Number(rawNodeFee)
+            : parentInstallationFee;
+
         if (hasChildren) {
-          // Recurse into children passing current node as category
-          const childProducts = flattenHierarchy(item.children, currentCategory);
+          // Recurse into children passing current node category and installation fee
+          const childProducts = flattenHierarchy(item.children, currentCategory, effectiveParentFee);
           results.push(...childProducts);
 
           // If the parent node itself is also a purchasable standalone product, include it
           if (hasValidPrice) {
-            results.push(normalizeProductNode(t, currentCategory));
+            results.push(normalizeProductNode(t, currentCategory, parentInstallationFee));
           }
         } else {
           // Leaf product node
-          results.push(normalizeProductNode(t, currentCategory));
+          results.push(normalizeProductNode(t, currentCategory, parentInstallationFee));
         }
       }
 
@@ -584,6 +627,28 @@ export const fetchProductCartItem = async (id) => {
     }
 
     const data = await res.json();
+    const fv = data.fieldValues || {};
+    const dataObj = data.data || {};
+    const attr = data.attributes || {};
+
+    const rawInstFee =
+      data['Installation Charge'] ??
+      data['Installation Fee'] ??
+      data.installationFee ??
+      data.installation_fee ??
+      dataObj['Installation Charge'] ??
+      dataObj['Installation Fee'] ??
+      dataObj.installationFee ??
+      fv['Installation Charge'] ??
+      fv['Installation Fee'] ??
+      attr['Installation Charge'] ??
+      attr['Installation Fee'];
+
+    const installationFee =
+      rawInstFee !== undefined && rawInstFee !== null && String(rawInstFee).trim() !== ''
+        ? Number(rawInstFee) || 0
+        : 0;
+
     return {
       id: data.id || id,
       productId: data.id || id,
@@ -591,6 +656,7 @@ export const fetchProductCartItem = async (id) => {
       name: data.productName || data.name || 'SLT Package',
       price: Number(data.price || data.monthlyPrice || 0),
       monthlyPrice: Number(data.price || data.monthlyPrice || 0),
+      installationFee,
       description: data.description || '',
       source: 'LIVE_PRODUCT_HUB',
     };
