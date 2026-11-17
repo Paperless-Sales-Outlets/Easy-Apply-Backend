@@ -3,6 +3,34 @@ import SalesOfficerQr from '../models/SalesOfficerQr.js';
 import Application from '../models/Application.js';
 import User from '../models/User.js';
 import { escapeRegex } from '../utils/employeeNumber.js';
+import { sriLankaDayRange } from '../utils/sriLankaDate.js';
+import { query, toCamelCase } from '../config/db.js';
+import { buildWhereClause } from '../db/modelHelper.js';
+import { pickFrom } from '../db/jsonSelect.js';
+
+// Only the form fields an officer's application list reads (customer name and
+// package). The full form holds the customer's photos as base64 text, several
+// hundred KB per application, so loading it made the list take ~0.75s a row.
+const OFFICER_LIST_FORM_KEYS = ['nameFull', 'fullName', 'contactName', 'packageName', 'selectedProduct', 'broadbandPackage'];
+const OFFICER_LIST_COLUMNS = [
+  'id', 'reference_number', 'service_type', 'status', 'payment_status', 'nic', 'phone',
+  'sales_officer_employee_number', 'sales_tracking_token', 'sales_attribution',
+  'completed_sale', 'completed_sale_at', 'created_at', 'updated_at',
+  `${pickFrom('form_data', OFFICER_LIST_FORM_KEYS, 'f')} AS form_data`,
+].join(', ');
+const OFFICER_SORT_COLUMNS = { createdAt: 'created_at', updatedAt: 'updated_at', status: 'status', referenceNumber: 'reference_number' };
+
+/** One page of an officer's applications, without the customers' photos. */
+export const findOfficerApplications = async (filter, { sortField = 'createdAt', sortDir = -1, skip = 0, limit = 10 } = {}) => {
+  const { whereText, values } = buildWhereClause(filter);
+  const order = `${OFFICER_SORT_COLUMNS[sortField] || 'created_at'} ${sortDir === 1 ? 'ASC' : 'DESC'}`;
+  const { rows } = await query(
+    `SELECT ${OFFICER_LIST_COLUMNS} FROM applications ${whereText}
+     ORDER BY ${order} LIMIT ${Number(limit) || 10} OFFSET ${Number(skip) || 0}`,
+    values
+  );
+  return rows.map((row) => toCamelCase(row));
+};
 
 export const COMPLETED_SALE_DEFINITION =
   "An application is classified as a completed sale when its status is 'confirmed' (payment & appointment confirmed), status is 'completed' (installation verified), paymentStatus is 'paid', or completedSale is true.";
@@ -158,11 +186,8 @@ export const getOfficerStatistics = async (officerId, employeeNumber, query = {}
   const start = startDate || from;
   const end = endDate || to;
 
-  if (start || end) {
-    match.createdAt = {};
-    if (start) match.createdAt.$gte = new Date(start);
-    if (end) match.createdAt.$lte = new Date(new Date(end).setHours(23, 59, 59, 999));
-  }
+  const createdRange = sriLankaDayRange(start, end);
+  if (createdRange) match.createdAt = createdRange;
 
   // 1. Total Attributed Applications
   const totalApplications = await Application.countDocuments(match);

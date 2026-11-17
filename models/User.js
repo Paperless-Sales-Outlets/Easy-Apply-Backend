@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { query, toCamelCase } from '../config/db.js';
 import {
   buildWhereClause,
+  formatColumnOrPath,
   createQueryBuilder,
   createFindOneQueryBuilder,
   createFindByIdQueryBuilder,
@@ -140,6 +141,17 @@ const User = {
     }
 
     return await existing.save();
+  },
+
+  async updateMany(filter = {}, update = {}) {
+    const entries = Object.entries(update.$set || update);
+    const assignments = entries.map(([key], i) => `${formatColumnOrPath(key)} = $${i + 1}`);
+    const { whereText, values } = buildWhereClause(filter, entries.length + 1);
+    const res = await query(
+      `UPDATE users SET ${assignments.join(', ')}, updated_at = NOW() ${whereText}`,
+      [...entries.map(([, value]) => value), ...values]
+    );
+    return { modifiedCount: res.rowCount };
   },
 
   async findByIdAndDelete(id) {

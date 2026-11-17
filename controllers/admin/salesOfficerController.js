@@ -7,6 +7,7 @@ import {
   getOrCreateOfficerQr,
   getOfficerStatistics as fetchOfficerStats,
   isCompletedSale,
+  findOfficerApplications,
   buildQrUrl,
 } from '../../services/salesTrackingService.js';
 import { recordAudit } from '../../services/auditService.js';
@@ -15,6 +16,7 @@ import {
   cleanEmployeeNumber,
   isValidEmployeeNumber,
 } from '../../utils/employeeNumber.js';
+import { sriLankaDayRange } from '../../utils/sriLankaDate.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SALES_OFFICER_ROLE = /^sales\s*officer$/i;
@@ -64,9 +66,22 @@ export const getSalesOfficers = async (req, res, next) => {
       qrMap.set(String(qr.officer), qr);
     });
 
-    const sanitized = officers.map((officer) =>
-      sanitizeOfficer(officer, qrMap.get(String(officer._id)))
+    // Applications credited to each officer, counted the same way as their statistics
+    const applicationCounts = await Promise.all(
+      officers.map((officer) =>
+        Application.countDocuments({
+          $or: [
+            { salesOfficer: officer._id },
+            { salesOfficerEmployeeNumber: String(officer.employeeNumber || '').trim() },
+          ],
+        })
+      )
     );
+
+    const sanitized = officers.map((officer, index) => ({
+      ...sanitizeOfficer(officer, qrMap.get(String(officer._id))),
+      applicationCount: Number(applicationCounts[index]) || 0,
+    }));
 
     res.status(200).json({
       success: true,
@@ -146,9 +161,9 @@ export const createSalesOfficer = async (req, res, next) => {
       metadata: { employeeNumber: officer.employeeNumber, role: officer.role },
     });
 
-    res.status(201).json({ success: true, salesOfficer: sanitizeOfficer(officer.toObject()) });
+    res.status(201).json({ success: true, salesOfficer: sanitizeOfficer(officer) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('An account with this email or employee number already exists'));
     }
@@ -333,11 +348,8 @@ export const getOfficerApplications = async (req, res, next) => {
       filter.status = status;
     }
 
-    if (startDate || endDate) {
-      filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = new Date(startDate);
-      if (endDate) filter.createdAt.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-    }
+    const createdRange = sriLankaDayRange(startDate, endDate);
+    if (createdRange) filter.createdAt = createdRange;
 
     const pageNum = Math.max(1, parseInt(page, 10));
     const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10)));
@@ -348,12 +360,7 @@ export const getOfficerApplications = async (req, res, next) => {
     const sortDir = sortOrder === 'asc' ? 1 : -1;
 
     const [applications, totalCount] = await Promise.all([
-      Application.find(filter)
-        .populate('salesOfficer', 'name employeeNumber email')
-        .sort({ [sortField]: sortDir })
-        .skip(skip)
-        .limit(pageSize)
-        .lean(),
+      findOfficerApplications(filter, { sortField, sortDir, skip, limit: pageSize }),
       Application.countDocuments(filter),
     ]);
 

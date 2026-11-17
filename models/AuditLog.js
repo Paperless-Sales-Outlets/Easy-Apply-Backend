@@ -12,7 +12,14 @@ const AuditLog = {
         data.actorId || data.userId || null,
         data.actorRole || data.role || 'System',
         data.ipAddress || '',
-        JSON.stringify(data.details || {}),
+        JSON.stringify({
+          ...(data.details || {}),
+          userName: data.userName || null,
+          module: data.module || null,
+          targetId: data.targetId || null,
+          description: data.description || null,
+          metadata: data.metadata || null,
+        }),
       ]
     );
     return toCamelCase(res.rows[0]);

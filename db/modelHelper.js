@@ -165,27 +165,16 @@ export function buildWhereClause(filter = {}, startIndex = 1) {
         continue;
       }
 
-      // 6. Comparisons
-      if (rawVal.$gt !== undefined) {
-        clauses.push(`${col} > $${paramIdx++}`);
-        values.push(rawVal.$gt);
-        continue;
+      // 6. Comparisons — a date range uses two of these on one field
+      let hasComparison = false;
+      for (const [op, sql] of [['$gt', '>'], ['$gte', '>='], ['$lt', '<'], ['$lte', '<=']]) {
+        if (rawVal[op] !== undefined) {
+          clauses.push(`${col} ${sql} $${paramIdx++}`);
+          values.push(rawVal[op]);
+          hasComparison = true;
+        }
       }
-      if (rawVal.$gte !== undefined) {
-        clauses.push(`${col} >= $${paramIdx++}`);
-        values.push(rawVal.$gte);
-        continue;
-      }
-      if (rawVal.$lt !== undefined) {
-        clauses.push(`${col} < $${paramIdx++}`);
-        values.push(rawVal.$lt);
-        continue;
-      }
-      if (rawVal.$lte !== undefined) {
-        clauses.push(`${col} <= $${paramIdx++}`);
-        values.push(rawVal.$lte);
-        continue;
-      }
+      if (hasComparison) continue;
 
       // Fallback equality check for plain objects
       clauses.push(`${col} = $${paramIdx++}`);

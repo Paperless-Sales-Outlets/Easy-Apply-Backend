@@ -22,6 +22,7 @@ export const recordAudit = async ({
     userId: actorId,
     adminId: account && ['admin', 'staff'].includes(String(account.role).toLowerCase()) ? actorId : null,
     userName: account?.name || null,
+    actorRole: account?.role || 'System',
     action,
     module,
     targetId: targetId == null ? null : String(targetId),

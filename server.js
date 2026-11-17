@@ -19,6 +19,7 @@ import adminAnalyticsRoutes from './routes/admin/analyticsRoutes.js';
 import adminAppointmentRoutes from './routes/admin/appointmentRoutes.js';
 import adminUsersRoutes from './routes/admin/usersRoutes.js';
 import adminRolesRoutes from './routes/admin/rolesRoutes.js';
+import adminBranchesRoutes from './routes/admin/branchesRoutes.js';
 import adminPrivilegesRoutes from './routes/admin/privilegesRoutes.js';
 import adminAuditRoutes from './routes/admin/auditRoutes.js';
 import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
@@ -43,6 +44,9 @@ import consentRoutes from './routes/consentRoutes.js';
 
 // SLT Banner routes
 import sltBannerRoutes from './routes/sltBannerRoutes.js';
+
+// Email Template Preview routes
+import emailPreviewRoutes from './routes/emailPreviewRoutes.js';
 
 // OCR routes (PaddleOCR ONNX deep-learning engine)
 import ocrRoutes from './routes/ocrRoutes.js';
@@ -231,6 +235,9 @@ app.use('/api/admin/users', adminUsersRoutes);
 // Admin Role Management
 app.use('/api/admin/roles', adminRolesRoutes);
 
+// Admin Branches (regions, provinces, RTOs, teleshops)
+app.use('/api/admin/branches', adminBranchesRoutes);
+
 // Admin Privilege Management
 app.use(
   '/api/admin/privileges',
@@ -294,6 +301,9 @@ app.use('/api/drafts', draftRoutes);
 
 // OCR Routes (Gemini primary, local PaddleOCR fallback)
 app.use('/api/ocr', ocrRoutes);
+
+// Email Template Previewer (Interactive Dev/Review Endpoint)
+app.use('/api/email-preview', emailPreviewRoutes);
 
 // =====================================
 // Error Handling

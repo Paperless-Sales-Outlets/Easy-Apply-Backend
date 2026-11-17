@@ -7,6 +7,7 @@ import { findAccountById } from '../middleware/authMiddleware.js';
 import RefreshToken from '../models/RefreshToken.js';
 import { recordAudit } from '../services/auditService.js';
 import { requestOtp, validateOtp } from '../services/otpService.js';
+import { lockRemaining, recordFailure, clearFailures, LOCK_MS } from '../utils/loginThrottle.js';
 
 // The customer fields safe to return to the client. Kept in one place so
 // register, login and /me all expose the same profile.
@@ -362,6 +363,17 @@ export const login = async (req, res, next) => {
     return next(new Error('Please provide email and password'));
   }
 
+  // Too many wrong passwords for this email recently: refuse before checking anything.
+  const lockedFor = lockRemaining(email);
+  if (lockedFor > 0) {
+    const minutes = Math.ceil(lockedFor / 60);
+    return res.status(429).json({
+      success: false,
+      message: `Too many failed sign-in attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+      lockoutRemaining: lockedFor,
+    });
+  }
+
   try {
     // Admin and staff accounts (users collection) sign in here from the admin
     // portal; fall back to customers for older accounts that still have a
@@ -371,18 +383,34 @@ export const login = async (req, res, next) => {
       (await User.findOne({ email }).select('+password')) ||
       (await Customer.findOne({ email }).select('+password'));
 
-    if (!account) {
-      res.status(401);
-      return next(new Error('Invalid email or password'));
-    }
-
-    // Check password matches
-    const isMatch = await account.matchPassword(password);
+    // Unknown emails and wrong passwords count the same, so the answer never
+    // reveals whether an account exists.
+    const isMatch = account ? await account.matchPassword(password) : false;
 
     if (!isMatch) {
+      const { locked } = recordFailure(email);
+      if (locked) {
+        const minutes = Math.round(LOCK_MS / 60000);
+        await recordAudit({
+          req,
+          actor: account || undefined,
+          action: 'LOGIN_LOCKED',
+          module: 'Authentication',
+          targetId: account?._id || email,
+          description: `Sign-in locked for ${minutes} minutes after repeated wrong passwords`,
+          metadata: { email },
+        }).catch(() => {});
+        return res.status(429).json({
+          success: false,
+          message: `Too many failed sign-in attempts. Try again in ${minutes} minutes.`,
+          lockoutRemaining: Math.round(LOCK_MS / 1000),
+        });
+      }
       res.status(401);
       return next(new Error('Invalid email or password'));
     }
+
+    clearFailures(email);
 
     if (account.isActive === false) {
       res.status(403);
@@ -557,7 +585,7 @@ export const logout = async (req, res, next) => {
 
   try {
     // Delete refresh token from DB to invalidate it
-    const savedToken = await RefreshToken.findOne({ token: refreshToken }).select('userId');
+    const savedToken = await RefreshToken.findOne({ token: refreshToken });
     await RefreshToken.deleteOne({ token: refreshToken });
     const account = savedToken ? await findAccountById(savedToken.userId) : null;
     await recordAudit({

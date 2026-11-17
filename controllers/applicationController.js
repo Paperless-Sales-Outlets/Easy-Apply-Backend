@@ -267,9 +267,11 @@ export const createApplication = async (req, res, next) => {
         ? {
             orderId: formData.paymentReference,
             amount:
-              formData.product?.installationFee ??
-              formData.product?.monthlyPrice ??
-              2500,
+              formData.paidAmount !== undefined
+                ? Number(formData.paidAmount)
+                : (formData.product?.installationFee !== undefined
+                  ? Number(formData.product.installationFee)
+                  : 0),
             currency: 'LKR',
           }
         : undefined,

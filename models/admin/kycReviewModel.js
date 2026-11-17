@@ -101,6 +101,15 @@ const KycReview = {
   },
 
   async findOneAndUpdate(filter, update = {}, options = {}) {
+    // The shared upsert only inserts $set / $setOnInsert fields, so a case's first
+    // decision lost its $push'd history entry. Create the row with it here.
+    if (options.upsert && !(await KycReview.findOne(filter))) {
+      const data = { ...filter, ...(update.$setOnInsert || {}), ...(update.$set || {}) };
+      for (const [key, item] of Object.entries(update.$push || {})) {
+        data[key] = Array.isArray(item?.$each) ? [...item.$each] : [item];
+      }
+      return KycReview.create(data);
+    }
     return genericFindOneAndUpdate('kyc_reviews', filter, update, options, KycReviewInstance);
   },
 

@@ -2,6 +2,8 @@ import StaffRole from '../../models/StaffRole.js';
 import User from '../../models/User.js';
 import Privilege from '../../models/Privilege.js';
 import { recordAudit } from '../../services/auditService.js';
+import { escapeRegex } from '../../utils/employeeNumber.js';
+import { query } from '../../config/db.js';
 
 const RESERVED_NAMES = new Set(['admin', 'customer']);
 
@@ -10,7 +12,7 @@ const RESERVED_NAMES = new Set(['admin', 'customer']);
 const BUILT_IN_KEYS = ['dashboard', 'kyc', 'appointments', 'technician', 'forms', 'analytics', 'leads'];
 
 // Returns the first key that is not a privilege defined in the Privileges tab.
-async function findUnknownPrivilege(permissions) {
+export async function findUnknownPrivilege(permissions) {
   if (!Array.isArray(permissions) || permissions.length === 0) return null;
   const known = new Set((await Privilege.find({ key: { $in: permissions } }).select('key').lean()).map((p) => p.key));
   return permissions.find((k) => !known.has(k) && !BUILT_IN_KEYS.includes(k)) || null;
@@ -64,7 +66,7 @@ export const createStaffRole = async (req, res, next) => {
       return next(new Error(`"${cleanName}" is a reserved role name`));
     }
 
-    const existing = await StaffRole.findOne({ name: new RegExp(`^${cleanName}$`, 'i') });
+    const existing = await StaffRole.findOne({ name: new RegExp(`^${escapeRegex(cleanName)}$`, 'i') });
     if (existing) {
       res.status(409);
       return next(new Error('A role with this name already exists'));
@@ -85,7 +87,7 @@ export const createStaffRole = async (req, res, next) => {
     await recordAudit({ req, action: 'CREATE', module: 'User Management', targetId: role._id, description: `Created staff role ${role.name}` });
     res.status(201).json({ success: true, role: sanitizeRole(role, 0) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('A role with this name already exists'));
     }
@@ -109,6 +111,7 @@ export const updateStaffRole = async (req, res, next) => {
     }
 
     const oldName = role.name;
+    const oldPermissions = Array.isArray(role.permissions) ? [...role.permissions] : [];
 
     if (name !== undefined) {
       const cleanName = String(name).trim();
@@ -121,7 +124,7 @@ export const updateStaffRole = async (req, res, next) => {
         return next(new Error(`"${cleanName}" is a reserved role name`));
       }
       if (cleanName.toLowerCase() !== oldName.toLowerCase()) {
-        const existing = await StaffRole.findOne({ name: new RegExp(`^${cleanName}$`, 'i'), _id: { $ne: id } });
+        const existing = await StaffRole.findOne({ name: new RegExp(`^${escapeRegex(cleanName)}$`, 'i'), _id: { $ne: id } });
         if (existing) {
           res.status(409);
           return next(new Error('A role with this name already exists'));
@@ -141,15 +144,29 @@ export const updateStaffRole = async (req, res, next) => {
 
     await role.save();
 
-    if (role.name !== oldName) {
-      await User.updateMany({ role: oldName }, { $set: { role: role.name } });
-    }
+    // Everyone holding this role follows its new name. Privileges change by
+    // difference only: what the role gained is added to each member and what it
+    // lost is taken away, so privileges set on individual users are kept.
+    const newPermissions = Array.isArray(role.permissions) ? role.permissions : [];
+    const added = newPermissions.filter((key) => !oldPermissions.includes(key));
+    const removed = oldPermissions.filter((key) => !newPermissions.includes(key));
+    await query(
+      `UPDATE users
+       SET role = $1,
+           permissions = ARRAY(
+             SELECT DISTINCT key FROM unnest(array_cat(COALESCE(permissions, '{}'), $2::text[])) AS key
+             WHERE NOT (key = ANY($3::text[]))
+           ),
+           updated_at = NOW()
+       WHERE role = $4`,
+      [role.name, added, removed, oldName]
+    );
 
-    await recordAudit({ req, action: 'UPDATE', module: 'User Management', targetId: role._id, description: `Updated staff role ${role.name}` });
+    await recordAudit({ req, action: 'UPDATE', module: 'User Management', targetId: role._id, description: `Updated staff role ${role.name}`, metadata: { renamedFrom: oldName !== role.name ? oldName : undefined, addedPrivileges: added, removedPrivileges: removed } });
     const userCount = await User.countDocuments({ role: role.name });
     res.status(200).json({ success: true, role: sanitizeRole(role, userCount) });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === '23505') {
       res.status(409);
       return next(new Error('A role with this name already exists'));
     }
@@ -176,7 +193,7 @@ export const deleteStaffRole = async (req, res, next) => {
       return next(new Error(`${inUse} user(s) still have this role — reassign them first`));
     }
 
-    await StaffRole.deleteOne({ _id: id });
+    await StaffRole.findByIdAndDelete(id);
     await recordAudit({ req, action: 'DELETE', module: 'User Management', targetId: role._id, description: `Deleted staff role ${role.name}` });
     res.status(200).json({ success: true, message: 'Role removed' });
   } catch (error) {

@@ -1,5 +1,5 @@
 import { query, toCamelCase } from '../config/db.js';
-import { buildWhereClause, createQueryBuilder } from '../db/modelHelper.js';
+import { createQueryBuilder, createFindOneQueryBuilder } from '../db/modelHelper.js';
 
 export class StaffRoleInstance {
   constructor(data = {}) {
@@ -34,11 +34,12 @@ const StaffRole = {
     return res.rows.length ? new StaffRoleInstance(res.rows[0]) : null;
   },
 
-  async findOne(filter = {}) {
-    const { whereText, values } = buildWhereClause(filter);
-    const sql = `SELECT * FROM staff_roles ${whereText} LIMIT 1`;
-    const res = await query(sql, values);
-    return res.rows.length ? new StaffRoleInstance(res.rows[0]) : null;
+  findOne(filter = {}) {
+    return createFindOneQueryBuilder({
+      tableName: 'staff_roles',
+      filter,
+      ModelClass: StaffRoleInstance,
+    });
   },
 
   find(filter = {}) {

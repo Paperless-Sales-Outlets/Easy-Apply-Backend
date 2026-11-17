@@ -1,12 +1,14 @@
 import express from 'express';
 import { getMyAppointments, updateJobStatus } from '../../controllers/field/fieldAppointmentController.js';
-import { protect, authorize } from '../../middleware/authMiddleware.js';
+import { protect, requirePrivilege } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
+import { rejectInvalidId } from '../../middleware/adminParamsMiddleware.js';
 
 const router = express.Router();
 
 router.use(requireDb);
-router.use(protect, authorize('admin', 'staff'));
+router.use(protect, requirePrivilege('technician'));
+router.param('id', rejectInvalidId('Appointment'));
 
 // Get appointments assigned to logged-in technician
 router.get('/', getMyAppointments);
