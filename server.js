@@ -6,7 +6,6 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
 import fs from 'fs';
-import mongoose from 'mongoose';
 
 import connectDB, { isDbConnected } from './config/db.js';
 import { startKycAutoReviewScheduler } from './services/kycAutoReviewService.js';
@@ -20,6 +19,7 @@ import adminAnalyticsRoutes from './routes/admin/analyticsRoutes.js';
 import adminAppointmentRoutes from './routes/admin/appointmentRoutes.js';
 import adminUsersRoutes from './routes/admin/usersRoutes.js';
 import adminRolesRoutes from './routes/admin/rolesRoutes.js';
+import adminBranchesRoutes from './routes/admin/branchesRoutes.js';
 import adminPrivilegesRoutes from './routes/admin/privilegesRoutes.js';
 import adminAuditRoutes from './routes/admin/auditRoutes.js';
 import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
@@ -40,12 +40,18 @@ import fileRoutes from './routes/fileRoutes.js';
 
 // New Connection Draft routes
 import draftRoutes from './routes/draftRoutes.js';
+import consentRoutes from './routes/consentRoutes.js';
 
 // SLT Banner routes
 import sltBannerRoutes from './routes/sltBannerRoutes.js';
 
+// Email Template Preview routes
+import emailPreviewRoutes from './routes/emailPreviewRoutes.js';
+
 // OCR routes (PaddleOCR ONNX deep-learning engine)
 import ocrRoutes from './routes/ocrRoutes.js';
+import { getEngineMode } from './services/ocr/nicScanService.js';
+import { getPaddleOcrInstance } from './services/ocr/paddleOcrService.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
@@ -60,26 +66,6 @@ startKycAutoReviewScheduler();
 // after 30 days (kept in the database, marked expired). Checked hourly.
 startDraftExpiryScheduler();
 
-// Drop legacy orderId index once connected
-mongoose.connection.once('open', async () => {
-  try {
-    const indexes = await mongoose.connection
-      .collection('appointments')
-      .indexes();
-
-    if (indexes.find((i) => i.name === 'orderId_1')) {
-      await mongoose.connection
-        .collection('appointments')
-        .dropIndex('orderId_1');
-
-      console.log(
-        '✅ Dropped legacy orderId_1 index from appointments'
-      );
-    }
-  } catch {
-    // Index or collection may not exist yet
-  }
-});
 
 const app = express();
 
@@ -192,21 +178,10 @@ app.get('/', (req, res) => {
 
 // API Health Check
 app.get('/api/health', (req, res) => {
-  const dbStates = [
-    'disconnected',
-    'connected',
-    'connecting',
-    'disconnecting',
-  ];
-
   res.status(200).json({
     success: true,
     dbConnected: isDbConnected(),
-    dbState:
-      dbStates[mongoose.connection.readyState] || 'unknown',
-    dbHost: isDbConnected()
-      ? mongoose.connection.host
-      : null,
+    dbEngine: 'PostgreSQL',
     environment: process.env.NODE_ENV,
   });
 });
@@ -217,6 +192,9 @@ app.get('/api/health', (req, res) => {
 
 // SLT Banner Routes
 app.use('/api/slt-banners', sltBannerRoutes);
+
+// ConsentHub consent catalog
+app.use('/api/consents', consentRoutes);
 
 // OTP Routes
 app.use('/api/otp', otpRoutes);
@@ -256,6 +234,9 @@ app.use('/api/admin/users', adminUsersRoutes);
 
 // Admin Role Management
 app.use('/api/admin/roles', adminRolesRoutes);
+
+// Admin Branches (regions, provinces, RTOs, teleshops)
+app.use('/api/admin/branches', adminBranchesRoutes);
 
 // Admin Privilege Management
 app.use(
@@ -298,7 +279,6 @@ app.use('/api/appointments', appointmentRoutes);
 
 // NIC Verification Routes
 app.use('/api/nic', nicRoutes);
-app.use('/api/ocr', nicRoutes);
 
 // Payment Routes
 app.use('/api/payment', paymentRoutes);
@@ -319,8 +299,11 @@ app.use('/api/files', fileRoutes);
 // Saved progress on New Connection applications
 app.use('/api/drafts', draftRoutes);
 
-// Server-side PaddleOCR Routes
+// OCR Routes (Gemini primary, local PaddleOCR fallback)
 app.use('/api/ocr', ocrRoutes);
+
+// Email Template Previewer (Interactive Dev/Review Endpoint)
+app.use('/api/email-preview', emailPreviewRoutes);
 
 // =====================================
 // Error Handling
@@ -357,6 +340,14 @@ const server = app.listen(
     );
   }
 );
+
+// Load the local OCR model now (unless Gemini-only) so the first NIC scan isn't slow
+// and a missing model download shows up in the logs at startup, not mid-request.
+if (process.env.NODE_ENV !== 'test' && getEngineMode() !== 'gemini') {
+  getPaddleOcrInstance().catch((err) =>
+    console.error('[PaddleOCR] Warm-up failed; NIC scans will retry on demand:', err.message)
+  );
+}
 
 // Handle Unhandled Promise Rejections
 process.on('unhandledRejection', (err) => {

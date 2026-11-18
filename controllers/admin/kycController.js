@@ -1,8 +1,7 @@
-import mongoose from 'mongoose';
 import Application from '../../models/admin/applicationModel.js';
 import Customer from '../../models/Customer.js';
 import KycReview from '../../models/admin/kycReviewModel.js';
-import { getSignedFileUrl } from '../../services/s3Service.js';
+import { getSignedFileUrl, downloadBuffer, extractStorageKey } from '../../services/storageService.js';
 import {
   reviewApplicationAuto,
   reviewAccountAuto,
@@ -11,6 +10,9 @@ import {
   getRecheckJob,
 } from '../../services/kycAutoReviewService.js';
 import { recordAudit } from '../../services/auditService.js';
+import { query, toCamelCase } from '../../config/db.js';
+import { buildWhereClause } from '../../db/modelHelper.js';
+import { pickFrom, trimInline } from '../../db/jsonSelect.js';
 import {
   FRESH_CAPTURE_HOURS,
   docRef,
@@ -90,8 +92,89 @@ const resolveDocUrl = async (raw) => {
   return await getSignedFileUrl(url);
 };
 
+/**
+ * Inline base64 images can be several MB each, which made the review list
+ * take ~10s to load. The list carries a URL to fetch them on demand instead.
+ */
+const lazyDocUrl = (url, subjectId, key) =>
+  url && url.startsWith('data:') ? `/api/admin/kyc/${subjectId}/document/${key}` : url;
+
+// ── List queries ─────────────────────────────────────────────────────────────
+// Images are stored as base64 text inside the JSON columns (up to several MB a
+// row), and the list only needs to know one exists: the bytes are fetched by
+// getKycDocument when a case is opened. These read everything the list uses and
+// cut each inline image down to its "data:image/..." prefix inside the database.
+const DOC_FIELD_KEYS = DOC_KEYS.map(({ key }) => key);
+
+const LIST_APPLICATION_COLUMNS = [
+  'id', 'reference_number', 'phone', 'nic', 'service_type', 'status', 'notes',
+  'actioned_at', 'actioned_by', 'created_at', 'updated_at',
+  `${pickFrom('documents', DOC_FIELD_KEYS, 'd')} AS documents`,
+  `${pickFrom('form_data', [...DOC_FIELD_KEYS, ...NAME_FIELDS, 'documents'], 'f', (v) =>
+    `CASE WHEN f.k = 'documents' THEN ${pickFrom(v, DOC_FIELD_KEYS, 'n')} ELSE ${trimInline(v)} END`)} AS form_data`,
+].join(', ');
+
+const LIST_CUSTOMER_COLUMNS = [
+  'id', 'name', 'nic', 'phone', 'kyc_status', 'kyc_notes', 'kyc_actioned_at', 'created_at', 'updated_at',
+  `${pickFrom('identity_documents', [...DOC_FIELD_KEYS, 'capturedAt'], 'i')} AS identity_documents`,
+].join(', ');
+
+async function listRows(table, columns, filter, suffix = '') {
+  const { whereText, values } = buildWhereClause(filter);
+  const { rows } = await query(`SELECT ${columns} FROM ${table} ${whereText} ${suffix}`, values);
+  return rows.map((row) => {
+    const item = toCamelCase(row);
+    return item.nic ? { ...item, NIC: item.nic } : item;
+  });
+}
+
+const last9Digits = (phone) => String(phone || '').replace(/\D/g, '').slice(-9);
+
+/** One lookup for a whole list, in place of one findLinkedCustomer per application. */
+async function linkedCustomersFor(apps) {
+  const nics = [...new Set(apps.map((a) => a.nic?.toUpperCase()).filter(Boolean))];
+  const phones = [...new Set(apps.map((a) => last9Digits(a.phone)).filter(Boolean))];
+  if (!nics.length && !phones.length) return () => null;
+
+  const { rows } = await query(
+    `SELECT ${LIST_CUSTOMER_COLUMNS} FROM customers
+     WHERE nic = ANY($1) OR right(regexp_replace(phone, '\\D', '', 'g'), 9) = ANY($2)`,
+    [nics, phones]
+  );
+  const customers = rows.map((row) => ({ ...toCamelCase(row), NIC: row.nic }));
+  const byNic = new Map(customers.filter((c) => c.NIC).map((c) => [c.NIC, c]));
+  const byPhone = new Map(customers.map((c) => [last9Digits(c.phone), c]));
+  return (app) => byNic.get(app.nic?.toUpperCase()) || byPhone.get(last9Digits(app.phone)) || null;
+}
+
+/** The customer profile linked to an application by NIC or phone (null if none or lookup fails). */
+async function findLinkedCustomer(app) {
+  try {
+    const last9 = String(app.phone || '').replace(/\D/g, '').slice(-9);
+    return await Customer.findOne({
+      $or: [
+        ...(app.nic ? [{ NIC: app.nic.toUpperCase() }] : []),
+        ...(last9 ? [{ phone: new RegExp(`${last9}$`) }] : []),
+      ],
+    }).lean();
+  } catch (err) {
+    console.warn('[KYC] Linked customer lookup failed:', err.message);
+    return null;
+  }
+}
+
+/** Raw stored value for one document of an application, falling back to the customer's captured identity images. */
+function rawAppDoc(app, customerProfile, key) {
+  const fd = app.formData || {};
+  const docs = fd.documents && typeof fd.documents === 'object' ? fd.documents : {};
+  let raw = docs[key] ?? app.documents?.[key] ?? fd[key];
+  if (key === 'signature' && !raw) raw = fd.signature;
+  if (!raw && customerProfile?.identityDocuments?.[key]) raw = customerProfile.identityDocuments[key];
+  return raw;
+}
+
 const IDENTITY_KEYS = ['nicFront', 'nicBack', 'facePhoto'];
-const USER_DOC_KEYS = DOC_KEYS.filter(({ key }) => IDENTITY_KEYS.includes(key));
+const USER_DOC_KEYS = DOC_KEYS.filter(({ key }) => ['nicFront', 'nicBack', 'facePhoto', 'signature', 'signatureDoc'].includes(key));
 
 // Customer who registered (NIC + live photo captured) but has no application yet.
 // The audit fields every queue item carries: who decided, the automated
@@ -136,7 +219,7 @@ async function customerToQueueItem(customer, review) {
     const raw = customer.identityDocuments?.[key];
     const url = await resolveDocUrl(raw);
     if (url) {
-      documents.push({ key, label, url });
+      documents.push({ key, label, url: lazyDocUrl(url, customer._id, key) });
       identityRaw[key] = raw;
     }
   }
@@ -165,38 +248,20 @@ async function customerToQueueItem(customer, review) {
   };
 }
 
-async function toQueueItem(app, review) {
+async function toQueueItem(app, review, linkedCustomer) {
   const fd = app.formData || {};
   const docs = fd.documents && typeof fd.documents === 'object' ? fd.documents : {};
 
   // Linked customer profile — holds the NIC + live face photo captured at registration
-  let customerProfile = null;
-  try {
-    const last9 = String(app.phone || '').replace(/\D/g, '').slice(-9);
-    customerProfile = await Customer.findOne({
-      $or: [
-        ...(app.nic ? [{ NIC: app.nic.toUpperCase() }] : []),
-        ...(last9 ? [{ phone: new RegExp(`${last9}$`) }] : []),
-      ],
-    }).lean();
-  } catch {}
+  const customerProfile = linkedCustomer === undefined ? await findLinkedCustomer(app) : linkedCustomer;
 
   const documents = [];
   const identityRaw = {};
   for (const { key, label } of DOC_KEYS) {
-    let raw = docs[key] ?? app.documents?.[key] ?? fd[key];
-
-    // Fallback for signature from root form data
-    if (key === 'signature' && !raw) raw = fd.signature;
-
-    // Fallback to Customer identityDocuments (captured during sign-up / OCR)
-    if (!raw && customerProfile?.identityDocuments?.[key]) {
-      raw = customerProfile.identityDocuments[key];
-    }
-
+    const raw = rawAppDoc(app, customerProfile, key);
     const resolved = await resolveDocUrl(raw);
     if (resolved) {
-      documents.push({ key, label, url: resolved });
+      documents.push({ key, label, url: lazyDocUrl(resolved, app._id, key) });
       if (IDENTITY_KEYS.includes(key)) identityRaw[key] = raw;
     }
   }
@@ -239,14 +304,14 @@ async function annotateIdentity(items) {
 
   const referenceIds = [...new Set(items
     .map((i) => i.caseInfo?.face?.against === 'selfie' && i.caseInfo.face.referenceId)
-    .filter((id) => id && mongoose.isValidObjectId(id)))];
+    .filter(Boolean))];
   const referenceApps = referenceIds.length
-    ? await Application.find({ _id: { $in: referenceIds } }).select('referenceNumber createdAt formData.documents documents').lean()
+    ? await listRows('applications', LIST_APPLICATION_COLUMNS, { _id: { $in: referenceIds } })
     : [];
   const referenceUrl = new Map();
   for (const ref of referenceApps) {
     const docs = { ...ref.formData?.documents, ...ref.documents };
-    const url = await resolveDocUrl(docs.facePhoto);
+    const url = lazyDocUrl(await resolveDocUrl(docs.facePhoto), ref._id, 'facePhoto');
     if (url) referenceUrl.set(String(ref._id), { url, referenceNumber: ref.referenceNumber, capturedAt: ref.createdAt });
   }
 
@@ -313,32 +378,35 @@ export const getKycQueue = async (req, res, next) => {
     const reviewedAppIds = await KycReview.find({ subjectType: 'application' }).distinct('subjectId');
 
     const [open, decided] = await Promise.all([
-      Application
-        .find({ status: { $in: REVIEW_STATUSES } })
-        .populate('actionedBy', 'name email role')
-        .sort({ createdAt: 1 })
-        .lean(),
-      Application
-        .find({
+      listRows('applications', LIST_APPLICATION_COLUMNS, { status: { $in: REVIEW_STATUSES } }, 'ORDER BY created_at ASC'),
+      listRows(
+        'applications',
+        LIST_APPLICATION_COLUMNS,
+        {
           status: { $in: ['approved', 'rejected', LOCKED_STATUS] },
           $or: [{ _id: { $in: reviewedAppIds } }, { actionedBy: { $ne: null } }],
-        })
-        .populate('actionedBy', 'name email role')
-        .sort({ updatedAt: -1 })
-        .limit(DECIDED_LIMIT)
-        .lean(),
+        },
+        `ORDER BY updated_at DESC LIMIT ${DECIDED_LIMIT}`
+      ),
     ]);
 
     const applications = [...open, ...decided];
-    const appReviews = await reviewsFor('application', applications.map((a) => a._id));
-    const queue = await Promise.all(applications.map((a) => toQueueItem(a, appReviews.get(String(a._id)))));
+    const [appReviews, linkedCustomerOf] = await Promise.all([
+      reviewsFor('application', applications.map((a) => a._id)),
+      linkedCustomersFor(applications),
+    ]);
+    const queue = await Promise.all(applications.map(
+      (a) => toQueueItem(a, appReviews.get(String(a._id)), linkedCustomerOf(a))
+    ));
 
     // Registered customers with captured ID images and no application yet — once they
     // apply, the application (in any status) carries the decision
     const covered = new Set((await Application.distinct('nic')).map((n) => String(n).toUpperCase()));
     const reviewedAccountIds = await KycReview.find({ subjectType: 'account' }).distinct('subjectId');
-    const customers = await Customer
-      .find({
+    const customers = await listRows(
+      'customers',
+      LIST_CUSTOMER_COLUMNS,
+      {
         'identityDocuments.nicFront': { $exists: true },
         $or: [
           { kycStatus: { $exists: false } },
@@ -346,10 +414,9 @@ export const getKycQueue = async (req, res, next) => {
           { kycStatus: { $in: ['approved', 'rejected'] }, _id: { $in: reviewedAccountIds } },
           { kycStatus: { $in: ['approved', 'rejected'] }, kycActionedAt: { $ne: null } },
         ],
-      })
-      .sort({ 'identityDocuments.capturedAt': 1 })
-      .limit(DECIDED_LIMIT * 2)
-      .lean();
+      },
+      `ORDER BY (identity_documents->>'capturedAt') ASC LIMIT ${DECIDED_LIMIT * 2}`
+    );
     const accountCustomers = customers.filter((u) => !covered.has(String(u.NIC).toUpperCase()));
     const accountReviews = await reviewsFor('account', accountCustomers.map((c) => c._id));
     const accounts = await Promise.all(accountCustomers.map((c) => customerToQueueItem(c, accountReviews.get(String(c._id)))));
@@ -361,8 +428,66 @@ export const getKycQueue = async (req, res, next) => {
   }
 };
 
+// @desc    Stream one inline (base64) document image of a KYC case
+// @route   GET /api/admin/kyc/:id/document/:key
+// @access  Private (Admin / Staff only)
+export const getKycDocument = async (req, res, next) => {
+  try {
+    const { id, key } = req.params;
+    if (!DOC_KEYS.some((d) => d.key === key)) {
+      return res.status(400).json({ success: false, message: 'Unknown document type.' });
+    }
+    const subject = await loadSubject(id);
+    if (!subject) {
+      return res.status(404).json({ success: false, message: 'KYC case not found.' });
+    }
+
+    const raw = subject.type === 'application'
+      ? rawAppDoc(subject.doc, await findLinkedCustomer(subject.doc), key)
+      : subject.doc.identityDocuments?.[key];
+
+    if (!raw) {
+      return res.status(404).json({ success: false, message: 'Document not found.' });
+    }
+
+    // A. Inline base64 data URL
+    if (typeof raw === 'string' && raw.startsWith('data:image/')) {
+      const match = /^data:(image\/[\w.+-]+);base64,([\s\S]+)$/.exec(raw);
+      if (match) {
+        res.set('Content-Type', match[1]);
+        res.set('Cache-Control', 'private, max-age=300');
+        return res.send(Buffer.from(match[2], 'base64'));
+      }
+    }
+
+    // B. Stored cloud object (decrypt on the fly from Supabase storage)
+    try {
+      const { buffer, isEncrypted } = await downloadBuffer(raw);
+      let contentType = 'image/jpeg';
+      if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+        contentType = 'image/png';
+      } else if (buffer.toString('ascii', 0, 4) === 'RIFF') {
+        contentType = 'image/webp';
+      } else if (buffer.toString('ascii', 0, 4) === '%PDF') {
+        contentType = 'application/pdf';
+      }
+
+      res.set('Content-Type', contentType);
+      res.set('Content-Length', buffer.length);
+      res.set('Cache-Control', 'private, max-age=300');
+      if (isEncrypted) res.set('x-decrypted-at-rest', 'true');
+      return res.send(buffer);
+    } catch (storageErr) {
+      console.warn(`[getKycDocument] storage fetch failed for "${raw}": ${storageErr.message}`);
+      return res.status(404).json({ success: false, message: 'Document image not found.' });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
 async function loadSubject(id) {
-  if (!mongoose.isValidObjectId(id)) return null;
+  if (!id || typeof id !== 'string') return null;
   const application = await Application.findById(id);
   if (application) return { type: 'application', doc: application };
   const customer = await Customer.findById(id);

@@ -1,7 +1,8 @@
 import Connection from '../models/Connection.js';
 import Customer from '../models/Customer.js';
 import { publicCustomer, storeIdentityImage } from './authController.js';
-import mongoose from 'mongoose';
+import { isDbConnected } from '../config/db.js';
+import Application from '../models/Application.js';
 
 // @desc    Lookup customer details by telephone/mobile number from REAL database
 // @route   POST /api/customers/lookup
@@ -23,7 +24,7 @@ export const lookupCustomer = async (req, res, next) => {
   try {
     let formattedAccounts = [];
 
-    if (mongoose.connection.readyState === 1) {
+    if (isDbConnected()) {
       // 1. Search Connection collection for matching numbers
       const initialMatch = await Connection.find({
         $or: [
@@ -130,8 +131,8 @@ export const lookupCustomer = async (req, res, next) => {
       }
 
       // 3. If not found in Customer, search Application collection for recent submission
-      if (formattedAccounts.length === 0 && mongoose.models.Application) {
-        const app = await mongoose.models.Application.findOne({
+      if (formattedAccounts.length === 0) {
+        const app = await Application.findOne({
           $or: [
             { phone: phoneStr },
             { phone: digitsOnly },
@@ -242,7 +243,7 @@ export const syncCustomerOcr = async (req, res, next) => {
       );
     }
     if (cleanNic) {
-      query.push({ NIC: cleanNic });
+      query.push({ nic: cleanNic });
     }
     if (cleanEmail) {
       query.push({ email: cleanEmail });
@@ -356,7 +357,7 @@ export const getCustomerProfile = async (req, res, next) => {
       );
     }
     if (cleanNic) {
-      query.push({ NIC: cleanNic });
+      query.push({ nic: cleanNic });
     }
     if (cleanEmail) {
       query.push({ email: cleanEmail });
@@ -372,7 +373,7 @@ export const getCustomerProfile = async (req, res, next) => {
     }
 
     // 2. Fallback to Connection model
-    if (mongoose.connection.readyState === 1 && (phoneStr || cleanEmail || cleanNic)) {
+    if (isDbConnected() && (phoneStr || cleanEmail || cleanNic)) {
       const connQuery = [];
       if (cleanNic) {
         connQuery.push({ nic: cleanNic }, { nic: cleanNic.toLowerCase() });

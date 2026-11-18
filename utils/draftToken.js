@@ -9,6 +9,7 @@ const DEFAULT_EXPIRY = '30d'; // as long as a draft is kept
 /** The 9-digit national number, the form drafts are stored under. */
 export const normalizeDraftPhone = (phone) => String(phone || '').replace(/\D/g, '').slice(-9);
 
+/** Signs a draft-access token for a verified phone number; undefined if the phone or secret is invalid. */
 export const issueDraftToken = (phone) => {
   const cleanPhone = normalizeDraftPhone(phone);
   if (cleanPhone.length !== 9 || !process.env.JWT_ACCESS_SECRET) return undefined;

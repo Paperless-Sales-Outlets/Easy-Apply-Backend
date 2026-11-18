@@ -42,6 +42,7 @@ const CACHE_LIMIT = 200;
 
 let enginePromise = null;
 
+/** Face matching is on unless KYC_FACE_MATCH=off. */
 export const faceMatchingEnabled = () => String(process.env.KYC_FACE_MATCH || '').toLowerCase() !== 'off';
 
 async function loadEngine() {
@@ -145,6 +146,7 @@ export async function analyseFace(buffer, { kind = 'selfie', hash = null } = {})
   });
 }
 
+/** Euclidean distance between two face descriptors, or null if they are missing or mismatched. */
 export function faceDistance(a, b) {
   if (!a || !b || a.length !== b.length) return null;
   let sum = 0;

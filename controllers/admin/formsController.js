@@ -1,4 +1,5 @@
 import Form from '../../models/admin/formModel.js';
+import { escapeRegex } from '../../utils/employeeNumber.js';
 
 // GET /api/admin/forms
 export const getForms = async (req, res, next) => {
@@ -9,8 +10,8 @@ export const getForms = async (req, res, next) => {
     if (formType) filter.formType = formType;
     if (status) filter.status = status;
     if (search) filter.$or = [
-      { 'data.name': { $regex: search, $options: 'i' } },
-      { 'data.referenceNumber': { $regex: search, $options: 'i' } },
+      { 'data.name': { $regex: escapeRegex(search), $options: 'i' } },
+      { 'data.referenceNumber': { $regex: escapeRegex(search), $options: 'i' } },
     ];
 
     const pageNum = Math.max(1, parseInt(page, 10));

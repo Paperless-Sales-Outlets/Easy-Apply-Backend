@@ -1,5 +1,6 @@
 import Cart from '../models/Cart.js';
 import * as productService from './productService.js';
+import { AppError } from '../middleware/errorHandler.js';
 
 /**
  * Cart Service Layer
@@ -42,12 +43,12 @@ export const getCart = async (userId) => {
  */
 export const addItemToCart = async (userId, productId, quantity) => {
   // Validate quantity
-  if (quantity <= 0) {
-    throw new Error('Quantity must be greater than zero');
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new AppError('Quantity must be a whole number greater than zero', 400);
   }
 
   // Check product availability
-  const product = await productService.checkProductAvailability(productId, quantity);
+  const product = await productService.checkProductAvailability(productId);
 
   // Get or create cart
   const cart = await getOrCreateCart(userId);
@@ -67,8 +68,9 @@ export const addItemToCart = async (userId, productId, quantity) => {
 
     // Check if new quantity exceeds available stock
     if (newQuantity > product.availableQuantity) {
-      throw new Error(
-        `Cannot add ${quantity} more items. Total quantity (${newQuantity}) exceeds available stock (${product.availableQuantity})`
+      throw new AppError(
+        `Cannot add ${quantity} more items. Total quantity (${newQuantity}) exceeds available stock (${product.availableQuantity})`,
+        409
       );
     }
 

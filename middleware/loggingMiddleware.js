@@ -25,9 +25,10 @@ export const requestLogger = (req, res, next) => {
       `[${new Date().toISOString()}] ${method} ${originalUrl} - Status: ${statusCode} - Response Time: ${responseTime}ms`
     );
 
-    // Log response data for debugging (optional - can be disabled in production)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Response Data:', JSON.stringify(data, null, 2));
+    // Response bodies can hold PII (NICs, addresses) and be several MB, so they are
+    // only logged when explicitly enabled, and truncated.
+    if (process.env.LOG_RESPONSE_BODIES === 'true') {
+      console.log('Response Data:', JSON.stringify(data, null, 2).slice(0, 2000));
     }
 
     return originalJson.call(this, data);

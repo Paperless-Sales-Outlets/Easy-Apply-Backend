@@ -1,85 +1,100 @@
-import mongoose from 'mongoose';
-import NewConnectionDraft, { DRAFT_LIFETIME_MS, DRAFT_STATUS } from '../models/NewConnectionDraft.js';
+import { isDbConnected, query } from '../config/db.js';
+import { DRAFT_STATUS } from '../models/NewConnectionDraft.js';
+import { deleteFile, extractStorageKey } from './storageService.js';
 
-// Unfinished New Connection applications can be continued for 30 days from
-// when they were started. After that they are marked `expired`: hidden from
-// the customer and no longer continuable, but kept in the database (with their
-// photos) so they can still be retrieved. Nothing here deletes a draft.
+// Unfinished New Connection applications never expire. A draft is kept until
+// the customer submits the application or discards the draft, so they can
+// resume it any time.
+
+const DRAFT_PHOTO_FOLDER = 'drafts/';
 
 /**
- * One-time upgrade of the drafts collection, safe to run on every start.
- *
- * Earlier versions deleted drafts automatically (a TTL index on `expiresAt`)
- * and allowed one draft per number in total (a plain unique index on `phone`).
- * Both must go: the first would keep deleting drafts that should now be kept,
- * the second would stop a customer starting again after a draft expired.
- * Drafts saved before statuses existed become active, with their 30 days
- * counted from when they were started.
+ * True when a stored file is still referenced outside the draft. A restored
+ * draft submits its photo URLs as-is, so a submitted application (or the
+ * customer's saved identity documents) can point at a file in `drafts/`.
  */
-export async function prepareDraftStorage() {
-  if (mongoose.connection.readyState !== 1) return;
+async function isPhotoInUse(key) {
+  const pattern = `%${key}%`;
+  const { rows } = await query(
+    `SELECT
+       EXISTS (SELECT 1 FROM applications
+               WHERE documents::text LIKE $1 OR form_data::text LIKE $1)
+       OR EXISTS (SELECT 1 FROM customers
+                  WHERE identity_documents::text LIKE $1) AS in_use`,
+    [pattern]
+  );
+  return Boolean(rows[0]?.in_use);
+}
 
-  const collection = mongoose.connection.collection(NewConnectionDraft.collection.collectionName);
-  const indexes = await collection.indexes().catch(() => []); // collection may not exist yet
-
-  for (const index of indexes) {
-    const autoDelete = index.expireAfterSeconds !== undefined;
-    const oneDraftPerNumber = index.key?.phone === 1 && index.unique && !index.partialFilterExpression;
-    if (autoDelete || oneDraftPerNumber) {
-      await collection.dropIndex(index.name);
-      console.log(`[drafts] removed old index ${index.name}`);
+/**
+ * Delete draft photo files from storage. Only touches files in the `drafts/`
+ * folder that nothing else references. Never throws.
+ */
+export async function deleteDraftPhotoFiles(refs = []) {
+  let deleted = 0;
+  for (const ref of refs) {
+    try {
+      const key = extractStorageKey(ref);
+      if (!key || !key.startsWith(DRAFT_PHOTO_FOLDER)) continue;
+      if (await isPhotoInUse(key)) continue;
+      await deleteFile(key);
+      deleted += 1;
+    } catch (err) {
+      console.warn('[drafts] photo cleanup notice:', err.message);
     }
   }
-
-  const upgraded = await collection.updateMany({ status: { $exists: false } }, [
-    {
-      $set: {
-        status: DRAFT_STATUS.ACTIVE,
-        resumeUntil: { $add: [{ $ifNull: ['$createdAt', '$$NOW'] }, DRAFT_LIFETIME_MS] },
-        expiredAt: null,
-      },
-    },
-    { $unset: 'expiresAt' },
-  ]);
-  if (upgraded.modifiedCount) {
-    console.log(`[drafts] set status and 30-day limit on ${upgraded.modifiedCount} existing draft(s)`);
-  }
-
-  // Build the current indexes (one active draft per number, expiry lookup)
-  // now that any conflicting old ones are gone.
-  await NewConnectionDraft.createIndexes();
-}
-
-/** Mark every active draft past its 30 days as expired. Returns how many. */
-export async function runDraftExpiry() {
-  if (mongoose.connection.readyState !== 1) return 0;
-
-  const result = await NewConnectionDraft.updateMany(
-    { status: DRAFT_STATUS.ACTIVE, resumeUntil: { $lte: new Date() } },
-    { $set: { status: DRAFT_STATUS.EXPIRED, expiredAt: new Date() } }
-  );
-  if (result.modifiedCount) {
-    console.log(`[drafts] marked ${result.modifiedCount} draft(s) as expired`);
-  }
-  return result.modifiedCount;
+  return deleted;
 }
 
 /**
- * Prepare the collection once the database is connected, then mark expired
- * drafts straight away and every hour after.
+ * Startup tidy-up of the drafts table:
+ *  - drafts with no status become active
+ *  - drafts marked expired under the old 30-day rule become resumable again
+ *    (the latest one per phone, and only if that phone has no active draft,
+ *    since a phone can hold one active draft at a time)
  */
-export function startDraftExpiryScheduler(intervalMs = 60 * 60 * 1000) {
-  const tick = () => runDraftExpiry().catch((err) => console.error('[drafts] expiry sweep failed:', err.message));
+export async function prepareDraftStorage() {
+  if (!isDbConnected()) return;
+  try {
+    await query(
+      `UPDATE new_connection_drafts
+       SET status = $1
+       WHERE status IS NULL`,
+      [DRAFT_STATUS.ACTIVE]
+    );
 
-  const start = () =>
-    prepareDraftStorage()
-      .catch((err) => console.error('[drafts] storage upgrade failed:', err.message))
-      .finally(tick);
+    const revived = await query(
+      `UPDATE new_connection_drafts d
+       SET status = $1, expired_at = NULL, updated_at = NOW()
+       WHERE d.status = $2
+         AND d.id = (SELECT x.id FROM new_connection_drafts x
+                     WHERE x.phone = d.phone AND x.status = $2
+                     ORDER BY x.updated_at DESC NULLS LAST
+                     LIMIT 1)
+         AND NOT EXISTS (SELECT 1 FROM new_connection_drafts a
+                         WHERE a.phone = d.phone AND a.status = $1)`,
+      [DRAFT_STATUS.ACTIVE, DRAFT_STATUS.EXPIRED]
+    );
+    if (revived.rowCount > 0) {
+      console.log(`[drafts] made ${revived.rowCount} previously expired draft(s) resumable again`);
+    }
+  } catch (err) {
+    console.warn('[drafts] storage prep notice:', err.message);
+  }
+}
 
-  if (mongoose.connection.readyState === 1) start();
-  else mongoose.connection.once('open', start);
-
-  const timer = setInterval(tick, intervalMs);
-  timer.unref?.();
-  return timer;
+/**
+ * Runs the startup tidy-up once the database is connected. There is no
+ * expiry sweep any more. (Name kept because server.js calls it.)
+ */
+export function startDraftExpiryScheduler() {
+  const waitForDb = () => {
+    if (!isDbConnected()) {
+      setTimeout(waitForDb, 5000).unref?.();
+      return;
+    }
+    prepareDraftStorage().catch((err) =>
+      console.error('[drafts] storage prep failed:', err.message));
+  };
+  setTimeout(waitForDb, 2000).unref?.();
 }

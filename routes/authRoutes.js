@@ -14,8 +14,12 @@ import {
 } from '../controllers/authController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
 import { getOtpStatus } from '../controllers/otpController.js';
+import passkeyRoutes from './passkeyRoutes.js';
 
 const router = express.Router();
+
+// Passkey Authentication & Registration
+router.use('/passkey', passkeyRoutes);
 
 // Public routes
 router.post('/send-otp', sendOtp);

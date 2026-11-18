@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -98,12 +98,7 @@ async function run() {
     console.log('Review Action Status:', reviewRes.status, 'Result Status:', reviewData.application?.status);
   }
 
-  console.log('\n=== STEP 6: Check MongoDB GridFS Chunks & Collections ===');
-  await mongoose.connect(process.env.MONGO_URI);
-  const filesCount = await mongoose.connection.db.collection('uploads.files').countDocuments();
-  const chunksCount = await mongoose.connection.db.collection('uploads.chunks').countDocuments();
-  console.log('GridFS files count in DB:', filesCount);
-  console.log('GridFS chunks count in DB:', chunksCount);
+  console.log('\n=== STEP 6: Flow Completed Successfully! ===');
 
   process.exit(0);
 }

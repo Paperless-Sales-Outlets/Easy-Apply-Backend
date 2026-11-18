@@ -1,6 +1,7 @@
 import Appointment from '../../models/Appointment.js';
 import { recordAudit } from '../../services/auditService.js';
 import User from '../../models/User.js';
+import { sriLankaDayRange } from '../../utils/sriLankaDate.js';
 
 // @desc    Get appointments — filterable by date range, technician, status
 // @route   GET /api/admin/appointments
@@ -11,25 +12,21 @@ export const getAppointments = async (req, res, next) => {
 
     const filter = {};
 
-    if (date) {
-      const dayStart = new Date(date);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(date);
-      dayEnd.setHours(23, 59, 59, 999);
-      filter.scheduledAt = { $gte: dayStart, $lte: dayEnd };
-    } else if (startDate || endDate) {
-      filter.scheduledAt = {};
-      if (startDate) filter.scheduledAt.$gte = new Date(startDate);
-      if (endDate) filter.scheduledAt.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-    }
+    const scheduledRange = date ? sriLankaDayRange(date, date) : sriLankaDayRange(startDate, endDate);
+    if (scheduledRange) filter.scheduledAt = scheduledRange;
 
     if (technicianId) filter.technicianId = technicianId;
     if (status) filter.status = status;
 
     const appointments = await Appointment.find(filter)
-      .populate('technicianId', 'name email phone')
       .sort({ scheduledAt: 1 })
       .lean();
+
+    const assignedIds = [...new Set(appointments.map((apt) => apt.technicianId).filter(Boolean))];
+    const assignedStaff = assignedIds.length
+      ? await User.find({ _id: { $in: assignedIds } }).select('_id name').lean()
+      : [];
+    const staffNames = new Map(assignedStaff.map(({ _id, name }) => [_id, name]));
 
     const mapped = appointments.map(apt => ({
       id: apt._id,
@@ -40,8 +37,9 @@ export const getAppointments = async (req, res, next) => {
       address: apt.address,
       serviceType: apt.serviceType,
       scheduledAt: apt.scheduledAt,
-      technicianId: apt.technicianId?._id || null,
-      technicianName: apt.technicianId?.name || null,
+      timeSlot: apt.timeSlot || null,
+      technicianId: apt.technicianId || null,
+      technicianName: staffNames.get(apt.technicianId) || null,
       status: apt.status,
       notes: apt.notes || '',
       createdAt: apt.createdAt,
@@ -53,15 +51,19 @@ export const getAppointments = async (req, res, next) => {
   }
 };
 
-// @desc    Get all staff users who can be assigned as technicians
+// @desc    Get the active staff who hold the My Jobs privilege and can be assigned jobs
 // @route   GET /api/admin/appointments/technicians
 // @access  Private (Admin / Staff only)
 export const getTechnicians = async (req, res, next) => {
   try {
-    const technicians = await User.find({ isActive: { $ne: false } })
-      .select('name email phone role')
+    const staff = await User.find({ isActive: { $ne: false } })
+      .select('_id name email phone role permissions')
       .sort({ name: 1 })
       .lean();
+
+    const technicians = staff
+      .filter((user) => (user.permissions || []).includes('technician'))
+      .map(({ _id, name, email, phone, role }) => ({ _id, name, email, phone, role }));
 
     res.status(200).json({ success: true, technicians });
   } catch (error) {
@@ -77,26 +79,41 @@ export const assignTechnician = async (req, res, next) => {
     const { id } = req.params;
     const { technicianId } = req.body;
 
+    const previous = await Appointment.findById(id).select('technicianId referenceNumber status');
+    if (!previous) {
+      res.status(404);
+      return next(new Error('Appointment not found'));
+    }
+    // A finished job keeps the technician who did it.
+    if (['completed', 'cancelled'].includes(previous.status)) {
+      res.status(409);
+      return next(new Error(`This job is already ${previous.status}, so its technician can no longer be changed.`));
+    }
+
     const updates = {};
+    let technicianName = null;
     if (technicianId) {
-      const tech = await User.findById(technicianId).select('name');
-      if (!tech) {
+      // Only active staff with the My Jobs privilege — the same people the dropdown lists.
+      const tech = await User.findById(technicianId).select('name permissions isActive');
+      if (!tech || tech.isActive === false) {
         res.status(404);
         return next(new Error('Technician not found'));
       }
+      if (!(tech.permissions || []).includes('technician')) {
+        res.status(400);
+        return next(new Error(`${tech.name} does not have the My Jobs privilege, so jobs can't be assigned to them.`));
+      }
       updates.technicianId = technicianId;
+      technicianName = tech.name;
     } else {
       updates.technicianId = null;
     }
 
-    const previous = await Appointment.findById(id).select('technicianId referenceNumber');
     const appointment = await Appointment.findByIdAndUpdate(
       id,
       { $set: updates },
       { new: true, runValidators: true }
-    )
-      .populate('technicianId', 'name email phone')
-      .lean();
+    );
 
     if (!appointment) {
       res.status(404);
@@ -109,7 +126,7 @@ export const assignTechnician = async (req, res, next) => {
       module: 'Appointments',
       targetId: appointment.referenceNumber || id,
       description: `Updated appointment technician assignment`,
-      metadata: { previousTechnicianId: previous?.technicianId || null, technicianId: appointment.technicianId?._id || null },
+      metadata: { previousTechnicianId: previous?.technicianId || null, technicianId: updates.technicianId },
     });
     res.status(200).json({
       success: true,
@@ -122,8 +139,9 @@ export const assignTechnician = async (req, res, next) => {
         address: appointment.address,
         serviceType: appointment.serviceType,
         scheduledAt: appointment.scheduledAt,
-        technicianId: appointment.technicianId?._id || null,
-        technicianName: appointment.technicianId?.name || null,
+        timeSlot: appointment.timeSlot || null,
+        technicianId: updates.technicianId,
+        technicianName,
         status: appointment.status,
         notes: appointment.notes || '',
       },

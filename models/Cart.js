@@ -1,155 +1,202 @@
-import mongoose from 'mongoose';
+import { query, withTransaction, toCamelCase } from '../config/db.js';
 
-const cartItemSchema = new mongoose.Schema(
-  {
-    productId: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    productName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    quantity: {
-      type: Number,
-      required: true,
-      min: [1, 'Quantity must be at least 1'],
-      default: 1,
-    },
-    price: {
-      type: Number,
-      required: true,
-      min: [0, 'Price cannot be negative'],
-    },
-    subtotal: {
-      type: Number,
-      required: true,
-      min: [0, 'Subtotal cannot be negative'],
-    },
-  },
-  { _id: true }
-);
-
-const cartSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    items: {
-      type: [cartItemSchema],
-      default: [],
-    },
-    totalAmount: {
-      type: Number,
-      required: true,
-      min: [0, 'Total amount cannot be negative'],
-      default: 0,
-    },
-  },
-  {
-    timestamps: true,
+export class CartInstance {
+  constructor(data = {}) {
+    Object.assign(this, toCamelCase(data));
+    this.userId = this.userId || data.user_id || data.userId;
+    this.items = Array.isArray(this.items) ? this.items : [];
+    this.totalAmount = Number(this.totalAmount || 0);
   }
-);
 
-// Automatically delete cart documents that have not been updated for 7 days.
-// This prevents abandoned guest sessions from accumulating in the database.
-// The TTL index fires on the `updatedAt` timestamp (set by { timestamps: true }).
-cartSchema.index({ updatedAt: 1 }, { expireAfterSeconds: 7 * 24 * 60 * 60 }); // 7 days
+  calculateTotal() {
+    this.totalAmount = this.items.reduce((total, item) => {
+      const q = Number(item.quantity || 1);
+      const p = Number(item.price || 0);
+      item.subtotal = q * p;
+      return total + item.subtotal;
+    }, 0);
+    return this.totalAmount;
+  }
 
+  addItem(product, quantity = 1) {
+    const rawProdId = String(product.productId || product.id || product._id || '');
+    const prodId = rawProdId.slice(0, 50);
+    const price = Number(product.monthlyPrice || product.price || 0);
+    const name = product.name || product.productName || 'Unknown Product';
 
-// Method to calculate total amount
-cartSchema.methods.calculateTotal = function () {
-  this.totalAmount = this.items.reduce((total, item) => {
-    return total + (item.quantity * item.price);
-  }, 0);
-  return this.totalAmount;
-};
+    const existingIndex = this.items.findIndex(
+      (item) => String(item.productId) === prodId
+    );
 
-// Method to add item to cart
-cartSchema.methods.addItem = function (product, quantity) {
-  const prodId = String(product.productId || (product._id ? product._id.toString() : ''));
-  const existingItemIndex = this.items.findIndex(
-    (item) =>
-      (item.productId && item.productId.toString() === prodId) ||
-      (item._id && item._id.toString() === prodId) ||
-      (item.id && item.id.toString() === prodId)
-  );
+    if (existingIndex !== -1) {
+      this.items[existingIndex].quantity = Number(this.items[existingIndex].quantity || 0) + quantity;
+      this.items[existingIndex].subtotal = this.items[existingIndex].quantity * price;
+    } else {
+      this.items.push({
+        productId: prodId,
+        productName: name,
+        quantity,
+        price,
+        subtotal: quantity * price,
+      });
+    }
 
-  if (existingItemIndex !== -1) {
-    // Update existing item
-    this.items[existingItemIndex].quantity += quantity;
-    this.items[existingItemIndex].subtotal =
-      this.items[existingItemIndex].quantity * this.items[existingItemIndex].price;
-  } else {
-    // Add new item
-    this.items.push({
-      productId: product.productId || (product._id ? product._id.toString() : ''),
-      productName: product.name || product.productName || (product.get && product.get('productName')) || 'Unknown Product',
-      quantity: quantity,
-      price: product.monthlyPrice || (product.get && product.get('price')) || product.price || 0,
-      subtotal: quantity * (product.monthlyPrice || (product.get && product.get('price')) || product.price || 0),
+    this.calculateTotal();
+    return this.save();
+  }
+
+  updateItemQuantity(productId, quantity) {
+    const target = String(productId);
+    const index = this.items.findIndex(
+      (item) => String(item.productId) === target || String(item.id) === target
+    );
+
+    if (index === -1) {
+      throw new Error('Item not found in cart');
+    }
+
+    this.items[index].quantity = quantity;
+    this.items[index].subtotal = quantity * Number(this.items[index].price || 0);
+    this.calculateTotal();
+    return this.save();
+  }
+
+  removeItem(productId) {
+    const target = String(productId);
+    const index = this.items.findIndex(
+      (item) => String(item.productId) === target || String(item.id) === target
+    );
+
+    if (index !== -1) {
+      this.items.splice(index, 1);
+      this.calculateTotal();
+    }
+    return this.save();
+  }
+
+  clearCart() {
+    this.items = [];
+    this.totalAmount = 0;
+    return this.save();
+  }
+
+  async save() {
+    this.calculateTotal();
+
+    return await withTransaction(async (client) => {
+      // 1. Upsert cart row
+      let cartId = this.id || this._id;
+      if (!cartId) {
+        const cartRes = await client.query(
+          `INSERT INTO carts (user_id, total_amount, created_at, updated_at)
+           VALUES ($1, $2, NOW(), NOW())
+           ON CONFLICT (user_id) DO UPDATE
+           SET total_amount = EXCLUDED.total_amount, updated_at = NOW()
+           RETURNING *`,
+          [this.userId, this.totalAmount]
+        );
+        cartId = cartRes.rows[0].id;
+        this.id = cartId;
+        this._id = cartId;
+      } else {
+        await client.query(
+          `UPDATE carts SET total_amount = $1, updated_at = NOW() WHERE id = $2`,
+          [this.totalAmount, cartId]
+        );
+      }
+
+      // 2. Replace cart_items
+      await client.query(`DELETE FROM cart_items WHERE cart_id = $1`, [cartId]);
+
+      for (const item of this.items) {
+        await client.query(
+          `INSERT INTO cart_items (cart_id, product_id, product_name, quantity, price, subtotal, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          [
+            cartId,
+            item.productId,
+            item.productName,
+            item.quantity,
+            item.price,
+            item.subtotal,
+          ]
+        );
+      }
+
+      return this;
     });
   }
+}
 
-  this.calculateTotal();
-  return this.save();
+const Cart = {
+  findOne(filter = {}) {
+    const userId = filter.userId || filter.user_id;
+    const builder = {
+      lean() {
+        return this;
+      },
+      select() {
+        return this;
+      },
+      sort() {
+        return this;
+      },
+      populate() {
+        return this;
+      },
+      async then(resolve, reject) {
+        try {
+          if (!userId) return resolve(null);
+
+          const res = await query(
+            `SELECT c.*, 
+                    COALESCE(
+                      json_agg(
+                        json_build_object(
+                          'id', ci.id,
+                          '_id', ci.id,
+                          'productId', ci.product_id,
+                          'productName', ci.product_name,
+                          'quantity', ci.quantity,
+                          'price', ci.price,
+                          'subtotal', ci.subtotal
+                        )
+                      ) FILTER (WHERE ci.id IS NOT NULL), '[]'::json
+                    ) AS items
+             FROM carts c
+             LEFT JOIN cart_items ci ON ci.cart_id = c.id
+             WHERE c.user_id = $1
+             GROUP BY c.id`,
+            [userId]
+          );
+
+          if (res.rows.length === 0) return resolve(null);
+          return resolve(new CartInstance(res.rows[0]));
+        } catch (err) {
+          reject(err);
+        }
+      },
+      catch(reject) {
+        return this.then(null, reject);
+      },
+    };
+    return builder;
+  },
+
+  async create(data) {
+    const cart = new CartInstance(data);
+    await cart.save();
+    return cart;
+  },
+
+  async findOneAndDelete(filter = {}) {
+    const userId = filter.userId;
+    if (!userId) return null;
+    const existing = await Cart.findOne({ userId });
+    if (!existing) return null;
+    await query(`DELETE FROM carts WHERE user_id = $1`, [userId]);
+    return existing;
+  },
 };
-
-// Method to update item quantity
-cartSchema.methods.updateItemQuantity = function (productId, quantity) {
-  const target = String(productId);
-  const itemIndex = this.items.findIndex(
-    (item) =>
-      (item.productId && item.productId.toString() === target) ||
-      (item._id && item._id.toString() === target) ||
-      (item.id && item.id.toString() === target)
-  );
-
-  if (itemIndex === -1) {
-    throw new Error('Item not found in cart');
-  }
-
-  this.items[itemIndex].quantity = quantity;
-  this.items[itemIndex].subtotal = quantity * this.items[itemIndex].price;
-  this.calculateTotal();
-  return this.save();
-};
-
-// Method to remove item from cart
-cartSchema.methods.removeItem = function (productId) {
-  const target = String(productId);
-  const itemIndex = this.items.findIndex(
-    (item) =>
-      (item.productId && item.productId.toString() === target) ||
-      (item._id && item._id.toString() === target) ||
-      (item.id && item.id.toString() === target)
-  );
-
-  if (itemIndex !== -1) {
-    this.items.splice(itemIndex, 1);
-    this.calculateTotal();
-  }
-  return this.save();
-};
-
-// Method to clear cart
-cartSchema.methods.clearCart = function () {
-  this.items = [];
-  this.totalAmount = 0;
-  return this.save();
-};
-
-// Pre-save hook to ensure total is calculated
-cartSchema.pre('save', function () {
-  if (this.isModified('items')) {
-    this.calculateTotal();
-  }
-});
-
-const Cart = mongoose.model('Cart', cartSchema);
 
 export default Cart;

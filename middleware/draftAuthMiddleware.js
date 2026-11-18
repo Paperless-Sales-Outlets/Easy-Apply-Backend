@@ -18,7 +18,7 @@ export const protectDraft = (req, res, next) => {
   try {
     req.draftPhone = verifyDraftToken(token);
     return next();
-  } catch (error) {
+  } catch {
     res.status(401);
     return next(new Error('Your verification has expired. Please sign in again to continue your application'));
   }

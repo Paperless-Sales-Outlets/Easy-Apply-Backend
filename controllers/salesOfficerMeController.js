@@ -1,12 +1,13 @@
 import Application from '../models/Application.js';
-import SalesOfficerQr from '../models/SalesOfficerQr.js';
 import {
   getOfficerStatistics as fetchOfficerStats,
   getOrCreateOfficerQr,
   isCompletedSale,
   isSalesOfficerRole,
   buildQrUrl,
+  findOfficerApplications,
 } from '../services/salesTrackingService.js';
+import { sriLankaDayRange } from '../utils/sriLankaDate.js';
 
 // Helper to ensure authenticated user is a Sales Officer or Admin
 const getAuthenticatedOfficer = (req) => {
@@ -74,11 +75,8 @@ export const getMyApplications = async (req, res, next) => {
       filter.status = status;
     }
 
-    if (startDate || endDate) {
-      filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = new Date(startDate);
-      if (endDate) filter.createdAt.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-    }
+    const createdRange = sriLankaDayRange(startDate, endDate);
+    if (createdRange) filter.createdAt = createdRange;
 
     const pageNum = Math.max(1, parseInt(page, 10));
     const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10)));
@@ -89,11 +87,7 @@ export const getMyApplications = async (req, res, next) => {
     const sortDir = sortOrder === 'asc' ? 1 : -1;
 
     const [applications, totalCount] = await Promise.all([
-      Application.find(filter)
-        .sort({ [sortField]: sortDir })
-        .skip(skip)
-        .limit(pageSize)
-        .lean(),
+      findOfficerApplications(filter, { sortField, sortDir, skip, limit: pageSize }),
       Application.countDocuments(filter),
     ]);
 

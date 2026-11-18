@@ -7,12 +7,14 @@ import {
 } from '../../controllers/admin/rolesController.js';
 import { protect, authorize } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
+import { rejectInvalidId } from '../../middleware/adminParamsMiddleware.js';
 
 const router = express.Router();
 
 // Role Management (Admin only)
 router.use(requireDb);
 router.use(protect, authorize('admin'));
+router.param('id', rejectInvalidId('Role'));
 
 router.get('/', getStaffRoles);
 router.post('/', createStaffRole);

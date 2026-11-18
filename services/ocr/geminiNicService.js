@@ -166,7 +166,7 @@ Do not invent or hallucinate missing data.
       cardType: parsed.cardType || 'NEW_NIC',
       engine: 'GEMINI_FLASH_VISION',
     };
-  } catch (parseErr) {
+  } catch {
     console.error('Failed to parse Gemini OCR JSON response:', rawResponseText);
     throw new Error('Gemini OCR returned invalid JSON structure.');
   }

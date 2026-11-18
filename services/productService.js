@@ -1,6 +1,7 @@
 import Product from '../models/Product.js';
-import mongoose from 'mongoose';
+import { demoProducts, seedProducts } from '../seedProducts.js';
 import dotenv from 'dotenv';
+import { AppError } from '../middleware/errorHandler.js';
 
 /**
  * Product Service Layer
@@ -119,7 +120,7 @@ export const fetchLiveProductHubTemplates = async () => {
     }
 
     // Helper: Normalize single product node
-    const normalizeProductNode = (t, parentCategory) => {
+    const normalizeProductNode = (t, parentCategory, parentInstallationFee = null) => {
       const fv = t.fieldValues || {};
       const dataObj = t.data || {};
       const attr = t.attributes || {};
@@ -155,7 +156,29 @@ export const fetchLiveProductHubTemplates = async () => {
         else if (lowerName.includes('starter') || lowerName.includes('basic')) price = 1490;
       }
 
-      const installationFee = Number(dataObj['Installation Charge'] ?? dataObj.installationFee ?? fv['Installation Fee'] ?? attr['Installation Fee'] ?? (price > 5000 ? 0 : 2500));
+      // Resolve installation fee: check child node first, then inherit from parent, fallback to 0 (free)
+      const rawInstFee =
+        dataObj['Installation Charge'] ??
+        dataObj['Installation Fee'] ??
+        dataObj.installationFee ??
+        dataObj.installation_fee ??
+        fv['Installation Charge'] ??
+        fv['Installation Fee'] ??
+        fv.installationFee ??
+        attr['Installation Charge'] ??
+        attr['Installation Fee'] ??
+        attr.installationFee ??
+        t.installationFee ??
+        t.installation_fee;
+
+      let installationFee = 0;
+      if (rawInstFee !== undefined && rawInstFee !== null && String(rawInstFee).trim() !== '') {
+        installationFee = Number(rawInstFee) || 0;
+      } else if (parentInstallationFee !== undefined && parentInstallationFee !== null && String(parentInstallationFee).trim() !== '') {
+        installationFee = Number(parentInstallationFee) || 0;
+      } else {
+        installationFee = 0; // If no installation fee from API, keep as free installation
+      }
 
       // Speed detection
       const speedStr = dataObj['Download Speed'] || t.speed;
@@ -219,7 +242,7 @@ export const fetchLiveProductHubTemplates = async () => {
     };
 
     // Helper: Recursively flatten arbitrary tree hierarchy
-    const flattenHierarchy = (nodes, parentCategory = null) => {
+    const flattenHierarchy = (nodes, parentCategory = null, parentInstallationFee = null) => {
       if (!Array.isArray(nodes) || nodes.length === 0) return [];
       const results = [];
 
@@ -231,18 +254,39 @@ export const fetchLiveProductHubTemplates = async () => {
         const rawPrice = t.monthlyPrice || t.price || t.data?.monthlyPrice || t.data?.price || t.fieldValues?.['Monthly Rental'];
         const hasValidPrice = rawPrice !== null && rawPrice !== undefined && rawPrice !== '' && Number(rawPrice) > 0;
 
+        // Check if this node specifies an installation fee that children could inherit
+        const fv = t.fieldValues || {};
+        const dataObj = t.data || {};
+        const attr = t.attributes || {};
+        const rawNodeFee =
+          dataObj['Installation Charge'] ??
+          dataObj['Installation Fee'] ??
+          dataObj.installationFee ??
+          dataObj.installation_fee ??
+          fv['Installation Charge'] ??
+          fv['Installation Fee'] ??
+          attr['Installation Charge'] ??
+          attr['Installation Fee'] ??
+          t.installationFee ??
+          t.installation_fee;
+
+        const effectiveParentFee =
+          rawNodeFee !== undefined && rawNodeFee !== null && String(rawNodeFee).trim() !== ''
+            ? Number(rawNodeFee)
+            : parentInstallationFee;
+
         if (hasChildren) {
-          // Recurse into children passing current node as category
-          const childProducts = flattenHierarchy(item.children, currentCategory);
+          // Recurse into children passing current node category and installation fee
+          const childProducts = flattenHierarchy(item.children, currentCategory, effectiveParentFee);
           results.push(...childProducts);
 
           // If the parent node itself is also a purchasable standalone product, include it
           if (hasValidPrice) {
-            results.push(normalizeProductNode(t, currentCategory));
+            results.push(normalizeProductNode(t, currentCategory, parentInstallationFee));
           }
         } else {
           // Leaf product node
-          results.push(normalizeProductNode(t, currentCategory));
+          results.push(normalizeProductNode(t, currentCategory, parentInstallationFee));
         }
       }
 
@@ -335,14 +379,59 @@ export const getAllProducts = async (options = {}) => {
   }
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const pageSize = Math.max(1, parseInt(limit, 10) || 50);
-  const [products, total] = await Promise.all([
-    Product.find(query)
-      .sort({ [sortBy]: sortOrder === 'asc' ? 1 : -1 })
-      .skip((pageNum - 1) * pageSize)
-      .limit(pageSize)
-      .lean(),
-    Product.countDocuments(query),
-  ]);
+
+  let products = [];
+  let total = 0;
+
+  try {
+    const [dbProducts, dbTotal] = await Promise.all([
+      Product.find(query)
+        .sort({ [sortBy]: sortOrder === 'asc' ? 1 : -1 })
+        .skip((pageNum - 1) * pageSize)
+        .limit(pageSize)
+        .lean(),
+      Product.countDocuments(query),
+    ]);
+    products = dbProducts || [];
+    total = dbTotal || 0;
+  } catch (dbErr) {
+    console.warn('[Product Service] DB query error on products table:', dbErr.message);
+  }
+
+  // If local database table products is empty, serve demoProducts and trigger auto-seed
+  if (!products || products.length === 0) {
+    console.warn('[Product Service] No products found in database table products. Serving local demo products fallback.');
+    let filteredDemo = demoProducts;
+    if (status && status !== 'all') {
+      filteredDemo = filteredDemo.filter((p) => p.status === status);
+    }
+    if (category && category !== 'All Products') {
+      const cleanCat = category.replace('-', ' ').toLowerCase();
+      filteredDemo = filteredDemo.filter((p) => (p.category || '').toLowerCase().includes(cleanCat));
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      filteredDemo = filteredDemo.filter(
+        (p) =>
+          p.name?.toLowerCase().includes(q) ||
+          p.description?.toLowerCase().includes(q) ||
+          p.category?.toLowerCase().includes(q) ||
+          p.speed?.toLowerCase().includes(q)
+      );
+    }
+    if (maxPrice) {
+      filteredDemo = filteredDemo.filter((p) => (p.monthlyPrice || p.price || 0) <= Number(maxPrice));
+    }
+
+    const startIndex = (pageNum - 1) * pageSize;
+    products = filteredDemo.slice(startIndex, startIndex + pageSize);
+    total = filteredDemo.length;
+
+    // Auto-seed in the background to re-populate the products table
+    seedProducts().catch((seedErr) =>
+      console.warn('[Product Service] Background seed failed:', seedErr.message)
+    );
+  }
 
   return {
     products,
@@ -357,14 +446,22 @@ export const getAllProducts = async (options = {}) => {
  */
 export const getProductById = async (id) => {
   let product = null;
-  if (mongoose.Types.ObjectId.isValid(id)) {
-    product = await Product.findById(id).lean();
+  try {
+    product = await Product.findById(id);
+    if (!product) {
+      product = await Product.findOne({ productId: id });
+    }
+  } catch (err) {
+    // continue
   }
   if (!product) {
-    product = await Product.findOne({ productId: id }).lean();
+    const demo = demoProducts.find(
+      (p) => String(p.id) === String(id) || String(p.productId) === String(id) || String(p.productCode) === String(id)
+    );
+    if (demo) product = demo;
   }
   if (!product) {
-    throw new Error('Product not found');
+    throw new AppError('Product not found', 404);
   }
   return product;
 };
@@ -372,21 +469,74 @@ export const getProductById = async (id) => {
 /**
  * Check if product exists and has sufficient stock
  */
-export const checkProductAvailability = async (productId, quantity) => {
+export const checkProductAvailability = async (productId) => {
   let product = null;
-  if (mongoose.Types.ObjectId.isValid(productId)) {
-    product = await Product.findById(productId).lean();
+
+  // 1. Try local DB first (safe lookup)
+  try {
+    product = await Product.findById(productId);
+    if (!product) {
+      product = await Product.findOne({ productId });
+    }
+  } catch (err) {
+    // Gracefully continue to Product Hub API
   }
-  if (!product) {
-    product = await Product.findOne({ productId }).lean();
+
+  // 2. Query Live Product Hub Cart Item API (/public-api/v1/products/{id})
+  if (!product && productId) {
+    try {
+      const liveItem = await fetchProductCartItem(productId);
+      if (liveItem && (liveItem.price || liveItem.monthlyPrice || liveItem.productName || liveItem.name)) {
+        product = {
+          ...liveItem,
+          id: liveItem.id || liveItem.productId || productId,
+          productId: liveItem.productId || liveItem.id || productId,
+          availableQuantity: 999,
+          status: 'active',
+        };
+      }
+    } catch (err) {
+      console.warn(`[Product Hub Availability] Error checking live item "${productId}":`, err.message);
+    }
+  }
+
+  // 3. Fallback: Search all live Product Hub offerings
+  if (!product && productId) {
+    try {
+      const hubProducts = await fetchProductsFromHub();
+      if (Array.isArray(hubProducts)) {
+        product = hubProducts.find(
+          (p) =>
+            String(p.id) === String(productId) ||
+            String(p.productId) === String(productId) ||
+            String(p._id) === String(productId)
+        );
+      }
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  // 4. Fallback: Search local demo products
+  if (!product && productId) {
+    product = demoProducts.find(
+      (p) =>
+        String(p.id) === String(productId) ||
+        String(p.productId) === String(productId) ||
+        String(p.productCode) === String(productId)
+    );
   }
 
   if (!product) {
-    throw new Error('Product not found');
+    throw new AppError('Product not found', 404);
   }
 
-  if (product.status !== 'active') {
-    throw new Error('Product is not available');
+  if (product.status && product.status !== 'active') {
+    throw new AppError('Product is not available', 409);
+  }
+
+  if (product.availableQuantity === undefined || product.availableQuantity === null) {
+    product.availableQuantity = 999;
   }
 
   return product;
@@ -544,6 +694,28 @@ export const fetchProductCartItem = async (id) => {
     }
 
     const data = await res.json();
+    const fv = data.fieldValues || {};
+    const dataObj = data.data || {};
+    const attr = data.attributes || {};
+
+    const rawInstFee =
+      data['Installation Charge'] ??
+      data['Installation Fee'] ??
+      data.installationFee ??
+      data.installation_fee ??
+      dataObj['Installation Charge'] ??
+      dataObj['Installation Fee'] ??
+      dataObj.installationFee ??
+      fv['Installation Charge'] ??
+      fv['Installation Fee'] ??
+      attr['Installation Charge'] ??
+      attr['Installation Fee'];
+
+    const installationFee =
+      rawInstFee !== undefined && rawInstFee !== null && String(rawInstFee).trim() !== ''
+        ? Number(rawInstFee) || 0
+        : 0;
+
     return {
       id: data.id || id,
       productId: data.id || id,
@@ -551,6 +723,7 @@ export const fetchProductCartItem = async (id) => {
       name: data.productName || data.name || 'SLT Package',
       price: Number(data.price || data.monthlyPrice || 0),
       monthlyPrice: Number(data.price || data.monthlyPrice || 0),
+      installationFee,
       description: data.description || '',
       source: 'LIVE_PRODUCT_HUB',
     };

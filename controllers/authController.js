@@ -1,13 +1,13 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
+import { uploadBuffer } from '../services/storageService.js';
 import Customer from '../models/Customer.js';
 import User from '../models/User.js';
 import { findAccountById } from '../middleware/authMiddleware.js';
-import Otp from '../models/Otp.js';
 import RefreshToken from '../models/RefreshToken.js';
 import { recordAudit } from '../services/auditService.js';
 import { requestOtp, validateOtp } from '../services/otpService.js';
+import { lockRemaining, recordFailure, clearFailures, LOCK_MS } from '../utils/loginThrottle.js';
 
 // The customer fields safe to return to the client. Kept in one place so
 // register, login and /me all expose the same profile.
@@ -17,6 +17,7 @@ export const publicCustomer = (customer) => {
   const hasNicFront = Boolean(customer.identityDocuments?.nicFront && String(customer.identityDocuments.nicFront).trim());
   const hasNicBack = Boolean(customer.identityDocuments?.nicBack && String(customer.identityDocuments.nicBack).trim());
   const hasFacePhoto = Boolean(customer.identityDocuments?.facePhoto && String(customer.identityDocuments.facePhoto).trim());
+  const hasSignature = Boolean(customer.identityDocuments?.signature && String(customer.identityDocuments.signature).trim());
   const hasNicDocuments = hasNicFront && hasNicBack;
 
   return {
@@ -43,6 +44,7 @@ export const publicCustomer = (customer) => {
     hasNicFront,
     hasNicBack,
     hasNicDocuments,
+    hasSignature,
   };
 };
 
@@ -60,7 +62,7 @@ export const publicStaff = (user) => ({
 
 // Profile for either kind of account, picked by the collection it came from.
 export const publicUser = (account) =>
-  account instanceof User ? publicStaff(account) : publicCustomer(account);
+  account?.role === 'Customer' ? publicCustomer(account) : publicStaff(account);
 
 
 
@@ -80,25 +82,22 @@ export const storeIdentityImage = async (dataUrl, label, userId) => {
   const contentType = (meta.match(/data:(image\/[a-zA-Z+]+);/) || [])[1] || 'image/jpeg';
   const buffer = Buffer.from(base64, 'base64');
 
-  // Guard against oversized payloads reaching the database.
   if (buffer.length > 5 * 1024 * 1024) {
     throw new Error(`${label} exceeds the 5MB limit`);
   }
 
-  const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'uploads' });
-  return new Promise((resolve, reject) => {
-    const stream = bucket.openUploadStream(`${label}-${userId}-${Date.now()}`, {
-      contentType,
-      metadata: { userId, kind: label, uploadedAt: new Date() },
-    });
-    stream.on('error', reject);
-    stream.on('finish', () => resolve(stream.id));
-    stream.end(buffer);
+  const uploaded = await uploadBuffer({
+    buffer,
+    originalname: `${label}-${userId}.jpg`,
+    mimetype: contentType,
+    folder: 'kyc',
   });
+
+  return uploaded.url || uploaded.key;
 };
 
 // Helper to generate access token
-const generateAccessToken = (user) => {
+export const generateAccessToken = (user) => {
   return jwt.sign(
     { id: user._id, role: user.role },
     process.env.JWT_ACCESS_SECRET,
@@ -107,7 +106,7 @@ const generateAccessToken = (user) => {
 };
 
 // Helper to generate refresh token
-const generateRefreshToken = (user) => {
+export const generateRefreshToken = (user) => {
   return jwt.sign(
     { id: user._id, jti: crypto.randomUUID() },
     process.env.JWT_REFRESH_SECRET,
@@ -151,7 +150,7 @@ export const getCustomers = getUsers;
 // @desc    Send OTP to mobile number
 // @route   POST /api/auth/send-otp
 // @access  Public
-export const sendOtp = async (req, res, next) => {
+export const sendOtp = async (req, res) => {
   const { phone } = req.body;
 
   if (!phone) {
@@ -182,7 +181,7 @@ export const sendOtp = async (req, res, next) => {
 // @desc    Verify OTP
 // @route   POST /api/auth/verify-otp
 // @access  Public
-export const verifyOtp = async (req, res, next) => {
+export const verifyOtp = async (req, res) => {
   const { phone, otp } = req.body;
 
   if (!phone || !otp) {
@@ -364,6 +363,17 @@ export const login = async (req, res, next) => {
     return next(new Error('Please provide email and password'));
   }
 
+  // Too many wrong passwords for this email recently: refuse before checking anything.
+  const lockedFor = lockRemaining(email);
+  if (lockedFor > 0) {
+    const minutes = Math.ceil(lockedFor / 60);
+    return res.status(429).json({
+      success: false,
+      message: `Too many failed sign-in attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+      lockoutRemaining: lockedFor,
+    });
+  }
+
   try {
     // Admin and staff accounts (users collection) sign in here from the admin
     // portal; fall back to customers for older accounts that still have a
@@ -373,18 +383,34 @@ export const login = async (req, res, next) => {
       (await User.findOne({ email }).select('+password')) ||
       (await Customer.findOne({ email }).select('+password'));
 
-    if (!account) {
-      res.status(401);
-      return next(new Error('Invalid email or password'));
-    }
-
-    // Check password matches
-    const isMatch = await account.matchPassword(password);
+    // Unknown emails and wrong passwords count the same, so the answer never
+    // reveals whether an account exists.
+    const isMatch = account ? await account.matchPassword(password) : false;
 
     if (!isMatch) {
+      const { locked } = recordFailure(email);
+      if (locked) {
+        const minutes = Math.round(LOCK_MS / 60000);
+        await recordAudit({
+          req,
+          actor: account || undefined,
+          action: 'LOGIN_LOCKED',
+          module: 'Authentication',
+          targetId: account?._id || email,
+          description: `Sign-in locked for ${minutes} minutes after repeated wrong passwords`,
+          metadata: { email },
+        }).catch(() => {});
+        return res.status(429).json({
+          success: false,
+          message: `Too many failed sign-in attempts. Try again in ${minutes} minutes.`,
+          lockoutRemaining: Math.round(LOCK_MS / 1000),
+        });
+      }
       res.status(401);
       return next(new Error('Invalid email or password'));
     }
+
+    clearFailures(email);
 
     if (account.isActive === false) {
       res.status(403);
@@ -442,7 +468,6 @@ export const otpLogin = async (req, res, next) => {
   try {
     const digitsOnly = String(phone).replace(/\D/g, '');
     const last9 = digitsOnly.slice(-9);
-    const cleanOtp = String(otp).trim();
 
     // 1. Validate OTP with 5-minute expiry enforcement
     await validateOtp(phone, otp);
@@ -560,7 +585,7 @@ export const logout = async (req, res, next) => {
 
   try {
     // Delete refresh token from DB to invalidate it
-    const savedToken = await RefreshToken.findOne({ token: refreshToken }).select('userId');
+    const savedToken = await RefreshToken.findOne({ token: refreshToken });
     await RefreshToken.deleteOne({ token: refreshToken });
     const account = savedToken ? await findAccountById(savedToken.userId) : null;
     await recordAudit({
@@ -596,7 +621,6 @@ export const verifyEntry = async (req, res, next) => {
     const digitsOnly = String(phone).replace(/\D/g, '');
     const last9 = digitsOnly.slice(-9);
     const cleanNic = String(nic).trim().toUpperCase();
-    const cleanOtp = String(otp).trim();
 
     if (last9.length !== 9) {
       res.status(400);

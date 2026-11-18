@@ -1,6 +1,6 @@
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import path from 'path';
+import connectDB from '../config/db.js';
 import User from '../models/User.js';
 
 // Load .env configuration
@@ -8,12 +8,8 @@ dotenv.config({ path: path.resolve('.env') });
 
 const seedAdmin = async () => {
   try {
-    if (!process.env.MONGO_URI) {
-      throw new Error('MONGO_URI is not defined in your .env file');
-    }
-    
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB Connected successfully.');
+    await connectDB();
+    console.log('PostgreSQL Connected successfully.');
 
     const email = 'admin@slt.lk';
     const exists = await User.findOne({ email });
@@ -38,8 +34,7 @@ const seedAdmin = async () => {
   } catch (error) {
     console.error('Error seeding admin user:', error.message);
   } finally {
-    await mongoose.connection.close();
-    console.log('Database connection closed.');
+    process.exit(0);
   }
 };
 

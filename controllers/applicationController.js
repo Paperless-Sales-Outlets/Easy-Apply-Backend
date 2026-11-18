@@ -1,5 +1,6 @@
-import mongoose from 'mongoose';
+import { isDbConnected } from '../config/db.js';
 import Application from '../models/Application.js';
+import { uploadBuffer } from '../services/storageService.js';
 import Connection from '../models/Connection.js';
 import Customer from '../models/Customer.js';
 import Appointment from '../models/Appointment.js';
@@ -7,14 +8,43 @@ import SalesOfficerQr from '../models/SalesOfficerQr.js';
 import { sendApplicationSubmittedEmail } from '../services/emailService.js';
 import { checkOSSFeasibility } from '../services/ossService.js';
 import { recordAudit } from '../services/auditService.js';
+import { recordConsentAcceptances, registerCustomer } from '../services/consentHubService.js';
+import {
+  generateAndStoreCustomerApplication,
+  getCustomerApplicationPdf,
+} from '../services/applicationDocumentService.js';
 
 
 // @desc    Submit a new service application
 // @route   POST /api/applications
 // @access  Public
+const uploadBase64Doc = async (dataUrl, fieldName, phone) => {
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    return dataUrl;
+  }
+  try {
+    const [meta, base64] = dataUrl.split(',');
+    const mime = (meta.match(/data:(image\/[a-zA-Z+]+);/) || [])[1] || 'image/jpeg';
+    const buf = Buffer.from(base64, 'base64');
+    const ext = mime.includes('png') ? '.png' : '.jpg';
+    const res = await uploadBuffer({
+      buffer: buf,
+      originalname: `app-${fieldName}-${phone}${ext}`,
+      mimetype: mime,
+      folder: 'documents',
+      encrypt: true,
+    });
+    return res.url || res.key;
+  } catch (err) {
+    console.warn(`Upload of ${fieldName} notice:`, err.message);
+    return dataUrl;
+  }
+};
+
 export const createApplication = async (req, res, next) => {
   let { serviceType, formData, phone } = req.body;
   const files = req.files || {};
+  let consentCodes = [];
 
   try {
     // Parse formData if received as string
@@ -66,6 +96,10 @@ export const createApplication = async (req, res, next) => {
     }
     const cleanNic = nic ? String(nic).trim().toUpperCase() : '';
 
+    // Consent ticks go to ConsentHub (CMS) only; nothing about them is stored with the application
+    consentCodes = Array.isArray(formData.consentsAccepted) ? formData.consentsAccepted : [];
+    delete formData.consentsAccepted;
+
     // Process uploaded files
     const uploadedDocuments = {};
 
@@ -104,7 +138,7 @@ export const createApplication = async (req, res, next) => {
     let attribution = null;
 
     // MongoDB available
-    if (mongoose.connection.readyState === 1) {
+    if (isDbConnected()) {
       // 1. Ensure Customer document exists in database
       try {
         let customerRecord = await Customer.findOne({
@@ -190,7 +224,7 @@ export const createApplication = async (req, res, next) => {
 
     if (rawCandidateToken) {
       const candidateToken = String(rawCandidateToken).trim();
-      if (mongoose.connection.readyState === 1) {
+      if (isDbConnected()) {
         const qrRecord = await SalesOfficerQr.findOne({
           trackingToken: candidateToken,
           isActive: true,
@@ -233,9 +267,11 @@ export const createApplication = async (req, res, next) => {
         ? {
             orderId: formData.paymentReference,
             amount:
-              formData.product?.installationFee ??
-              formData.product?.monthlyPrice ??
-              2500,
+              formData.paidAmount !== undefined
+                ? Number(formData.paidAmount)
+                : (formData.product?.installationFee !== undefined
+                  ? Number(formData.product.installationFee)
+                  : 0),
             currency: 'LKR',
           }
         : undefined,
@@ -281,7 +317,22 @@ export const createApplication = async (req, res, next) => {
     );
   }
 
-  if (mongoose.connection.readyState === 1) {
+  // Send the accepted consents to ConsentHub (CMS), which identifies the customer by NIC
+  if (consentCodes.length && application.nic) {
+    const customerId = await registerCustomer({
+      nic: application.nic,
+      name: formData.nameFull,
+      phone: formData.mobileNumber || phone,
+      email: formData.email,
+    });
+    await recordConsentAcceptances(customerId, consentCodes, {
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      verifiedEmail: req.body.verifiedEmail,
+    });
+  }
+
+  if (isDbConnected()) {
     await recordAudit({
       req,
       action: 'CREATE',
@@ -316,7 +367,7 @@ export const createApplication = async (req, res, next) => {
           null;
 
         // 3. Fallback: look up Connection by phone for email
-        if (!emailTo && verifiedPhone && mongoose.connection.readyState === 1) {
+        if (!emailTo && verifiedPhone && isDbConnected()) {
           const conn = await Connection.findOne({ telephone: verifiedPhone }).select('email fullName');
           if (conn?.email) emailTo = conn.email;
         }
@@ -335,6 +386,20 @@ export const createApplication = async (req, res, next) => {
       }
     })();
 
+    // ─────────────────────────────────────────────────────────
+    // Automatically generate and store official customer application PDF
+    // incorporating Customer Digital Signature and Sales Officer Signature
+    // ─────────────────────────────────────────────────────────
+    let signedDocMeta = null;
+    try {
+      signedDocMeta = await generateAndStoreCustomerApplication(application, {
+        salesOfficerName: attribution?.officerName,
+        salesOfficerEmployeeNumber: attribution?.employeeNumber || application.salesOfficerEmployeeNumber,
+      });
+    } catch (docErr) {
+      console.warn('[applicationController] Notice on auto-generating application PDF:', docErr.message);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Application submitted successfully',
@@ -346,6 +411,8 @@ export const createApplication = async (req, res, next) => {
         status: application.status,
         nic: application.nic,
         documents: application.formData?.documents,
+        customerApplicationPdf: signedDocMeta?.url || `/uploads/applications/Application_${application.referenceNumber}.pdf`,
+        certificateId: signedDocMeta?.certificateId,
         createdAt: application.createdAt,
       },
 
@@ -549,7 +616,7 @@ export const lookupPackage = async (req, res, next) => {
   try {
     let connection = null;
 
-    if (mongoose.connection.readyState === 1) {
+    if (isDbConnected()) {
       connection = await Connection.findOne({
         $or: [
           { telephone: phone },
@@ -628,5 +695,31 @@ export const checkLoopAvailability = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+// @desc    Download or view official digitally signed customer application PDF
+// @route   GET /api/applications/by-ref/:ref/pdf or GET /api/applications/:id/pdf
+// @access  Public
+export const downloadCustomerApplicationPdf = async (req, res, next) => {
+  const target = req.params.ref || req.params.id;
+  if (!target) {
+    res.status(400);
+    return next(new Error('Application reference number or ID is required'));
+  }
+
+  try {
+    const { buffer, fileName } = await getCustomerApplicationPdf(target);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${fileName}"`,
+      'Content-Length': buffer.length,
+      'Cache-Control': 'private, max-age=60',
+    });
+    return res.status(200).send(buffer);
+  } catch (err) {
+    console.error('[applicationController] PDF download error:', err.message);
+    res.status(404);
+    return next(new Error('Application document not found or could not be generated'));
   }
 };

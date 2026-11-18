@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import { isDbConnected } from '../config/db.js';
 import bcrypt from 'bcryptjs';
 import Otp from '../models/Otp.js';
 import OtpLockout from '../models/OtpLockout.js';
@@ -45,69 +45,51 @@ export const normalizeTarget = (target) => {
 };
 
 /**
- * Builds standard Mongo query to match common phone representations
+ * OTP type stored in the `type` column of the otps / otp_lockouts tables
  */
-export const buildPhoneQuery = (cleanPhone, rawPhone = '') => {
-  const queries = [
-    { phone: cleanPhone },
-    { phone: `0${cleanPhone}` },
-    { phone: `94${cleanPhone}` },
-    { phone: `+94${cleanPhone}` },
-    { target: cleanPhone },
-  ];
-  if (rawPhone && String(rawPhone).trim()) {
-    queries.push({ phone: String(rawPhone).trim() });
-  }
-  return { $or: queries };
-};
+const otpType = (cleanTarget) => (isEmail(cleanTarget) ? 'email' : 'mobile');
 
 /**
- * Builds standard Mongo query for either phone or email
+ * Builds the PostgreSQL filter for a phone OTP record.
+ * Targets are always stored normalized (9-digit national format) in the
+ * `identifier` column, so a single equality match is sufficient.
  */
-export const buildTargetQuery = (cleanTarget, rawTarget = '') => {
-  if (isEmail(cleanTarget)) {
-    return {
-      $or: [
-        { email: cleanTarget },
-        { target: cleanTarget },
-      ],
-    };
-  }
-  return buildPhoneQuery(cleanTarget, rawTarget);
-};
+export const buildPhoneQuery = (cleanPhone) => ({ identifier: cleanPhone });
+
+/**
+ * Builds the PostgreSQL filter for either a phone or email OTP record
+ */
+export const buildTargetQuery = (cleanTarget) => ({ identifier: cleanTarget });
 
 /**
  * Helper to fetch lockout record
  */
 const getLockoutRecord = async (cleanTarget) => {
-  if (mongoose.connection.readyState === 1) {
-    if (isEmail(cleanTarget)) {
-      return await OtpLockout.findOne({ $or: [{ email: cleanTarget }, { target: cleanTarget }] });
-    }
-    return await OtpLockout.findOne({ $or: [{ phone: cleanTarget }, { target: cleanTarget }] });
+  if (isDbConnected()) {
+    return await OtpLockout.findOne(buildTargetQuery(cleanTarget));
   }
   return inMemoryLockoutStore.get(cleanTarget) || null;
 };
 
 /**
- * Helper to save lockout record
+ * Helper to save the failed-attempt count and (optionally) a lockout.
+ * In PostgreSQL the failed-attempt count lives on the active OTP row
+ * (otps.attempts), and otp_lockouts only holds active lockouts.
  */
-const saveLockoutRecord = async (cleanTarget, failedAttempts, lockedUntil) => {
-  if (mongoose.connection.readyState === 1) {
-    const isMail = isEmail(cleanTarget);
-    const filter = isMail
-      ? { $or: [{ email: cleanTarget }, { target: cleanTarget }] }
-      : { $or: [{ phone: cleanTarget }, { target: cleanTarget }] };
-
-    const doc = isMail
-      ? { email: cleanTarget, target: cleanTarget, failedAttempts, lockedUntil, updatedAt: new Date() }
-      : { phone: cleanTarget, target: cleanTarget, failedAttempts, lockedUntil, updatedAt: new Date() };
-
-    return await OtpLockout.findOneAndUpdate(
-      filter,
-      doc,
-      { upsert: true, new: true }
-    );
+const saveLockoutRecord = async (cleanTarget, failedAttempts, lockedUntil, otpRecord = null) => {
+  if (isDbConnected()) {
+    if (lockedUntil) {
+      return await OtpLockout.findOneAndUpdate(
+        buildTargetQuery(cleanTarget),
+        { identifier: cleanTarget, type: otpType(cleanTarget), lockedUntil },
+        { upsert: true }
+      );
+    }
+    if (otpRecord) {
+      otpRecord.attempts = failedAttempts;
+      await otpRecord.save();
+    }
+    return null;
   }
   const rec = { target: cleanTarget, failedAttempts, lockedUntil, updatedAt: Date.now() };
   inMemoryLockoutStore.set(cleanTarget, rec);
@@ -118,12 +100,8 @@ const saveLockoutRecord = async (cleanTarget, failedAttempts, lockedUntil) => {
  * Helper to clear lockout record
  */
 const clearLockoutRecord = async (cleanTarget) => {
-  if (mongoose.connection.readyState === 1) {
-    const isMail = isEmail(cleanTarget);
-    const filter = isMail
-      ? { $or: [{ email: cleanTarget }, { target: cleanTarget }] }
-      : { $or: [{ phone: cleanTarget }, { target: cleanTarget }] };
-    await OtpLockout.deleteMany(filter);
+  if (isDbConnected()) {
+    await OtpLockout.deleteMany(buildTargetQuery(cleanTarget));
   } else {
     inMemoryLockoutStore.delete(cleanTarget);
   }
@@ -201,8 +179,9 @@ export const getOtpStatus = async (target) => {
   }
 
   let activeOtp = null;
-  if (mongoose.connection.readyState === 1) {
-    activeOtp = await Otp.findOne(buildTargetQuery(cleanTarget, target)).sort({ createdAt: -1 });
+  if (isDbConnected()) {
+    // Otp.findOne already returns the newest record (ORDER BY created_at DESC)
+    activeOtp = await Otp.findOne(buildTargetQuery(cleanTarget));
   } else {
     activeOtp = inMemoryOtpStore.get(cleanTarget) || null;
   }
@@ -210,7 +189,6 @@ export const getOtpStatus = async (target) => {
   let hasActiveOtp = false;
   let expiresIn = 0;
   let expiresAt = null;
-  let resendCooldown = 0;
   let resendAvailableAt = null;
 
   if (activeOtp) {
@@ -232,7 +210,10 @@ export const getOtpStatus = async (target) => {
     }
   }
 
-  const attemptsRemaining = Math.max(0, MAX_FAILED_ATTEMPTS - (lockout?.failedAttempts || 0));
+  const failedAttempts = isDbConnected()
+    ? (activeOtp?.attempts || 0)
+    : (lockout?.failedAttempts || 0);
+  const attemptsRemaining = Math.max(0, MAX_FAILED_ATTEMPTS - failedAttempts);
 
   return {
     success: true,
@@ -305,8 +286,9 @@ export const requestOtp = async (target) => {
     // 2. Block resend while current OTP is still valid (5-minute validity period).
     //    Resend is permitted immediately once the OTP expires (no 60s cooldown).
     let existing = null;
-    if (mongoose.connection.readyState === 1) {
-      existing = await Otp.findOne(buildTargetQuery(cleanTarget, target)).sort({ createdAt: -1 });
+    if (isDbConnected()) {
+      // Otp.findOne already returns the newest record (ORDER BY created_at DESC)
+      existing = await Otp.findOne(buildTargetQuery(cleanTarget));
     } else {
       existing = inMemoryOtpStore.get(cleanTarget);
     }
@@ -332,8 +314,8 @@ export const requestOtp = async (target) => {
     }
 
     // 3. Invalidate previous OTPs for this target
-    if (mongoose.connection.readyState === 1) {
-      await Otp.deleteMany(buildTargetQuery(cleanTarget, target));
+    if (isDbConnected()) {
+      await Otp.deleteMany(buildTargetQuery(cleanTarget));
     } else {
       inMemoryOtpStore.delete(cleanTarget);
     }
@@ -348,11 +330,15 @@ export const requestOtp = async (target) => {
     const resendAvailableAt = new Date(now + OTP_EXPIRY_MS);
 
     // 6. Store in Database or In-Memory fallback
-    if (mongoose.connection.readyState === 1) {
-      const doc = isMail
-        ? { email: cleanTarget, target: cleanTarget, otp: otpCode, createdAt: new Date(now), lastSentAt: new Date(now), expiresAt, failedAttempts: 0 }
-        : { phone: cleanTarget, target: cleanTarget, otp: otpCode, createdAt: new Date(now), lastSentAt: new Date(now), expiresAt, failedAttempts: 0 };
-      await Otp.create(doc);
+    if (isDbConnected()) {
+      // Only a bcrypt hash of the code is persisted (otps.code_hash)
+      await Otp.create({
+        identifier: cleanTarget,
+        type: otpType(cleanTarget),
+        codeHash: await bcrypt.hash(otpCode, 10),
+        attempts: 0,
+        expiresAt,
+      });
     } else {
       inMemoryOtpStore.set(cleanTarget, {
         otp: otpCode,
@@ -414,8 +400,8 @@ export const validateOtp = async (target, inputOtp) => {
 
   // 2. Fetch active OTP record
   let record = null;
-  if (mongoose.connection.readyState === 1) {
-    record = await Otp.findOne(buildTargetQuery(cleanTarget, target));
+  if (isDbConnected()) {
+    record = await Otp.findOne(buildTargetQuery(cleanTarget));
   } else {
     record = inMemoryOtpStore.get(cleanTarget);
   }
@@ -433,8 +419,8 @@ export const validateOtp = async (target, inputOtp) => {
     : new Date(record.createdAt).getTime() + OTP_EXPIRY_MS;
 
   if (now > expiresAtMs) {
-    if (mongoose.connection.readyState === 1) {
-      await Otp.deleteMany(buildTargetQuery(cleanTarget, target));
+    if (isDbConnected()) {
+      await Otp.deleteMany(buildTargetQuery(cleanTarget));
     } else {
       inMemoryOtpStore.delete(cleanTarget);
     }
@@ -445,30 +431,36 @@ export const validateOtp = async (target, inputOtp) => {
   }
 
   // 4. Verify OTP Code
+  // In-memory records keep the raw code in `otp`; PostgreSQL rows keep a bcrypt hash in `codeHash`
+  const storedCode = record.otp ?? record.codeHash;
   let isMatch = false;
-  if (record.otp === cleanOtp) {
+  if (typeof storedCode === 'string' && storedCode.startsWith('$2')) {
+    isMatch = await bcrypt.compare(cleanOtp, storedCode);
+  } else if (storedCode === cleanOtp) {
     isMatch = true;
-  } else if (typeof record.otp === 'string' && record.otp.startsWith('$2')) {
-    isMatch = await bcrypt.compare(cleanOtp, record.otp);
   }
 
-  // In non-production development, accept demo code 000000 or 123456 ONLY if valid, non-expired, non-locked
-  if (!isMatch && process.env.NODE_ENV !== 'production' && (cleanOtp === '000000' || cleanOtp === '123456')) {
+  // In non-production development, accept demo code 000000 for mobile OTP only
+  // (when valid, non-expired, non-locked). Email OTPs are delivered via SMTP
+  // and must match the generated code.
+  if (!isMatch && !isMail && process.env.NODE_ENV !== 'production' && cleanOtp === '000000') {
     isMatch = true;
   }
 
   // 5. Handle Incorrect Attempt
   if (!isMatch) {
-    const currentLockout = (await getLockoutRecord(cleanTarget)) || { failedAttempts: 0 };
-    const newFailed = (currentLockout.failedAttempts || 0) + 1;
+    const previousFailed = isDbConnected()
+      ? (record.attempts || 0)
+      : ((await getLockoutRecord(cleanTarget))?.failedAttempts || 0);
+    const newFailed = previousFailed + 1;
 
     if (newFailed >= MAX_FAILED_ATTEMPTS) {
       const lockedUntil = new Date(now + LOCKOUT_DURATION_MS);
-      await saveLockoutRecord(cleanTarget, newFailed, lockedUntil);
+      await saveLockoutRecord(cleanTarget, newFailed, lockedUntil, record);
 
       // Invalidate current OTP
-      if (mongoose.connection.readyState === 1) {
-        await Otp.deleteMany(buildTargetQuery(cleanTarget, target));
+      if (isDbConnected()) {
+        await Otp.deleteMany(buildTargetQuery(cleanTarget));
       } else {
         inMemoryOtpStore.delete(cleanTarget);
       }
@@ -480,7 +472,7 @@ export const validateOtp = async (target, inputOtp) => {
       error.lockedUntil = lockedUntil.toISOString();
       throw error;
     } else {
-      await saveLockoutRecord(cleanTarget, newFailed, null);
+      await saveLockoutRecord(cleanTarget, newFailed, null, record);
 
       const remainingTries = MAX_FAILED_ATTEMPTS - newFailed;
       const errorMsg = `Invalid verification code. Please try again. (${remainingTries} attempt${remainingTries === 1 ? '' : 's'} remaining)`;
@@ -493,8 +485,8 @@ export const validateOtp = async (target, inputOtp) => {
   }
 
   // 6. Match Succeeded: Delete OTP immediately and clear lockout record
-  if (mongoose.connection.readyState === 1) {
-    await Otp.deleteMany(buildTargetQuery(cleanTarget, target));
+  if (isDbConnected()) {
+    await Otp.deleteMany(buildTargetQuery(cleanTarget));
   } else {
     inMemoryOtpStore.delete(cleanTarget);
   }
@@ -506,6 +498,7 @@ export const validateOtp = async (target, inputOtp) => {
   };
 };
 
+// Email-named aliases of the generic OTP functions (OTP targets are phone or email).
 export const requestEmailOtp = (email) => requestOtp(email);
 export const validateEmailOtp = (email, otp) => validateOtp(email, otp);
 export const getEmailOtpStatus = (email) => getOtpStatus(email);

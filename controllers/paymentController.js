@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import { isDbConnected } from '../config/db.js';
 import Appointment from '../models/Appointment.js';
 import Application from '../models/Application.js';
 import Connection from '../models/Connection.js';
@@ -46,7 +46,7 @@ export const createPayHerePayment = async (req, res, next) => {
     );
 
     // Create or update status in DB (Appointment / Application) if MongoDB is connected
-    if (mongoose.connection.readyState === 1) {
+    if (isDbConnected()) {
       let appointment = await Appointment.findOne({ referenceNumber: finalOrderId });
       if (!appointment) {
         const app = await Application.findOne({ referenceNumber: finalOrderId });
@@ -142,7 +142,7 @@ export const handlePayHereNotify = async (req, res, next) => {
       let emailServiceType = null;
       let emailPaidAt = new Date();
 
-      if (mongoose.connection.readyState === 1) {
+      if (isDbConnected()) {
         // 1. Update Appointment
         const appointment = await Appointment.findOne({ referenceNumber: order_id });
         if (appointment) {
@@ -234,7 +234,7 @@ export const handlePayHereNotify = async (req, res, next) => {
 
       const failureStatus = statusCodeStr === '0' ? 'pending' : 'failed';
 
-      if (mongoose.connection.readyState === 1) {
+      if (isDbConnected()) {
         const appointment = await Appointment.findOne({ referenceNumber: order_id });
         if (appointment) {
           // Appointment does not have paymentStatus, you could update status to 'cancelled' or similar if needed.
@@ -274,7 +274,7 @@ export const getOrderByOrderId = async (req, res, next) => {
   }
 
   try {
-    if (mongoose.connection.readyState !== 1) {
+    if (!isDbConnected()) {
       return res.status(200).json({ success: false, referenceNumber: orderId });
     }
 

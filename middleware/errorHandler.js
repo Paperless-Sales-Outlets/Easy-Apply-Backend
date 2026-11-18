@@ -19,7 +19,7 @@ export class AppError extends Error {
 /**
  * Error handler middleware
  */
-export const errorHandler = (err, req, res, next) => {
+export const errorHandler = (err, req, res, _next) => {
   let error = { ...err };
   error.message = err.message;
 
@@ -57,6 +57,12 @@ export const errorHandler = (err, req, res, next) => {
   if (err.name === 'TokenExpiredError') {
     const message = 'Token expired';
     error = new AppError(message, 401);
+  }
+
+  // Upload limits (multer) are a client mistake, not a server fault.
+  if (err.name === 'MulterError') {
+    const tooLarge = err.code === 'LIMIT_FILE_SIZE';
+    error = new AppError(tooLarge ? 'File too large' : err.message, tooLarge ? 413 : 400);
   }
 
   // Default to err.status / error.statusCode or res.statusCode or 500 server error

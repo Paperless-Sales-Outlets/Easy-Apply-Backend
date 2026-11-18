@@ -10,12 +10,14 @@ import {
 } from '../../controllers/admin/salesOfficerController.js';
 import { protect, authorize } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
+import { rejectInvalidDates } from '../../middleware/adminParamsMiddleware.js';
 
 const router = express.Router();
 
 // Admin-only access with database check
 router.use(requireDb);
 router.use(protect, authorize('admin'));
+router.use(rejectInvalidDates);
 
 // List registered Sales Officers
 router.get('/', getSalesOfficers);
