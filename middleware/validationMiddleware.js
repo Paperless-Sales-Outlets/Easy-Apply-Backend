@@ -338,8 +338,8 @@ export const validateOfficeFields = [
   body('staffSignature')
     .optional()
     .trim()
-    .isLength({ max: 200 })
-    .withMessage('Staff Signature must be at most 200 characters'),
+    .isLength({ max: 500000 })
+    .withMessage('Staff Signature must be at most 500,000 characters'),
   body('appointmentDate')
     .optional()
     .custom((value) => {

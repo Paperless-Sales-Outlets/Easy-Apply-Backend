@@ -5,6 +5,7 @@ import {
   checkApplicationStatus,
   getApplicationsByPhone,
   checkLoopAvailability,
+  downloadCustomerApplicationPdf,
 } from '../controllers/applicationController.js';
 
 import {
@@ -34,10 +35,22 @@ router.get(
 );
 
 
-// Public route for checking service loop availability
+// Public endpoint for checking service loop availability
 router.post(
   '/check-loop',
   checkLoopAvailability
+);
+
+
+// Public endpoint for downloading or viewing official digitally signed customer application PDF
+router.get(
+  '/by-ref/:ref/pdf',
+  downloadCustomerApplicationPdf
+);
+
+router.get(
+  '/:id/pdf',
+  downloadCustomerApplicationPdf
 );
 
 

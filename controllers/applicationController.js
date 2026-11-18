@@ -9,6 +9,10 @@ import { sendApplicationSubmittedEmail } from '../services/emailService.js';
 import { checkOSSFeasibility } from '../services/ossService.js';
 import { recordAudit } from '../services/auditService.js';
 import { recordConsentAcceptances, registerCustomer } from '../services/consentHubService.js';
+import {
+  generateAndStoreCustomerApplication,
+  getCustomerApplicationPdf,
+} from '../services/applicationDocumentService.js';
 
 
 // @desc    Submit a new service application
@@ -382,6 +386,20 @@ export const createApplication = async (req, res, next) => {
       }
     })();
 
+    // ─────────────────────────────────────────────────────────
+    // Automatically generate and store official customer application PDF
+    // incorporating Customer Digital Signature and Sales Officer Signature
+    // ─────────────────────────────────────────────────────────
+    let signedDocMeta = null;
+    try {
+      signedDocMeta = await generateAndStoreCustomerApplication(application, {
+        salesOfficerName: attribution?.officerName,
+        salesOfficerEmployeeNumber: attribution?.employeeNumber || application.salesOfficerEmployeeNumber,
+      });
+    } catch (docErr) {
+      console.warn('[applicationController] Notice on auto-generating application PDF:', docErr.message);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Application submitted successfully',
@@ -393,6 +411,8 @@ export const createApplication = async (req, res, next) => {
         status: application.status,
         nic: application.nic,
         documents: application.formData?.documents,
+        customerApplicationPdf: signedDocMeta?.url || `/uploads/applications/Application_${application.referenceNumber}.pdf`,
+        certificateId: signedDocMeta?.certificateId,
         createdAt: application.createdAt,
       },
 
@@ -675,5 +695,31 @@ export const checkLoopAvailability = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+// @desc    Download or view official digitally signed customer application PDF
+// @route   GET /api/applications/by-ref/:ref/pdf or GET /api/applications/:id/pdf
+// @access  Public
+export const downloadCustomerApplicationPdf = async (req, res, next) => {
+  const target = req.params.ref || req.params.id;
+  if (!target) {
+    res.status(400);
+    return next(new Error('Application reference number or ID is required'));
+  }
+
+  try {
+    const { buffer, fileName } = await getCustomerApplicationPdf(target);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${fileName}"`,
+      'Content-Length': buffer.length,
+      'Cache-Control': 'private, max-age=60',
+    });
+    return res.status(200).send(buffer);
+  } catch (err) {
+    console.error('[applicationController] PDF download error:', err.message);
+    res.status(404);
+    return next(new Error('Application document not found or could not be generated'));
   }
 };
