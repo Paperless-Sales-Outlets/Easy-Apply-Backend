@@ -6,7 +6,19 @@ import {
   createFindByIdQueryBuilder,
 } from '../db/modelHelper.js';
 
-export const DRAFT_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Drafts never expire: a customer can resume any time until they submit or
+// discard it. This value only fills the NOT NULL resume_until column; nothing
+// checks it.
+export const DRAFT_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Wizard fields holding images.
+export const DRAFT_PHOTO_FIELDS = ['nicFront', 'nicBack', 'facePhoto', 'signature'];
+
+/** Storage refs (URL or key) of every photo saved on a draft. */
+export const draftPhotoRefs = (photos = {}) =>
+  DRAFT_PHOTO_FIELDS
+    .map((field) => photos?.[field]?.ref || photos?.[field]?.url)
+    .filter((ref) => typeof ref === 'string' && ref.length > 0);
 
 export const DRAFT_STATUS = {
   ACTIVE: 'active',
