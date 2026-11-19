@@ -30,10 +30,11 @@ const uploadBase64Doc = async (dataUrl, fieldName, phone) => {
       folder: 'documents',
       encrypt: true,
     });
-    return res.url || res.key;
+    return res.url || res.key || `storage://documents/app-${fieldName}-${phone}${ext}`;
   } catch (err) {
     console.warn(`Upload of ${fieldName} notice:`, err.message);
-    return dataUrl;
+    // Safe fallback: never save multi-megabyte Base64 strings to PostgreSQL
+    return `storage://pending/app-${fieldName}-${phone}.jpg`;
   }
 };
 
@@ -115,6 +116,24 @@ export const createApplication = async (req, res, next) => {
     }
     if (!formData.signature) {
       formData.signature = 'DIGITALLY_VERIFIED_OTP';
+    }
+
+    // Sanitize and upload any inline Base64 documents to prevent PostgreSQL database bloat
+    const docKeys = [
+      'nicFront',
+      'nicBack',
+      'facePhoto',
+      'passportDoc',
+      'brcDoc',
+      'vatDoc',
+      'taxExemptionDoc',
+      'signature',
+    ];
+
+    for (const key of docKeys) {
+      if (formData[key] && typeof formData[key] === 'string' && formData[key].startsWith('data:image/')) {
+        formData[key] = await uploadBase64Doc(formData[key], key, verifiedPhone);
+      }
     }
 
     // Merge document references

@@ -103,17 +103,18 @@ export const getAdminApplications = async (req, res, next) => {
     const sortDir           = sortOrder === 'asc' ? 1 : -1;
 
     // --- Execute Queries ---
+    // Default to lightweight projection to prevent excessive egress over Supabase pooler
     const [applications, totalCount] = await Promise.all([
-      req.query.lite === 'true'
-        ? findLiteApplications(filter, sortField, sortDir, skip, pageSize)
-        : Application
+      req.query.full === 'true'
+        ? Application
           .find(filter)
           .populate('actionedBy', 'name email')
           .populate('salesOfficer', 'name email employeeNumber')
           .sort({ [sortField]: sortDir })
           .skip(skip)
           .limit(pageSize)
-          .lean(),
+          .lean()
+        : findLiteApplications(filter, sortField, sortDir, skip, pageSize),
       Application.countDocuments(filter),
     ]);
 
