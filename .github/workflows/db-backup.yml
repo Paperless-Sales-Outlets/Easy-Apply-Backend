@@ -1,8 +1,8 @@
-name: Nightly Database Backup
+name: Weekly Database Backup
 
 on:
   schedule:
-    - cron: '0 18 * * *' # Runs daily at 18:00 UTC (11:30 PM SLT)
+    - cron: '0 18 * * 0' # Runs weekly on Sunday at 18:00 UTC (11:30 PM SLT)
   workflow_dispatch:      # Allows manual trigger button in GitHub UI
 
 jobs:
