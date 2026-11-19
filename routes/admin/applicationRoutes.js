@@ -4,6 +4,7 @@ import {
   getApplicationDocuments,
   updateApplicationStatus,
   updateOfficeFields,
+  downloadAdminApplicationPdf,
 } from '../../controllers/admin/applicationController.js';
 import { protect, requirePrivilege } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
@@ -28,5 +29,8 @@ router.patch('/:id/status', requirePrivilege('forms'), validId, validateUpdateAp
 
 // Update office fields (CR Number, Amount Paid, Staff Signature, Appointment Date)
 router.patch('/:id/office-fields', requirePrivilege('forms'), validId, validateOfficeFields, updateOfficeFields);
+
+// Download or view official digitally signed customer application PDF
+router.get('/:id/pdf', downloadAdminApplicationPdf);
 
 export default router;
