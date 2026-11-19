@@ -63,6 +63,29 @@ export const protect = async (req, res, next) => {
   return next(new Error('Not authorized, no token provided'));
 };
 
+// The Super Admin role owns the Backup Dashboard. It is a distinct role (users.role = 'Super Admin'),
+// created from the command line (scripts/create_super_admin.js), never through User Management.
+export const SUPER_ADMIN_ROLE = 'super admin';
+export const isSuperAdmin = (account) =>
+  String(account?.role || '').trim().toLowerCase() === SUPER_ADMIN_ROLE && account?.isActive !== false;
+
+// A Super Admin keeps every Admin permission.
+const isAdminLike = (role) => ['admin', SUPER_ADMIN_ROLE].includes(String(role || '').trim().toLowerCase());
+
+// Backup Dashboard guard: Super Admin only, enforced here on the server for every backup endpoint.
+export const requireSuperAdmin = (req, res, next) => {
+  const account = req.user;
+  if (!account) {
+    res.status(401);
+    return next(new Error('Authentication required'));
+  }
+  if (!isSuperAdmin(account)) {
+    res.status(403);
+    return next(new Error('Only a Super Admin can use the Backup Dashboard.'));
+  }
+  next();
+};
+
 // Allow Admins, and anyone assigned at least one of these privileges in User Management.
 export const requirePrivilege = (...keys) => (req, res, next) => {
   const account = req.user;
@@ -71,7 +94,7 @@ export const requirePrivilege = (...keys) => (req, res, next) => {
     return next(new Error('Authentication required'));
   }
   const held = Array.isArray(account.permissions) ? account.permissions : [];
-  if (String(account.role).toLowerCase() !== 'admin' && !keys.some((key) => held.includes(key))) {
+  if (!isAdminLike(account.role) && !keys.some((key) => held.includes(key))) {
     res.status(403);
     return next(new Error('You do not have access to this module'));
   }
@@ -87,7 +110,9 @@ export const authorize = (...roles) => {
       res.status(401);
       return next(new Error('Authentication required'));
     }
-    if (!normalized.includes(String(userObj.role).toLowerCase())) {
+    const roleName = String(userObj.role).trim().toLowerCase();
+    // Super Admin passes wherever Admin does.
+    if (!normalized.includes(roleName) && !(roleName === SUPER_ADMIN_ROLE && normalized.includes('admin'))) {
       res.status(403);
       return next(
         new Error(

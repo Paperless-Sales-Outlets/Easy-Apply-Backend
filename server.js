@@ -22,6 +22,7 @@ import adminRolesRoutes from './routes/admin/rolesRoutes.js';
 import adminBranchesRoutes from './routes/admin/branchesRoutes.js';
 import adminPrivilegesRoutes from './routes/admin/privilegesRoutes.js';
 import adminAuditRoutes from './routes/admin/auditRoutes.js';
+import adminBackupRoutes from './routes/admin/backupRoutes.js';
 import adminDashboardStatsRoutes from './routes/admin/dashboardStatsRoutes.js';
 import adminSalesOfficerRoutes from './routes/admin/salesOfficerRoutes.js';
 import salesTrackingRoutes from './routes/salesTrackingRoutes.js';
@@ -54,10 +55,17 @@ import { getEngineMode } from './services/ocr/nicScanService.js';
 import { getPaddleOcrInstance } from './services/ocr/paddleOcrService.js';
 
 import { errorHandler, notFound } from './middleware/errorHandler.js';
+import { maintenanceGate } from './services/backup/maintenance.js';
+import { failInterruptedJobs } from './services/backup/backupRepository.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
 
 // Connect Database
-connectDB();
+connectDB().then((connected) => {
+  // Backup jobs left running by a previous process can never finish: mark them failed.
+  if (connected) {
+    failInterruptedJobs().catch((err) => console.warn('Backup job recovery skipped:', err.message));
+  }
+});
 
 // Automated KYC review (set KYC_AUTO_REVIEW=off to disable)
 startKycAutoReviewScheduler();
@@ -68,6 +76,11 @@ startDraftExpiryScheduler();
 
 
 const app = express();
+
+// Behind nginx / a load balancer, set TRUST_PROXY (e.g. 1) so req.ip is the real client address in audit logs.
+if (process.env.TRUST_PROXY) {
+  app.set('trust proxy', /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
+}
 
 // Security Middleware
 app.use(
@@ -160,6 +173,9 @@ if (!fs.existsSync(uploadsPath)) {
 // Sensitive KYC documents must only be accessed by authenticated Admin/Staff
 // via GET /api/files/:id which enforces authorization before streaming.
 
+// While a backup restore replaces the database, answer other requests with 503.
+app.use(maintenanceGate);
+
 // Logging Middleware
 app.use(requestLogger);
 
@@ -246,6 +262,9 @@ app.use(
 
 // Admin Audit Logs
 app.use('/api/admin/audit-logs', adminAuditRoutes);
+
+// Backup Dashboard (Super Admin only)
+app.use('/api/admin/backups', adminBackupRoutes);
 
 // Admin Dashboard / Forms summary figures (optional ?startDate=&endDate=)
 app.use('/api/admin/dashboard-stats', adminDashboardStatsRoutes);

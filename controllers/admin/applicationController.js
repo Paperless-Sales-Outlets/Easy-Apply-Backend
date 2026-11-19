@@ -202,7 +202,7 @@ export const updateApplicationStatus = async (req, res, next) => {
     const currentStatus = String(previous.status || 'pending').toLowerCase();
     const statusChanges = currentStatus !== status;
     if (statusChanges) {
-      const isAdmin = String(req.user?.role || '').toLowerCase() === 'admin';
+      const isAdmin = ['admin', 'super admin'].includes(String(req.user?.role || '').toLowerCase());
       const canDecide = isAdmin || (req.user?.permissions || []).includes('kyc');
       if (!canDecide) {
         res.status(403);

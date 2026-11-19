@@ -5,7 +5,7 @@ import { recordAudit } from '../../services/auditService.js';
 import { escapeRegex } from '../../utils/employeeNumber.js';
 import { query } from '../../config/db.js';
 
-const RESERVED_NAMES = new Set(['admin', 'customer']);
+const RESERVED_NAMES = new Set(['admin', 'super admin', 'customer']);
 
 // Built-in module keys the admin sidebar understands. They are seeded into the
 // Privileges collection on its first listing, so accept them even before that.
