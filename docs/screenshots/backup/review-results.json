@@ -1,0 +1,386 @@
+{
+  "passed": 76,
+  "failed": 0,
+  "results": [
+    {
+      "name": "admin: the Backups menu item is hidden",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "admin: opening /admin/backups shows no backup page",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "admin: the API answers 403 to the summary",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "admin: the API answers 403 to creating a backup",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "admin: the API answers 403 to the activity log",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "staff: the Backups menu item is hidden",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "staff: opening /admin/backups shows no backup page",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "staff: the API answers 403 to the summary",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "staff: the API answers 403 to creating a backup",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "staff: the API answers 403 to the activity log",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "super admin: the Backups menu item is visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "empty state is shown",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "\"no successful backup yet\" warning is shown",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "storage tab shows backend, location, space used/available and the maximum of 30",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "storage tab confirms a single instance and a direct DB connection",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "create: a note is required",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "create: a confirm step summarises type and note",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "progress: an \"in progress\" banner shows while the backup runs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "progress: the Create backup button is disabled while it runs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "progress: the row ends as Success",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "summary: last successful backup shows who ran it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "create: a \"Full database\" backup completes through the UI",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: sorted newest first, 15 rows per page",
+      "ok": true,
+      "detail": "15 rows"
+    },
+    {
+      "name": "table: has the \"Backup\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: has the \"Date & time\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: has the \"Created by\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: has the \"Type\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: has the \"Note\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: has the \"Size\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: has the \"Duration\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: has the \"Status\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: has the \"Checksum\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "table: has the \"Storage\" column",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "pagination: page 2 shows the remaining backups",
+      "ok": true,
+      "detail": "4 rows"
+    },
+    {
+      "name": "filter: status = Failed shows only failed backups",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "filter: type = Database + files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "search: finds a backup by its note",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "filter: a future date range shows the \"no matching\" state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "filter: today as the start date still lists the backups",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "details: show the full checksum, location and what the backup contains",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "details: a failed backup shows its error message",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "verify: the integrity check passes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "test restore: passes and the temporary database is dropped",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "test restore: details list the row counts per table",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "download: a wrong password is refused with a clear message (and does not sign you out)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "download: the file arrives, encrypted (SLTB header) and non-empty",
+      "ok": true,
+      "detail": "148080673 bytes"
+    },
+    {
+      "name": "delete: the most recent successful backup cannot be deleted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "menu: all five actions are fully visible and clickable (not clipped or covered)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "delete: an older backup is deleted after confirmation",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "restore: data was changed before restoring",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "restore: shows the replace-data warning and the safety-backup notice",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "restore: the button is disabled until the confirmation is typed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "restore: lower-case \"restore\" does not unlock the button",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "restore: a wrong password is refused and nothing changes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "restore: the data matches the backup exactly afterwards",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "restore: an \"Auto pre-restore backup\" was created",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "restore: the backup history was not rolled back",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: records \"Created\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: records \"Verified\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: records \"Test restored\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: records \"Downloaded\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: records \"Deleted\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: records \"Restored\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: records the failed download attempt",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: records who and from which IP",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: the action filter works",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "activity: CSV export downloads with a header and rows",
+      "ok": true,
+      "detail": "backup-activity-2026-11-20.csv"
+    },
+    {
+      "name": "warning: a backup older than 7 days shows the stale warning",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "limit: at 30 backups a clear warning asks for old ones to be deleted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "limit: the Create dialog explains it and cannot continue",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "limit: nothing was deleted automatically",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "error: a failed load shows a readable message",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "error: a refused backup shows the server's friendly message in the dialog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "mobile: the page itself does not scroll sideways",
+      "ok": true,
+      "detail": "0px"
+    },
+    {
+      "name": "mobile: the dialog fits the screen",
+      "ok": true,
+      "detail": "362px wide"
+    },
+    {
+      "name": "no JavaScript errors were logged in the browser console",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}
