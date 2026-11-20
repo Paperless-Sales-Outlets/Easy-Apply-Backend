@@ -40,7 +40,7 @@ jobs:
             # 4. (Removed) We no longer overwrite the .env file so manual server edits are preserved
 
             # 5. Install production dependencies
-            npm install --omit=dev
+            npm install --omit=dev --legacy-peer-deps
 
             # 6. Restart or start the PM2 service
             pm2 restart $PM2_NAME --update-env || pm2 start server.js --name "$PM2_NAME"
