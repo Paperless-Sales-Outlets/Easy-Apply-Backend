@@ -60,7 +60,7 @@ SELECT
   CASE WHEN n % 5 = 0 THEN repeat('Long staff note with unicode ✓ සිංහල தமிழ். ', 60) ELSE NULL END,
   '19' || (80 + n % 20) || lpad((n % 500 + 1)::text, 7, '0') || 'V',
   jsonb_build_object('fullName', 'Applicant ' || n, 'package', 'P' || lpad((1 + n % 60)::text, 4, '0'),
-                     'address', jsonb_build_object('line1', n || ' Main St', 'city', 'Kandy'),
+                     'address', n || ' Main St, Kandy',
                      'consents', jsonb_build_array('terms', 'marketing')),
   jsonb_build_object('signature', 'documents/sig-' || n || '.png'),
   n % 6 = 0,
