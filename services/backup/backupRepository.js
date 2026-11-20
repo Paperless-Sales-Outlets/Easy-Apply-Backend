@@ -15,8 +15,9 @@ const COLUMNS = {
   verifyResult: 'verify_result',
   testRestoreResult: 'test_restore_result',
   restoreResult: 'restore_result',
+  contents: 'contents',
 };
-const JSON_COLUMNS = new Set(['verifyResult', 'testRestoreResult', 'restoreResult']);
+const JSON_COLUMNS = new Set(['verifyResult', 'testRestoreResult', 'restoreResult', 'contents']);
 
 export const presentBackup = (row) =>
   row && {
@@ -40,6 +41,7 @@ export const presentBackup = (row) =>
     verifyResult: row.verify_result,
     testRestoreResult: row.test_restore_result,
     restoreResult: row.restore_result,
+    contents: row.contents,
   };
 
 export async function insertBackup({ fileName, type, purpose, note, actor, storageBackend }) {

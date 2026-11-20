@@ -79,6 +79,7 @@ describe('Backup service', { skip: skipReason }, () => {
       fs.writeFileSync(file, Buffer.concat([Buffer.from('PGDMP'), crypto.randomBytes(4096)]));
     },
     pgRestoreList: async () => TOC,
+    pgRestoreSchemaSql: async () => 'CREATE TABLE public.users (id integer);',
     async pgRestore(file, database, options = {}) {
       const live = config.getDbConnection().database;
       restoreCalls.push({ database, options, maintenance: maintenance.getMaintenance(), isLive: database === live });

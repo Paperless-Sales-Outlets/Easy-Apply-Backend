@@ -94,6 +94,10 @@ export const commands = {
       '--schema=public',
       '--no-owner',
       '--no-acl',
+      // Platform-owned objects (e.g. Supabase's supabase_realtime publication) are not ours to drop or recreate.
+      '--no-publications',
+      '--no-subscriptions',
+      '--no-security-labels',
       ...EXCLUDED_TABLES.map((table) => `--exclude-table=public.${table}`),
       `--file=${outFile}`,
     ];
@@ -117,14 +121,26 @@ export const commands = {
     return stdout;
   },
 
-  /** Restores an archive into `database`. `replace` drops existing objects first, inside one transaction. */
-  async pgRestore(file, database, { replace = false } = {}) {
+  /** The archive's schema as SQL text (used only to spot which extensions its tables rely on). */
+  async pgRestoreSchemaSql(file) {
     const config = getConfig();
-    const connection = getDbConnection();
+    const { stdout } = await runOrThrow(
+      config.pgRestore,
+      ['--schema-only', '--no-owner', '--no-acl', '-f', '-', file],
+      { env: process.env },
+      'pg_restore could not read the database archive.'
+    );
+    return stdout;
+  },
+
+  /** Restores an archive into `database`. `replace` drops existing objects first, inside one transaction. */
+  async pgRestore(file, database, { replace = false, listFile = null, connection = getDbConnection() } = {}) {
+    const config = getConfig();
     const args = [
       '--no-owner',
       '--no-acl',
       '--exit-on-error',
+      ...(listFile ? [`--use-list=${listFile}`] : []),
       ...(replace ? ['--clean', '--if-exists', '--single-transaction'] : []),
       `--dbname=${database}`,
       file,

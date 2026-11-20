@@ -1,0 +1,87 @@
+# Disposable services for the real backup / restore integration tests.
+# NEVER point these at production or Supabase: the tests create and drop databases.
+#
+#   npm run backup-test:up        start PostgreSQL 17 + MinIO (+ buckets)
+#   npm run test:backup:e2e       run the real end-to-end suite from your machine (needs the
+#                                 PostgreSQL 17 client tools: pg_dump, pg_restore, and tar)
+#   npm run backup-test:run       ...or run it inside a container that has the tools
+#   npm run backup-test:down      stop and delete everything (including volumes)
+#
+# Environment for running the suite from the host (matches the ports below):
+#   BACKUP_TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55432/postgres
+#   BACKUP_TEST_S3_ENDPOINT=http://127.0.0.1:59000   BACKUP_TEST_S3_BUCKET=slt-backup-test
+#   BACKUP_TEST_DOCS_BUCKET=slt-docs-test
+#   BACKUP_TEST_S3_ACCESS_KEY=minioadmin             BACKUP_TEST_S3_SECRET_KEY=minioadmin
+#
+# NOTE: this file was written on a machine without Docker, so the compose wiring itself
+# (especially the `backup-tests` runner) has not been executed. The test suite was run
+# for real against native PostgreSQL 17.6 and an S3-compatible server.
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "59000:9000"
+      - "59001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /data
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/slt-backup-test local/slt-docs-test"
+
+  # Optional: run the suite inside a container that already has pg_dump / pg_restore 17 and tar.
+  backup-tests:
+    image: node:22-alpine
+    profiles: ["runner"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    working_dir: /app
+    volumes:
+      - ./:/src:ro
+    environment:
+      BACKUP_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      BACKUP_TEST_S3_ENDPOINT: http://minio:9000
+      BACKUP_TEST_S3_BUCKET: slt-backup-test
+      BACKUP_TEST_DOCS_BUCKET: slt-docs-test
+      BACKUP_TEST_S3_ACCESS_KEY: minioadmin
+      BACKUP_TEST_S3_SECRET_KEY: minioadmin
+    network_mode: "service:postgres"
+    command: >
+      /bin/sh -c "
+      apk add --no-cache postgresql17-client tar &&
+      tar -C /src --exclude=./node_modules --exclude=./.git -cf - . | tar -C /app -xf - &&
+      npm ci --ignore-scripts --no-audit --no-fund &&
+      node --test --test-concurrency=1 tests/integration/*.test.js"

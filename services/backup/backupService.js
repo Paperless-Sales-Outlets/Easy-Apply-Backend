@@ -2,7 +2,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-import { getConfig, getDbConnection, publicSettings, BACKUP_TYPES } from './config.js';
+import { getConfig, getDbConnection, getTestRestoreConnection, publicSettings, BACKUP_TYPES } from './config.js';
+import { buildRestoreList, detectExtensions } from './restoreList.js';
+import { instanceStatus } from './instanceGuard.js';
+import {
+  documentBackupSettings, createDocumentClient, assertDocumentBackupReady, downloadBuckets, restoreBuckets,
+} from './documentStorage.js';
 import { BackupError, describeFailure, redact } from './errors.js';
 import { commands } from './commands.js';
 import { encryptFile, decryptFile, sha256File, getBackupKey } from './crypto.js';
@@ -22,6 +27,13 @@ import * as repo from './backupRepository.js';
 // -----------------------------------------------------------------------------
 
 export const PRE_RESTORE_NOTE = 'Auto pre-restore backup';
+
+// Client for the customer-document bucket (only used when BACKUP_INCLUDE_SUPABASE_STORAGE=true).
+let documentClientOverride = null;
+export const setDocumentClientForTests = (client) => {
+  documentClientOverride = client;
+};
+const documentClient = () => documentClientOverride || createDocumentClient();
 const MANIFEST_NAME = 'manifest.json';
 const DUMP_NAME = 'database.dump';
 const UPLOADS_NAME = 'uploads.tgz';
@@ -78,6 +90,7 @@ function runInBackground(label, job, release) {
 /** Checks everything a backup needs before a row is created, so failures are immediate and readable. */
 async function assertBackupReady() {
   getBackupKey(); // throws ENCRYPTION_NOT_CONFIGURED / ENCRYPTION_KEY_INVALID
+  getDbConnection(); // throws DB_POOLER_NOT_ALLOWED before anything is recorded
   await getStorageAdapter().ensureReady();
   if (!(await commands.toolVersion(getConfig().pgDump))) {
     throw new BackupError(
@@ -140,6 +153,8 @@ export async function startBackup({ type, note, actor }) {
     throw new BackupError('The note is too long (500 characters maximum).', 400, 'NOTE_TOO_LONG');
   }
   await assertBackupReady();
+  const documents = documentBackupSettings();
+  if (type === 'database_files' && documents.enabled) await assertDocumentBackupReady(documentClient(), documents);
 
   const release = await acquireJobLock({ op: 'backup' });
   try {
@@ -174,6 +189,7 @@ export async function executeBackup(row, actor) {
   const work = await makeWorkDir('backup-');
   let stored = false;
   let stage = 'starting';
+  const contents = { files: false, documents: null }; // what the backup holds, shown in the dashboard
   const setStage = async (next) => {
     stage = next;
     await repo.updateBackup(row.id, { stage: next });
@@ -200,6 +216,15 @@ export async function executeBackup(row, actor) {
       const hasUploads = fs.existsSync(config.uploadsPath);
       if (hasUploads) await commands.tarCreate(path.join(stageDir, UPLOADS_NAME), config.uploadsPath, { gzip: true });
       manifest.files = { included: hasUploads, source: 'uploads folder' };
+
+      // Optional: the customer-document storage bucket(s). Off unless BACKUP_INCLUDE_SUPABASE_STORAGE=true.
+      const documents = documentBackupSettings();
+      if (documents.enabled) {
+        await setStage('archiving_documents');
+        contents.documents = (await downloadBuckets(documentClient(), documents.buckets, path.join(stageDir, 'storage'))).buckets;
+        manifest.documents = contents.documents;
+      }
+      contents.files = hasUploads;
     }
     await fs.promises.writeFile(path.join(stageDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2));
 
@@ -233,6 +258,7 @@ export async function executeBackup(row, actor) {
       sizeBytes: size,
       checksum: sha256,
       storagePath: location,
+      contents,
     });
     await recordBackupAudit({
       backup: row,
@@ -318,7 +344,20 @@ async function unpackBackup(row, work) {
   }
   checks.push({ name: 'pg_restore --list reads the archive', ok: true, detail: `${tables.length} tables` });
 
-  return { stageDir, dumpFile, tables, checks, uploadsArchive: path.join(stageDir, UPLOADS_NAME) };
+  // Restore with a filtered table of contents: no CREATE/DROP SCHEMA public, no extensions
+  // (see restoreList.js). Everything else — tables, data, indexes — is restored as dumped.
+  const listFile = path.join(stageDir, 'restore.list');
+  await fs.promises.writeFile(listFile, buildRestoreList(toc).text);
+
+  return {
+    stageDir,
+    dumpFile,
+    listFile,
+    tables,
+    checks,
+    uploadsArchive: path.join(stageDir, UPLOADS_NAME),
+    documentsDir: path.join(stageDir, 'storage'),
+  };
 }
 
 // ---- verify -----------------------------------------------------------------
@@ -366,8 +405,7 @@ export async function executeVerify(row, actor, running = { startedAt: new Date(
 
 // ---- test restore -----------------------------------------------------------
 
-const clientConfig = (database) => {
-  const c = getDbConnection();
+const clientConfig = (database, c = getDbConnection()) => {
   return {
     host: c.host,
     port: Number(c.port),
@@ -386,6 +424,7 @@ export async function startTestRestore({ id, actor }) {
   assertUsable(row);
   await assertRestoreToolsReady();
   getBackupKey();
+  getTestRestoreConnection(); // throws DB_POOLER_NOT_ALLOWED for a pooled URL
 
   const release = await acquireJobLock({ op: 'test restore', backupId: id });
   try {
@@ -404,36 +443,62 @@ export async function executeTestRestore(row, actor, running = { startedAt: new 
   const started = Date.now();
   const work = await makeWorkDir('testrestore-');
   const tempDb = `slt_backup_test_${crypto.randomBytes(6).toString('hex')}`; // hex only: safe to quote
-  const adminDb = getConfig().adminDatabase;
+  // Where the temporary database is created: BACKUP_TEST_RESTORE_URL, or the backup connection.
+  const target = getTestRestoreConnection();
+  const adminDb = target.database;
   let created = false;
   let result;
 
   try {
-    const { dumpFile, tables: expected, checks } = await unpackBackup(row, work);
+    const { dumpFile, listFile, tables: expected, checks } = await unpackBackup(row, work);
 
-    const admin = new pg.Client(clientConfig(adminDb));
+    const admin = new pg.Client(clientConfig(adminDb, target));
     await admin.connect();
     try {
       await admin.query(`CREATE DATABASE ${quoteIdent(tempDb)}`);
       created = true;
     } catch (error) {
       console.error(`[backup] CREATE DATABASE failed: ${redact(error.message)}`);
+      if (error.code === '42501') {
+        throw new BackupError(
+          target.separate
+            ? 'The user in BACKUP_TEST_RESTORE_URL is not allowed to create databases (CREATEDB). Grant it, or point BACKUP_TEST_RESTORE_URL at a server where it is allowed.'
+            : 'Test restore needs to create a temporary database, but the database user does not have the CREATEDB privilege. Ask your database administrator to grant it, or set BACKUP_TEST_RESTORE_URL to a separate PostgreSQL server where it is allowed. Verify integrity still works without it.',
+          500,
+          'CREATEDB_DENIED'
+        );
+      }
       throw new BackupError(
-        'The database user is not allowed to create the temporary test database. Grant CREATEDB (see docs/BACKUP_AND_RESTORE.md).',
+        'The temporary test database could not be created. See the server log for details.',
         500,
-        'CREATEDB_DENIED'
+        'CREATEDB_FAILED'
       );
     } finally {
       await admin.end().catch(() => {});
     }
     checks.push({ name: 'Temporary database created', ok: true });
 
-    const temp = new pg.Client(clientConfig(tempDb));
+    const temp = new pg.Client(clientConfig(tempDb, target));
     await temp.connect();
     try {
-      // The schema's UUID defaults need this extension; ignore if it is unavailable or already provided.
-      await temp.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"').catch(() => {});
-      await commands.pgRestore(dumpFile, tempDb, { replace: false });
+      // The dump leaves extensions out (restoreList.js). Create the ones its tables use, in the same schema.
+      const extensions = detectExtensions(await commands.pgRestoreSchemaSql(dumpFile));
+      for (const { extension, schema } of extensions) {
+        try {
+          if (schema !== 'public') await temp.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(schema)}`);
+          await temp.query(`CREATE EXTENSION IF NOT EXISTS ${quoteIdent(extension)} WITH SCHEMA ${quoteIdent(schema)}`);
+        } catch (error) {
+          console.error(`[backup] extension ${extension} unavailable on the test server: ${redact(error.message)}`);
+          throw new BackupError(
+            `The database uses the "${extension}" extension, which is not available on the server used for test restores.`,
+            500,
+            'EXTENSION_UNAVAILABLE'
+          );
+        }
+      }
+      if (extensions.length) checks.push({ name: 'Extensions prepared', ok: true, detail: extensions.map((e) => e.extension).join(', ') });
+
+      await commands.pgRestore(dumpFile, tempDb, { replace: false, listFile, connection: target });
       checks.push({ name: 'pg_restore into temporary database', ok: true });
 
       const present = (
@@ -478,7 +543,7 @@ export async function executeTestRestore(row, actor, running = { startedAt: new 
   } finally {
     // Always drop the temporary database, whatever happened above.
     if (created) {
-      const admin = new pg.Client(clientConfig(adminDb));
+      const admin = new pg.Client(clientConfig(adminDb, target));
       try {
         await admin.connect();
         await admin.query(`DROP DATABASE IF EXISTS ${quoteIdent(tempDb)} WITH (FORCE)`).catch(() =>
@@ -515,11 +580,18 @@ export async function executeTestRestore(row, actor, running = { startedAt: new 
  *   2. unpacks and verifies the chosen backup,
  *   3. replaces the data in one transaction while the API is in maintenance mode.
  */
-export async function startRestore({ id, actor }) {
+export async function startRestore({ id, actor, deleteExtraDocuments = false }) {
   const row = await getRowOrThrow(id);
   assertUsable(row);
   await assertBackupReady();
   await assertRestoreToolsReady();
+
+  // Document-bucket files in the backup are uploaded back; extra files are only deleted on request.
+  const hasDocuments = Boolean(row.contents?.documents?.length);
+  if (deleteExtraDocuments && !hasDocuments) {
+    throw new BackupError('This backup does not include the document storage bucket, so there is nothing to compare against.', 400, 'NO_DOCUMENTS');
+  }
+  if (hasDocuments) await assertDocumentBackupReady(documentClient(), { ...documentBackupSettings(), buckets: row.contents.documents.map((d) => d.bucket) });
 
   const release = await acquireJobLock({ op: 'restore', backupId: id });
   try {
@@ -542,7 +614,7 @@ export async function startRestore({ id, actor }) {
       preRestoreBackupId: preRow.id,
     };
     const updated = await repo.updateBackup(id, { restoreResult: running });
-    runInBackground('restore', () => executeRestore(row, preRow, actor, running), release);
+    runInBackground('restore', () => executeRestore(row, preRow, actor, running, { deleteExtraDocuments }), release);
     return repo.presentBackup(updated);
   } catch (error) {
     await release();
@@ -550,8 +622,9 @@ export async function startRestore({ id, actor }) {
   }
 }
 
-export async function executeRestore(row, preRow, actor, running) {
+export async function executeRestore(row, preRow, actor, running, { deleteExtraDocuments = false } = {}) {
   const started = Date.now();
+  let documentsResult = null;
   const work = await makeWorkDir('restore-');
   const setState = (patch) => repo.updateBackup(row.id, { restoreResult: { ...running, ...patch } });
   let replaced = false;
@@ -570,13 +643,13 @@ export async function executeRestore(row, preRow, actor, running) {
 
     // 2. Unpack and verify the backup to restore.
     await setState({ stage: 'verifying_backup' });
-    const { dumpFile, uploadsArchive } = await unpackBackup(row, work);
+    const { dumpFile, listFile, uploadsArchive, documentsDir } = await unpackBackup(row, work);
 
     // 3. Replace the data. The API answers 503 to everyone else meanwhile.
     await setState({ stage: 'restoring_database' });
     enterMaintenance('restore');
     try {
-      await commands.pgRestore(dumpFile, getDbConnection().database, { replace: true });
+      await commands.pgRestore(dumpFile, getDbConnection().database, { replace: true, listFile });
       replaced = true;
     } finally {
       leaveMaintenance();
@@ -596,13 +669,30 @@ export async function executeRestore(row, preRow, actor, running) {
       await fs.promises.rename(incoming, uploadsPath);
     }
 
-    const finished = { status: 'success', stage: null, finishedAt: new Date().toISOString(), durationMs: Date.now() - started };
+    // 5. Customer documents in the storage bucket: upload them back. Files that are NOT in the backup
+    //    are left alone unless the Super Admin explicitly asked for them to be deleted.
+    if (row.contents?.documents?.length && fs.existsSync(path.join(documentsDir, 'index.json'))) {
+      await setState({ stage: 'restoring_documents' });
+      documentsResult = await restoreBuckets(documentClient(), documentsDir, { deleteExtra: deleteExtraDocuments });
+    }
+
+    const finished = {
+      status: 'success',
+      stage: null,
+      finishedAt: new Date().toISOString(),
+      durationMs: Date.now() - started,
+      ...(documentsResult ? { documents: documentsResult } : {}),
+    };
     await setState(finished);
     await recordBackupAudit({
       backup: row,
       action: 'restored',
       actor,
-      details: { preRestoreBackupId: preRow.id, durationMs: finished.durationMs },
+      details: {
+        preRestoreBackupId: preRow.id,
+        durationMs: finished.durationMs,
+        ...(documentsResult ? { documentsUploaded: documentsResult.uploaded, documentsDeleted: documentsResult.deleted, deleteExtraDocuments } : {}),
+      },
     });
     console.log(`[backup] restore of ${row.id} completed in ${finished.durationMs} ms`);
   } catch (error) {
@@ -747,7 +837,32 @@ export async function getSettings() {
     commands.toolVersion(config.pgDump),
     commands.toolVersion(config.pgRestore),
   ]);
-  return { ...settings, ...usage, storageError, encryptionConfigured, tools: { pgDump, pgRestore } };
+  // Which database the tools would connect to — host and port only, never credentials.
+  let database;
+  try {
+    const c = getDbConnection();
+    database = { ok: true, host: c.host, port: Number(c.port), source: process.env.BACKUP_DATABASE_URL ? 'BACKUP_DATABASE_URL' : 'DATABASE_URL' };
+  } catch (error) {
+    database = { ok: false, error: error.message, code: error.code || null };
+  }
+  let testRestoreTarget;
+  try {
+    testRestoreTarget = getTestRestoreConnection().separate ? 'BACKUP_TEST_RESTORE_URL' : 'same server';
+  } catch (error) {
+    testRestoreTarget = error.message;
+  }
+  const { enabled, buckets, configured } = documentBackupSettings();
+  return {
+    ...settings,
+    ...usage,
+    storageError,
+    encryptionConfigured,
+    tools: { pgDump, pgRestore },
+    database,
+    testRestoreTarget,
+    instance: instanceStatus(),
+    documents: { enabled, buckets, configured },
+  };
 }
 
 export async function getBackupDetail(id) {

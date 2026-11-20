@@ -114,7 +114,12 @@ export const restoreBackup = wrap(async (req, res) => {
     }
     throw error;
   }
-  const backup = await backups.startRestore({ id: req.params.id, actor });
+  // Deleting bucket files that are not in the backup is opt-in and must be an explicit `true`.
+  const backup = await backups.startRestore({
+    id: req.params.id,
+    actor,
+    deleteExtraDocuments: req.body?.deleteExtraDocuments === true,
+  });
   res.status(202).json({
     success: true,
     message: 'Restore started. A safety backup of the current data is taken first.',

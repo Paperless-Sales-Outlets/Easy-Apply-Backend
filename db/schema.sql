@@ -484,6 +484,8 @@ CREATE TABLE IF NOT EXISTS backups (
     verify_result JSONB,
     test_restore_result JSONB,
     restore_result JSONB,
+    -- What the backup holds: { files: boolean, documents: [{ bucket, count, bytes }] | null }
+    contents JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

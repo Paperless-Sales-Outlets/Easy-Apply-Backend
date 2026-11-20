@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS backups (
     verify_result JSONB,
     test_restore_result JSONB,
     restore_result JSONB,
+    -- What the backup holds: { files: boolean, documents: [{ bucket, count, bytes }] | null }
+    contents JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -56,3 +58,6 @@ CREATE TABLE IF NOT EXISTS backup_audit_logs (
 CREATE INDEX IF NOT EXISTS idx_backup_audit_created ON backup_audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_backup_audit_action ON backup_audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_backup_audit_backup ON backup_audit_logs(backup_id);
+
+-- For databases that applied an earlier version of this migration.
+ALTER TABLE backups ADD COLUMN IF NOT EXISTS contents JSONB;

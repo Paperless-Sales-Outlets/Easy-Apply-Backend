@@ -57,9 +57,13 @@ import { getPaddleOcrInstance } from './services/ocr/paddleOcrService.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { maintenanceGate } from './services/backup/maintenance.js';
 import { failInterruptedJobs } from './services/backup/backupRepository.js';
+import { warnIfMultiInstance } from './services/backup/instanceGuard.js';
 import { requestLogger, errorLogger } from './middleware/loggingMiddleware.js';
 
 // Connect Database
+// The backup feature needs a single backend instance; say so loudly if that is not the case.
+warnIfMultiInstance();
+
 connectDB().then((connected) => {
   // Backup jobs left running by a previous process can never finish: mark them failed.
   if (connected) {

@@ -11,7 +11,12 @@
     "db:setup": "node scripts/init_postgres.js",
     "db:verify": "node scripts/verify_supabase.js",
     "ocr:eval": "node scripts/evaluateNicOcr.js",
-    "preview-emails": "node generateEmailPreviews.js"
+    "preview-emails": "node generateEmailPreviews.js",
+    "test:backup": "node --test --test-concurrency=1 tests/backup*.test.js",
+    "test:backup:e2e": "node --test --test-concurrency=1 tests/integration/*.test.js",
+    "backup-test:up": "docker compose -f docker-compose.backup-test.yml up -d --wait",
+    "backup-test:down": "docker compose -f docker-compose.backup-test.yml down -v",
+    "backup-test:run": "docker compose -f docker-compose.backup-test.yml run --rm backup-tests"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1110.0",

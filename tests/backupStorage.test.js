@@ -71,7 +71,7 @@ describe('S3 storage adapter', () => {
         const input = command.input;
         calls.push({ name, input });
         if (name === 'PutObjectCommand') {
-          objects.set(input.Key, await readAll(input.Body));
+          objects.set(input.Key, Buffer.isBuffer(input.Body) ? input.Body : await readAll(input.Body));
           return {};
         }
         if (name === 'GetObjectCommand') {

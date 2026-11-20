@@ -1,5 +1,6 @@
 import { pool } from '../../config/db.js';
 import { BackupError } from './errors.js';
+import { assertSingleInstance } from './instanceGuard.js';
 
 // One backup / verify / test-restore / restore at a time.
 //
@@ -30,6 +31,7 @@ export const getActiveJob = () => (current && !current.pending ? { ...current } 
  * called in a `finally`.
  */
 export async function acquireJobLock({ op, backupId = null }) {
+  assertSingleInstance(); // refuse when the backend runs as several instances
   if (current) throw busy(current);
   current = { op, backupId, startedAt: new Date().toISOString(), pending: true };
 

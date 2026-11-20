@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import 'dotenv/config';
+import { BackupError } from './errors.js';
 
 // All backup settings come from environment variables and are read on every
 // call (not cached), so tests and operators can change them without a restart
@@ -44,12 +45,7 @@ export const getConfig = () => ({
 /** The tables that hold backup history; never included in a dump or touched by a restore. */
 export const EXCLUDED_TABLES = ['backups', 'backup_audit_logs'];
 
-/** Connection parts from DATABASE_URL. The password is only ever passed to child processes through PGPASSWORD. */
-export const getDbConnection = () => {
-  const raw =
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URI ||
-    'postgresql://postgres:postgres@127.0.0.1:5432/paperlessoutlet';
+const parseConnection = (raw, { database } = {}) => {
   const url = new URL(raw);
   const sslmode = url.searchParams.get('sslmode');
   const useSsl =
@@ -60,9 +56,59 @@ export const getDbConnection = () => {
     port: url.port || '5432',
     user: decodeURIComponent(url.username || 'postgres'),
     password: decodeURIComponent(url.password || ''),
-    database: decodeURIComponent(url.pathname.replace(/^\/+/, '') || 'paperlessoutlet'),
+    database: database || decodeURIComponent(url.pathname.replace(/^\/+/, '') || 'paperlessoutlet'),
     ssl: useSsl,
+    pgbouncer: url.searchParams.get('pgbouncer') === 'true',
   };
+};
+
+/** True for a connection-pooler address (Supabase pooler / PgBouncer), which pg_dump and pg_restore must not use. */
+export const isPoolerConnection = (connection) =>
+  String(connection.port) === '6543' || /pooler\./i.test(connection.host) || connection.pgbouncer === true;
+
+/**
+ * Connection used by backup and restore. BACKUP_DATABASE_URL (the DIRECT
+ * connection, e.g. Supabase port 5432) wins over DATABASE_URL. A pooler address
+ * is refused with a clear message: pg_dump needs a session-level connection and
+ * a restore must run as one transaction.
+ */
+export const getDbConnection = () => {
+  const explicit = process.env.BACKUP_DATABASE_URL;
+  const raw =
+    explicit ||
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URI ||
+    'postgresql://postgres:postgres@127.0.0.1:5432/paperlessoutlet';
+  const connection = parseConnection(raw);
+  if (isPoolerConnection(connection)) {
+    throw new BackupError(
+      explicit
+        ? 'BACKUP_DATABASE_URL points at a connection pooler (port 6543 / "pooler" host). Backups need the direct database connection, normally port 5432.'
+        : 'Backups cannot use the pooled DATABASE_URL (port 6543 / "pooler" host). Set BACKUP_DATABASE_URL to the direct database connection string (port 5432).',
+      503,
+      'DB_POOLER_NOT_ALLOWED'
+    );
+  }
+  return connection;
+};
+
+/**
+ * Where "Test restore" may CREATE/DROP its temporary database: BACKUP_TEST_RESTORE_URL
+ * (a separate server, if the main one does not allow CREATEDB), otherwise the backup
+ * connection with BACKUP_ADMIN_DATABASE.
+ */
+export const getTestRestoreConnection = () => {
+  const explicit = process.env.BACKUP_TEST_RESTORE_URL;
+  if (!explicit) return { ...getDbConnection(), database: getConfig().adminDatabase, separate: false };
+  const connection = parseConnection(explicit);
+  if (isPoolerConnection(connection)) {
+    throw new BackupError(
+      'BACKUP_TEST_RESTORE_URL points at a connection pooler. Use a direct connection.',
+      503,
+      'DB_POOLER_NOT_ALLOWED'
+    );
+  }
+  return { ...connection, separate: true };
 };
 
 /** Environment for libpq tools (pg_dump / pg_restore) — keeps the password off the command line. */
