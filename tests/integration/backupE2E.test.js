@@ -129,12 +129,12 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
   const { service, repo, lock, maintenance, cmd, config } = m;
   const { commands } = cmd || {};
   const PASSWORD = 'Sup3r-Secret-Pass!';
-  const actor = { id: '11111111-1111-4111-8111-111111111111', name: 'Super Admin One', ip: '10.0.0.5' };
+  const actor = { id: '11111111-1111-4111-8111-111111111111', name: 'Admin One', ip: '10.0.0.5' };
   let pool;
   let server;
   let base;
-  let superToken;
   let adminToken;
+  let staffToken;
   let originalPgRestore;
 
   // ---- helpers ------------------------------------------------------------
@@ -215,10 +215,10 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
     const hash = await m.bcrypt.hash(PASSWORD, 4);
     const insert = async (email, role) =>
       (await pool.query(`INSERT INTO users (name, email, role, password_hash) VALUES ($1, $2, $3, $4) RETURNING id`, [`${role} E2E`, email, role, hash])).rows[0].id;
-    const superId = await insert('super.e2e@slt.test', 'Super Admin');
     const adminId = await insert('admin.e2e@slt.test', 'Admin');
-    superToken = m.jwt.sign({ id: superId, role: 'Super Admin' }, process.env.JWT_ACCESS_SECRET, { expiresIn: '15m' });
+    const staffId = await insert('staff.e2e@slt.test', 'Staff');
     adminToken = m.jwt.sign({ id: adminId, role: 'Admin' }, process.env.JWT_ACCESS_SECRET, { expiresIn: '15m' });
+    staffToken = m.jwt.sign({ id: staffId, role: 'Staff' }, process.env.JWT_ACCESS_SECRET, { expiresIn: '15m' });
 
     const app = m.express();
     app.use(m.express.json());
@@ -439,7 +439,7 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
 
   describe('download link (real routes and JWT auth)', () => {
     const auth = (token) => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' });
-    const link = async (id, password = PASSWORD, token = superToken) => {
+    const link = async (id, password = PASSWORD, token = adminToken) => {
       const res = await fetch(`${base}/${id}/download-link`, { method: 'POST', headers: auth(token), body: JSON.stringify({ password }) });
       return { res, body: await res.json() };
     };
@@ -452,30 +452,30 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
       assert.match(body.path, /^\/admin\/backups\/downloads\//);
 
       const url = `http://127.0.0.1:${server.address().port}/api/${body.path.replace(/^\//, '')}`;
-      const first = await fetch(url, { headers: auth(superToken) });
+      const first = await fetch(url, { headers: auth(adminToken) });
       assert.equal(first.status, 200);
       const bytes = Buffer.from(await first.arrayBuffer());
       assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), row.checksum_sha256);
       assert.equal(first.headers.get('x-backup-sha256'), row.checksum_sha256);
       assert.equal(first.headers.get('cache-control'), 'no-store');
 
-      const second = await fetch(url, { headers: auth(superToken) });
+      const second = await fetch(url, { headers: auth(adminToken) });
       assert.equal(second.status, 410, 'a link works only once');
 
       const audit = (await pool.query(`SELECT result, ip_address FROM backup_audit_logs WHERE backup_id = $1 AND action = 'downloaded' ORDER BY created_at`, [row.id])).rows;
       assert.deepEqual(audit.map((a) => a.result), ['failure', 'success'], 'the wrong password and the real download are both recorded');
     });
 
-    test('is rejected without a bearer token, for another user, and for a normal Admin', async () => {
+    test('is rejected without a bearer token, for another user, and for a non-allowed role (Staff)', async () => {
       const row = await makeBackup();
       const { body } = await link(row.id);
       const url = `http://127.0.0.1:${server.address().port}/api/${body.path.replace(/^\//, '')}`;
       assert.equal((await fetch(url)).status, 401, 'no bearer token');
       // the unauthenticated attempt must not have burned or leaked the link
-      assert.equal((await fetch(`${url}?token=${superToken}`, { headers: auth(superToken) })).status, 400, 'token in the URL is refused');
-      assert.equal((await fetch(url, { headers: auth(adminToken) })).status, 403, 'a normal Admin');
+      assert.equal((await fetch(`${url}?token=${adminToken}`, { headers: auth(adminToken) })).status, 400, 'token in the URL is refused');
+      assert.equal((await fetch(url, { headers: auth(staffToken) })).status, 403, 'a Staff user');
 
-      assert.equal((await link(row.id, PASSWORD, adminToken)).res.status, 403);
+      assert.equal((await link(row.id, PASSWORD, staffToken)).res.status, 403);
     });
 
     test('expires after its lifetime', async () => {
@@ -485,7 +485,7 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
       process.env.BACKUP_DOWNLOAD_TTL_SEC = '60';
       await new Promise((r) => setTimeout(r, 1500));
       const url = `http://127.0.0.1:${server.address().port}/api/${body.path.replace(/^\//, '')}`;
-      assert.equal((await fetch(url, { headers: auth(superToken) })).status, 410);
+      assert.equal((await fetch(url, { headers: auth(adminToken) })).status, 410);
     });
 
     test('the default lifetime is 60 seconds', () => {
@@ -501,23 +501,23 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
     const stored = (await pool.query(`SELECT count(*)::int n FROM backups WHERE status IN ('success','in_progress')`)).rows[0].n;
     process.env.BACKUP_MAX_COUNT = String(stored); // the limit is now reached
     try {
-      const res = await fetch(base, { method: 'POST', headers: { Authorization: `Bearer ${superToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'database', note: 'Over the limit' }) });
+      const res = await fetch(base, { method: 'POST', headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'database', note: 'Over the limit' }) });
       assert.equal(res.status, 409);
       assert.equal((await res.json()).code, 'BACKUP_LIMIT_REACHED');
       assert.equal((await pool.query(`SELECT count(*)::int n FROM backups WHERE status IN ('success','in_progress')`)).rows[0].n, stored, 'nothing was deleted');
 
       const latest = await repo.latestSuccessful();
-      const del = await fetch(`${base}/${latest.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${superToken}` } });
+      const del = await fetch(`${base}/${latest.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
       assert.equal(del.status, 409);
       assert.equal((await del.json()).code, 'LATEST_BACKUP');
 
       const older = (await pool.query(`SELECT * FROM backups WHERE status = 'success' AND id <> $1 ORDER BY started_at LIMIT 1`, [latest.id])).rows[0];
-      const ok = await fetch(`${base}/${older.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${superToken}` } });
+      const ok = await fetch(`${base}/${older.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${adminToken}` } });
       assert.equal(ok.status, 200);
       assert.equal(await adapter().exists(keyOf(older)), false, 'the file is removed from storage');
 
       // a slot is free again
-      const again = await fetch(base, { method: 'POST', headers: { Authorization: `Bearer ${superToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'database', note: 'Fits again' }) });
+      const again = await fetch(base, { method: 'POST', headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'database', note: 'Fits again' }) });
       assert.equal(again.status, 202);
       await waitIdle();
     } finally {
@@ -646,7 +646,7 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
       // over HTTP the flag must be the boolean true; the string "true" is ignored
       const res = await fetch(`${base}/${plain.id}/restore`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${superToken}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ confirmation: 'RESTORE', password: PASSWORD, deleteExtraDocuments: 'true' }),
       });
       assert.equal(res.status, 202);
@@ -744,9 +744,64 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
     });
   });
 
-  test('a normal Admin gets 403 from the real API', async () => {
+  test('the remove-super-admin migration turns "Super Admin" users into Admin, touches nobody else, and can be repeated', async () => {
+    const sql = fs.readFileSync(new URL('../../db/migrations/2026-11-21-remove-super-admin.sql', import.meta.url), 'utf8');
+    const mk = (email, role) => pool.query(`INSERT INTO users (name, email, role) VALUES ($1, $2, $3)`, [email, email, role]);
+    await mk('mig.super1@test.local', 'Super Admin');
+    await mk('mig.super2@test.local', '  super   ADMIN ');
+    await mk('mig.staff@test.local', 'Staff');
+    await mk('mig.admin@test.local', 'Admin');
+    await mk('mig.lookalike@test.local', 'Super Administrator');
+    await pool.query(`INSERT INTO staff_roles (name) VALUES ('Super Admin'), ('Field Team')`);
+    const roles = async () => Object.fromEntries((await pool.query(`SELECT email, role FROM users WHERE email LIKE 'mig.%'`)).rows.map((r) => [r.email, r.role]));
+    try {
+      await pool.query(sql);
+      assert.deepEqual(await roles(), {
+        'mig.super1@test.local': 'Admin',
+        'mig.super2@test.local': 'Admin',
+        'mig.staff@test.local': 'Staff',
+        'mig.admin@test.local': 'Admin',
+        'mig.lookalike@test.local': 'Super Administrator', // not the same role name: left alone
+      });
+      assert.deepEqual((await pool.query(`SELECT name FROM staff_roles WHERE name IN ('Super Admin', 'Field Team') ORDER BY name`)).rows.map((r) => r.name), ['Field Team']);
+      const again = await roles();
+      await pool.query(sql); // second run changes nothing
+      assert.deepEqual(await roles(), again);
+    } finally {
+      await pool.query(`DELETE FROM users WHERE email LIKE 'mig.%'`);
+      await pool.query(`DELETE FROM staff_roles WHERE name = 'Field Team'`);
+    }
+  });
+
+  test('GET /access tells each signed-in user whether they may use backups (real JWT auth)', async () => {
+    const ask = async (token) => (await fetch(`${base}/access`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }));
+    const admin = await ask(adminToken);
+    assert.equal(admin.status, 200);
+    assert.deepEqual(await admin.json(), { success: true, allowed: true });
+    const staff = await ask(staffToken);
+    assert.equal(staff.status, 200);
+    assert.deepEqual(await staff.json(), { success: true, allowed: false });
+    assert.equal((await ask(null)).status, 401);
+  });
+
+  test('BACKUP_ALLOWED_ROLES works through the real API: a listed non-Admin role is let in, Admin is refused when not listed', async () => {
+    const get = (token, route = '/summary') => fetch(base + route, { headers: { Authorization: `Bearer ${token}` } });
+    process.env.BACKUP_ALLOWED_ROLES = 'Staff, Manager';
+    try {
+      assert.equal((await get(staffToken)).status, 200, 'Staff is now allowed');
+      assert.equal((await get(adminToken)).status, 403, 'Admin is not listed, so refused');
+      assert.deepEqual(await (await get(staffToken, '/access')).json(), { success: true, allowed: true });
+      assert.deepEqual(await (await get(adminToken, '/access')).json(), { success: true, allowed: false });
+    } finally {
+      delete process.env.BACKUP_ALLOWED_ROLES;
+    }
+    assert.equal((await get(adminToken)).status, 200, 'default restored: Admin again');
+    assert.equal((await get(staffToken)).status, 403);
+  });
+
+  test('a role that is not allowed (Staff) gets 403 from the real API', async () => {
     for (const [method, route] of [['GET', '/summary'], ['GET', ''], ['POST', ''], ['GET', '/audit']]) {
-      const res = await fetch(base + route, { method, headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+      const res = await fetch(base + route, { method, headers: { Authorization: `Bearer ${staffToken}`, 'Content-Type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
       assert.equal(res.status, 403, `${method} ${route}`);
     }
   });

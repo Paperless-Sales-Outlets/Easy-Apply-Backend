@@ -56,7 +56,7 @@ describe('Backup service', { skip: skipReason }, () => {
   const original = {};
   const envSaved = {};
 
-  const actor = { id: '11111111-1111-4111-8111-111111111111', name: 'Super Admin One', ip: '10.0.0.5' };
+  const actor = { id: '11111111-1111-4111-8111-111111111111', name: 'Admin One', ip: '10.0.0.5' };
 
   // ---- fake pg tools ------------------------------------------------------
   const TOC = [
@@ -200,7 +200,7 @@ describe('Backup service', { skip: skipReason }, () => {
       const started = await service.startBackup({ type: 'database', note: '  Before release v2.3 ', actor });
       assert.equal(started.status, 'in_progress');
       assert.equal(started.note, 'Before release v2.3');
-      assert.equal(started.createdByName, 'Super Admin One');
+      assert.equal(started.createdByName, 'Admin One');
 
       const row = await settled(started.id);
       assert.equal(row.status, 'success');
@@ -219,7 +219,7 @@ describe('Backup service', { skip: skipReason }, () => {
 
       assert.deepEqual(await auditActions(row.id), [{ action: 'created', result: 'success' }]);
       const [entry] = (await audit.listAudit({})).rows;
-      assert.equal(entry.actorName, 'Super Admin One');
+      assert.equal(entry.actorName, 'Admin One');
       assert.equal(entry.ipAddress, '10.0.0.5');
     });
 
@@ -457,7 +457,7 @@ describe('Backup service', { skip: skipReason }, () => {
       assert.equal(pre.purpose, 'pre_restore');
       assert.equal(pre.note, 'Auto pre-restore backup');
       assert.equal(pre.status, 'success');
-      assert.equal(pre.created_by_name, 'Super Admin One');
+      assert.equal(pre.created_by_name, 'Admin One');
       assert.equal(dumpCalls, 2, 'one dump for the original backup, one for the safety backup');
 
       const live = restoreCalls.filter((c) => c.isLive);
@@ -598,11 +598,11 @@ describe('Backup service', { skip: skipReason }, () => {
     before(async () => {
       const hash = await mod.bcrypt.hash('Correct-Horse-9', 4);
       const { rows } = await pool.query(
-        `INSERT INTO users (name, email, role, password_hash) VALUES ('Reauth User', 'reauth@test.local', 'Super Admin', $1) RETURNING id`,
+        `INSERT INTO users (name, email, role, password_hash) VALUES ('Reauth User', 'reauth@test.local', 'Admin', $1) RETURNING id`,
         [hash]
       );
-      account = { _id: rows[0].id, id: rows[0].id, role: 'Super Admin' };
-      await pool.query(`INSERT INTO users (name, email, role) VALUES ('No Password', 'nopw@test.local', 'Super Admin')`);
+      account = { _id: rows[0].id, id: rows[0].id, role: 'Admin' };
+      await pool.query(`INSERT INTO users (name, email, role) VALUES ('No Password', 'nopw@test.local', 'Admin')`);
     });
     after(() => pool.query(`DELETE FROM users WHERE email IN ('reauth@test.local', 'nopw@test.local')`));
 
@@ -646,7 +646,7 @@ describe('Backup service', { skip: skipReason }, () => {
       const row = await makeBackup();
       summary = await service.getSummary();
       assert.equal(summary.isStale, false);
-      assert.equal(summary.lastSuccess.createdByName, 'Super Admin One');
+      assert.equal(summary.lastSuccess.createdByName, 'Admin One');
       assert.equal(summary.lastStatus, 'success');
       assert.equal(summary.count, 1);
       assert.ok(summary.totalBytes > 0);
