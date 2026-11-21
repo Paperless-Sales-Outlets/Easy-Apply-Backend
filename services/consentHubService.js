@@ -32,11 +32,28 @@ const headers = () => ({ 'x-api-key': process.env.CONSENT_HUB_API_KEY || '', 'Co
 
 export const consentHubConfigured = () => Boolean(process.env.CONSENT_HUB_URL && process.env.CONSENT_HUB_API_KEY);
 
+let cachedConsentCatalog = { at: 0, data: null };
+const CONSENT_CATALOG_TTL_MS = 10 * 60 * 1000;
+
 export async function fetchConsentCatalog() {
-  const res = await fetch(`${base()}/catalog`, { headers: headers(), signal: AbortSignal.timeout(15000) });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || !body.success) throw new Error(body.message || `ConsentHub responded ${res.status}`);
-  return body.data;
+  if (Date.now() - cachedConsentCatalog.at < CONSENT_CATALOG_TTL_MS && cachedConsentCatalog.data) {
+    return cachedConsentCatalog.data;
+  }
+
+  try {
+    const res = await fetch(`${base()}/catalog`, { headers: headers(), signal: AbortSignal.timeout(6000) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.success) throw new Error(body.message || `ConsentHub responded ${res.status}`);
+    cachedConsentCatalog = { at: Date.now(), data: body.data };
+    return body.data;
+  } catch (err) {
+    // If external CMS is temporarily unreachable, fallback to cached catalog if available
+    if (cachedConsentCatalog.data) {
+      console.warn('ConsentHub unreachable, serving cached catalog:', err.message);
+      return cachedConsentCatalog.data;
+    }
+    throw err;
+  }
 }
 
 /**

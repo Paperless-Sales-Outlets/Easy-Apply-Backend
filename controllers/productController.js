@@ -6,6 +6,10 @@ import { successResponse } from '../utils/responseHandler.js';
  * Handles all product-related HTTP requests
  */
 
+// In-memory cache for product catalog responses (5-minute TTL)
+const productCatalogCache = new Map();
+const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
+
 /**
  * @desc    Get all products with pagination, sorting, and filtering
  * @route   GET /api/products
@@ -25,9 +29,19 @@ export const getAllProducts = async (req, res, next) => {
       maxPrice: req.query.maxPrice || req.query.price,
     };
 
+    const cacheKey = JSON.stringify(options);
+    const cached = productCatalogCache.get(cacheKey);
+    const now = Date.now();
+
+    if (cached && (now - cached.at < CATALOG_CACHE_TTL_MS)) {
+      res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=60');
+      res.set('X-Cache', 'HIT');
+      return res.status(200).json(cached.payload);
+    }
+
     const { products, pagination, source, hubUrl } = await productService.getAllProducts(options);
 
-    return res.status(200).json({
+    const payload = {
       success: true,
       message: 'Products retrieved successfully',
       data: products,
@@ -42,7 +56,18 @@ export const getAllProducts = async (req, res, next) => {
         hasNextPage: (pagination.page || 1) < Math.ceil((pagination.total || 0) / (pagination.limit || 10)),
         hasPrevPage: (pagination.page || 1) > 1,
       },
-    });
+    };
+
+    // Store in cache (limit map size to 100 entries to prevent memory bloat)
+    if (productCatalogCache.size > 100) {
+      const oldestKey = productCatalogCache.keys().next().value;
+      productCatalogCache.delete(oldestKey);
+    }
+    productCatalogCache.set(cacheKey, { at: now, payload });
+
+    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=60');
+    res.set('X-Cache', 'MISS');
+    return res.status(200).json(payload);
   } catch (error) {
     next(error);
   }

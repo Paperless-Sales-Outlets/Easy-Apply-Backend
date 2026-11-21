@@ -123,16 +123,23 @@ Do not invent or hallucinate missing data.
 
   for (const modelName of modelsToTry) {
     try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        config: { thinkingConfig: { thinkingLevel: 'LOW' } },
-        contents: [
-          {
-            role: 'user',
-            parts: parts,
-          },
-        ],
-      });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Gemini model ${modelName} request timed out after 8000ms`)), 8000)
+      );
+
+      const response = await Promise.race([
+        ai.models.generateContent({
+          model: modelName,
+          config: { thinkingConfig: { thinkingLevel: 'LOW' } },
+          contents: [
+            {
+              role: 'user',
+              parts: parts,
+            },
+          ],
+        }),
+        timeoutPromise,
+      ]);
 
       rawResponseText = response.text || '';
       if (rawResponseText) break;
