@@ -2,7 +2,7 @@ import User from '../../models/User.js';
 import { lockRemaining, recordFailure, clearFailures } from '../../utils/loginThrottle.js';
 import { BackupError } from './errors.js';
 
-// Re-checks the signed-in Super Admin's password before a download or restore.
+// Re-checks the signed-in user's password before a download or restore.
 // Wrong answers are throttled with the same limiter as sign-in (5 tries, then a
 // 15-minute lock). The portal has no TOTP 2FA, so the password is the second step.
 //

@@ -5,6 +5,7 @@ import pg from 'pg';
 import { getConfig, getDbConnection, getTestRestoreConnection, publicSettings, BACKUP_TYPES } from './config.js';
 import { buildRestoreList, detectExtensions } from './restoreList.js';
 import { instanceStatus } from './instanceGuard.js';
+import { getBackupAllowedRoles } from './access.js';
 import {
   documentBackupSettings, createDocumentClient, assertDocumentBackupReady, downloadBuckets, restoreBuckets,
 } from './documentStorage.js';
@@ -670,7 +671,7 @@ export async function executeRestore(row, preRow, actor, running, { deleteExtraD
     }
 
     // 5. Customer documents in the storage bucket: upload them back. Files that are NOT in the backup
-    //    are left alone unless the Super Admin explicitly asked for them to be deleted.
+    //    are left alone unless the admin explicitly asked for them to be deleted.
     if (row.contents?.documents?.length && fs.existsSync(path.join(documentsDir, 'index.json'))) {
       await setState({ stage: 'restoring_documents' });
       documentsResult = await restoreBuckets(documentClient(), documentsDir, { deleteExtra: deleteExtraDocuments });
@@ -862,6 +863,7 @@ export async function getSettings() {
     testRestoreTarget,
     instance: instanceStatus(),
     documents: { enabled, buckets, configured },
+    allowedRoles: getBackupAllowedRoles(),
   };
 }
 

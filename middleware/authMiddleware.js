@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import Customer from '../models/Customer.js';
 import User from '../models/User.js';
+import { canUseBackups } from '../services/backup/access.js';
 
 // Resolve a token's account id to a staff User or a Customer. `role` is the
 // role recorded in the token (if any) and only decides which collection is
@@ -63,25 +64,17 @@ export const protect = async (req, res, next) => {
   return next(new Error('Not authorized, no token provided'));
 };
 
-// The Super Admin role owns the Backup Dashboard. It is a distinct role (users.role = 'Super Admin'),
-// created from the command line (scripts/create_super_admin.js), never through User Management.
-export const SUPER_ADMIN_ROLE = 'super admin';
-export const isSuperAdmin = (account) =>
-  String(account?.role || '').trim().toLowerCase() === SUPER_ADMIN_ROLE && account?.isActive !== false;
-
-// A Super Admin keeps every Admin permission.
-const isAdminLike = (role) => ['admin', SUPER_ADMIN_ROLE].includes(String(role || '').trim().toLowerCase());
-
-// Backup Dashboard guard: Super Admin only, enforced here on the server for every backup endpoint.
-export const requireSuperAdmin = (req, res, next) => {
+// Backup Dashboard guard: only the roles listed in BACKUP_ALLOWED_ROLES (default: Admin). It is
+// enforced here on the server for every backup endpoint, whatever the frontend shows.
+export const requireBackupAccess = (req, res, next) => {
   const account = req.user;
   if (!account) {
     res.status(401);
     return next(new Error('Authentication required'));
   }
-  if (!isSuperAdmin(account)) {
+  if (!canUseBackups(account)) {
     res.status(403);
-    return next(new Error('Only a Super Admin can use the Backup Dashboard.'));
+    return next(new Error('You do not have access to the Backup Dashboard.'));
   }
   next();
 };
@@ -94,7 +87,7 @@ export const requirePrivilege = (...keys) => (req, res, next) => {
     return next(new Error('Authentication required'));
   }
   const held = Array.isArray(account.permissions) ? account.permissions : [];
-  if (!isAdminLike(account.role) && !keys.some((key) => held.includes(key))) {
+  if (String(account.role).toLowerCase() !== 'admin' && !keys.some((key) => held.includes(key))) {
     res.status(403);
     return next(new Error('You do not have access to this module'));
   }
@@ -110,9 +103,7 @@ export const authorize = (...roles) => {
       res.status(401);
       return next(new Error('Authentication required'));
     }
-    const roleName = String(userObj.role).trim().toLowerCase();
-    // Super Admin passes wherever Admin does.
-    if (!normalized.includes(roleName) && !(roleName === SUPER_ADMIN_ROLE && normalized.includes('admin'))) {
+    if (!normalized.includes(String(userObj.role).toLowerCase())) {
       res.status(403);
       return next(
         new Error(

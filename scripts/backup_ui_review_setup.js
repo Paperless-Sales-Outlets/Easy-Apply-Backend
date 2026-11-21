@@ -8,7 +8,8 @@ import pg from 'pg';
 // browser (see docs/BACKUP_AND_RESTORE.md, "Reviewing the UI"):
 //   - creates database `slt_ui_review` on the server given by BACKUP_TEST_DATABASE_URL
 //   - loads db/schema.sql and the realistic seed data used by the integration tests
-//   - creates a Super Admin, an Admin and a Staff account with random passwords
+//   - creates an Admin, a Manager and a Staff account with random passwords (only Admin may use
+//     backups under the default BACKUP_ALLOWED_ROLES; the other two must be refused)
 //   - optionally adds a big table so a real backup takes several seconds (progress is visible)
 //
 //   BACKUP_TEST_DATABASE_URL=postgresql://postgres:pw@127.0.0.1:5432/postgres \
@@ -49,12 +50,12 @@ await db.query(fs.readFileSync(path.resolve('db/schema.sql'), 'utf8'));
 await db.query(fs.readFileSync(path.resolve('tests/fixtures/backup-seed.sql'), 'utf8'));
 
 const accounts = {};
-for (const [key, role] of [['superAdmin', 'Super Admin'], ['admin', 'Admin'], ['staff', 'Staff']]) {
+for (const [key, role] of [['admin', 'Admin'], ['manager', 'Manager'], ['staff', 'Staff']]) {
   const email = `${key.toLowerCase()}.review@slt.test`;
   const password = crypto.randomBytes(9).toString('base64url');
   await db.query(
     `INSERT INTO users (name, email, role, permissions, password_hash) VALUES ($1, $2, $3, $4, $5)`,
-    [`${role} Reviewer`, email, role, key === 'staff' ? ['dashboard'] : [], await bcrypt.hash(password, 8)]
+    [`${role} Reviewer`, email, role, key === 'admin' ? [] : ['dashboard'], await bcrypt.hash(password, 8)]
   );
   accounts[key] = { email, password, role };
 }

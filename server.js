@@ -267,7 +267,7 @@ app.use(
 // Admin Audit Logs
 app.use('/api/admin/audit-logs', adminAuditRoutes);
 
-// Backup Dashboard (Super Admin only)
+// Backup Dashboard (admin only)
 app.use('/api/admin/backups', adminBackupRoutes);
 
 // Admin Dashboard / Forms summary figures (optional ?startDate=&endDate=)

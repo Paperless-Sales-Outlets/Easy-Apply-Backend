@@ -64,7 +64,7 @@ export const createAdminUser = async (req, res, next) => {
     }
 
     // Admin accounts are not created from this screen.
-    if (role === 'Admin' || /^super\s*admin$/i.test(String(role).trim()) || !(await isAssignableRole(role))) {
+    if (role === 'Admin' || !(await isAssignableRole(role))) {
       res.status(400);
       return next(new Error('Invalid role selected'));
     }
@@ -142,11 +142,6 @@ export const updateAdminUser = async (req, res, next) => {
       res.status(404);
       return next(new Error('User not found'));
     }
-    if (/^super\s*admin$/i.test(String(user.role || '').trim())) {
-      // A Super Admin owns the backups; an Admin must not be able to reset their password or deactivate them.
-      res.status(403);
-      return next(new Error('Super Admin accounts cannot be changed from User Management'));
-    }
     const previous = {
       name: user.name,
       email: user.email,
@@ -161,7 +156,7 @@ export const updateAdminUser = async (req, res, next) => {
       // an account to or from Admin here has previously caused an admin to
       // accidentally demote their own account. Role changes here are limited
       // to the roles this screen creates.
-      if (user.role === 'Admin' || role === 'Admin' || /^super\s*admin$/i.test(String(role).trim())) {
+      if (user.role === 'Admin' || role === 'Admin') {
         res.status(400);
         return next(new Error('Administrator accounts cannot be re-assigned from User Management'));
       }
@@ -258,11 +253,6 @@ export const deleteAdminUser = async (req, res, next) => {
     if (!user || user.role === 'Customer') {
       res.status(404);
       return next(new Error('User not found'));
-    }
-    if (/^super\s*admin$/i.test(String(user.role || '').trim())) {
-      // A Super Admin owns the backups; an Admin must not be able to reset their password or deactivate them.
-      res.status(403);
-      return next(new Error('Super Admin accounts cannot be changed from User Management'));
     }
 
     await User.findByIdAndDelete(id);

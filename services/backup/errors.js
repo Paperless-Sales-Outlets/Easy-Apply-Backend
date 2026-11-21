@@ -2,7 +2,7 @@ import { AppError } from '../../middleware/errorHandler.js';
 import { getDbConnection } from './config.js';
 
 /**
- * An expected failure with a message that is safe to show a Super Admin.
+ * An expected failure with a message that is safe to show to the user.
  * `code` lets the UI react (e.g. BACKUP_LIMIT_REACHED).
  */
 export class BackupError extends AppError {

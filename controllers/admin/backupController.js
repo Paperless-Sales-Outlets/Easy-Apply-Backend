@@ -3,11 +3,12 @@ import * as backups from '../../services/backup/backupService.js';
 import * as repo from '../../services/backup/backupRepository.js';
 import { listAudit, exportAuditCsv, recordBackupAudit, actorOf, AUDIT_ACTIONS } from '../../services/backup/auditLog.js';
 import { verifyActorPassword } from '../../services/backup/reauth.js';
+import { canUseBackups } from '../../services/backup/access.js';
 import { issueDownloadToken, consumeDownloadToken } from '../../services/backup/downloadTokens.js';
 import { BackupError, describeFailure, redact } from '../../services/backup/errors.js';
 import { startOfSriLankaDay, endOfSriLankaDay } from '../../utils/sriLankaDate.js';
 
-// Every handler here sits behind protect + requireSuperAdmin (see backupRoutes.js).
+// Every handler here sits behind protect + requireBackupAccess (see backupRoutes.js).
 // Expected failures are BackupError (safe, friendly message + code); anything
 // else is logged in full on the server and shown generically.
 
@@ -42,6 +43,11 @@ const wrap = (handler) => async (req, res, next) => {
     next(error);
   }
 };
+
+/** Whether the signed-in user may use the Backup Dashboard (the frontend shows the menu item from this). */
+export const getAccess = wrap(async (req, res) => {
+  res.json({ success: true, allowed: canUseBackups(req.user) });
+});
 
 export const getSummary = wrap(async (req, res) => {
   res.json({ success: true, summary: await backups.getSummary() });

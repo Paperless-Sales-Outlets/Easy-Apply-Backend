@@ -23,7 +23,7 @@ import { BackupError, redact } from './errors.js';
 // portal) into the backup bundle, which is then encrypted again as a whole.
 //
 // A restore uploads the objects back. It NEVER deletes bucket files that are not
-// in the backup, unless the Super Admin explicitly asks for that.
+// in the backup, unless the admin explicitly asks for that.
 // -----------------------------------------------------------------------------
 
 const CONCURRENCY = 4;

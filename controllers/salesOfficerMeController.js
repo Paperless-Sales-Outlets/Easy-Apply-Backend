@@ -27,7 +27,7 @@ export const getMyStatistics = async (req, res, next) => {
       return next(new Error('Authentication required'));
     }
 
-    if (!isSalesOfficerRole(user.role) && !['admin', 'super admin'].includes(String(user.role).toLowerCase())) {
+    if (!isSalesOfficerRole(user.role) && String(user.role).toLowerCase() !== 'admin') {
       res.status(403);
       return next(new Error('Only registered Sales Officers can access this resource'));
     }
@@ -60,7 +60,7 @@ export const getMyApplications = async (req, res, next) => {
       return next(new Error('Authentication required'));
     }
 
-    if (!isSalesOfficerRole(user.role) && !['admin', 'super admin'].includes(String(user.role).toLowerCase())) {
+    if (!isSalesOfficerRole(user.role) && String(user.role).toLowerCase() !== 'admin') {
       res.status(403);
       return next(new Error('Only registered Sales Officers can access this resource'));
     }
@@ -153,7 +153,7 @@ export const getMyQr = async (req, res, next) => {
       return next(new Error('Authentication required'));
     }
 
-    if (!isSalesOfficerRole(user.role) && !['admin', 'super admin'].includes(String(user.role).toLowerCase())) {
+    if (!isSalesOfficerRole(user.role) && String(user.role).toLowerCase() !== 'admin') {
       res.status(403);
       return next(new Error('Only registered Sales Officers can access this resource'));
     }

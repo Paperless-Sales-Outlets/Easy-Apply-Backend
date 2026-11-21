@@ -1,6 +1,6 @@
 // While a restore replaces the database, every other API request is answered
 // with 503 so no customer writes land in data that is about to be replaced.
-// The backup endpoints and the health check stay reachable so the Super Admin
+// The backup endpoints and the health check stay reachable so the admin
 // can watch the restore finish.
 
 let state = null;

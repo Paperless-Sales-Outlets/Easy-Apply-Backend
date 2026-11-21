@@ -3,7 +3,7 @@ import { getConfig } from './config.js';
 import { BackupError } from './errors.js';
 
 // Short-lived, single-use download links. A token is only half of the proof:
-// the download request must ALSO carry the Super Admin's own bearer token, and
+// the download request must ALSO carry the user's own bearer token, and
 // the token must have been issued to that same user for that same backup, so a
 // leaked link is useless on its own. Tokens live in memory (single PM2
 // process); a restart simply invalidates outstanding links.
