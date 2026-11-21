@@ -48,6 +48,7 @@ BACKUP_LOCAL_PATH=/var/backups/slt-easyapply
 BACKUP_ENCRYPTION_KEY=<64 hex characters>
 BACKUP_DATABASE_URL=postgresql://<user>:<password>@<direct-host>:5432/<db>?sslmode=require
 BACKUP_MAX_COUNT=30
+BACKUP_ALLOWED_ROLES=Admin
 BACKUP_WARNING_DAYS=7
 TRUST_PROXY=1
 # optional: BACKUP_TEST_RESTORE_URL, BACKUP_TMP_DIR, PG_DUMP_PATH, PG_RESTORE_PATH
@@ -55,6 +56,7 @@ TRUST_PROXY=1
 ```
 
 - **Encryption key:** generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. **Immediately store a copy outside the server** (company password manager or vault). Without it no backup can be restored.
+- **`BACKUP_ALLOWED_ROLES`:** the roles that may use backups, comma-separated (default `Admin`). In production, restrict access by changing this value and restarting the backend.
 - **Direct database URL:** port **5432**, not 6543, and no `pooler` in the host name.
 - **`TRUST_PROXY=1`** so the activity log records real client IPs behind nginx.
 
@@ -92,31 +94,35 @@ pm2 logs easy-apply-backend-backup --lines 50 --nostream | grep -i "SINGLE backe
 
 ## 6. Apply the database migration
 
-Back up first if you can (Supabase dashboard backup). The migration only creates two new tables and is safe to repeat.
+Back up first if you can (Supabase dashboard backup). The first migration only creates two new tables; the second turns any old "Super Admin" user into a normal Admin (it changes nothing if there is none). Both are safe to repeat.
 
 ```bash
 cd <APP>
 set -a; . ./.env; set +a
 psql "$BACKUP_DATABASE_URL" -f db/migrations/2026-11-19-backups.sql
+psql "$BACKUP_DATABASE_URL" -f db/migrations/2026-11-21-remove-super-admin.sql
 ```
 Check:
 ```bash
 psql "$BACKUP_DATABASE_URL" -tAc "select to_regclass('public.backups'), to_regclass('public.backup_audit_logs')"
 # both names must be printed (not empty)
+psql "$BACKUP_DATABASE_URL" -tAc "select count(*) from users where role ilike 'super admin'"
+# must print 0
 ```
 
-## 7. Restart the backend and create the first Super Admin
+## 7. Restart the backend and check who can see Backups
 
 ```bash
 pm2 restart easy-apply-backend-backup --update-env
 curl -s http://127.0.0.1:5050/api/health                 # "dbConnected":true
-node scripts/create_super_admin.js <staff-email>         # the account must already exist and have a password
 ```
-Check: the person signs out and in again, and sees **Backups** in the menu. A normal Admin must **not** see it (and gets 403 from `/api/admin/backups`).
+There is no account to create: with the default `BACKUP_ALLOWED_ROLES=Admin`, any Admin can use backups.
+
+Check: an Admin signs in and sees **Backups** in the menu (Administration section). A user whose role is not in `BACKUP_ALLOWED_ROLES` (for example Staff) must **not** see it, and gets 403 from `/api/admin/backups/summary`.
 
 ## 8. First real backup, verify, test restore
 
-In the portal, as the Super Admin, open **Backups**, then the **Storage & retention** tab, and confirm every line under "Server readiness" is green: encryption key configured, direct database connection, single instance, `pg_dump` and `pg_restore` found.
+In the portal, as an allowed user (an Admin by default), open **Backups**, then the **Storage & retention** tab, and confirm every line under "Server readiness" is green: encryption key configured, direct database connection, single instance, `pg_dump` and `pg_restore` found.
 
 1. **Create backup** (type "Full database", note "First backup after setup"). It must end **Success**.
 2. Row menu, **Verify integrity**. It must pass.

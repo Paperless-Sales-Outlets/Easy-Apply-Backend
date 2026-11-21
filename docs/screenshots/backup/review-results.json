@@ -1,29 +1,34 @@
 {
-  "passed": 76,
+  "passed": 79,
   "failed": 0,
   "results": [
     {
-      "name": "admin: the Backups menu item is hidden",
+      "name": "manager: the Backups menu item is hidden",
       "ok": true,
       "detail": ""
     },
     {
-      "name": "admin: opening /admin/backups shows no backup page",
+      "name": "manager: opening /admin/backups shows no backup page",
       "ok": true,
       "detail": ""
     },
     {
-      "name": "admin: the API answers 403 to the summary",
+      "name": "manager: the API answers 403 to the summary",
       "ok": true,
       "detail": ""
     },
     {
-      "name": "admin: the API answers 403 to creating a backup",
+      "name": "manager: the API answers 403 to creating a backup",
       "ok": true,
       "detail": ""
     },
     {
-      "name": "admin: the API answers 403 to the activity log",
+      "name": "manager: the API answers 403 to the activity log",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "manager: GET /access tells the frontend \"not allowed\"",
       "ok": true,
       "detail": ""
     },
@@ -53,7 +58,17 @@
       "detail": ""
     },
     {
-      "name": "super admin: the Backups menu item is visible",
+      "name": "staff: GET /access tells the frontend \"not allowed\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "admin: the Backups menu item is visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "admin: GET /access tells the frontend \"allowed\"",
       "ok": true,
       "detail": ""
     },
@@ -335,7 +350,7 @@
     {
       "name": "activity: CSV export downloads with a header and rows",
       "ok": true,
-      "detail": "backup-activity-2026-11-20.csv"
+      "detail": "backup-activity-2026-11-21.csv"
     },
     {
       "name": "warning: a backup older than 7 days shows the stale warning",
@@ -375,7 +390,7 @@
     {
       "name": "mobile: the dialog fits the screen",
       "ok": true,
-      "detail": "362px wide"
+      "detail": "361px wide"
     },
     {
       "name": "no JavaScript errors were logged in the browser console",

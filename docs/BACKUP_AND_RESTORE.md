@@ -1,8 +1,8 @@
 # Backup and Restore
 
-Manual, encrypted database backups for the SLT EasyApply portal, run from the **Backup Dashboard** in the admin portal. **Super Admin only.**
+Manual, encrypted database backups for the SLT EasyApply portal, run from the **Backup Dashboard** in the admin portal. Only the roles listed in `BACKUP_ALLOWED_ROLES` (default: **Admin**) can use it.
 
-There is no scheduler. Nothing is created, restored or deleted unless a Super Admin does it.
+There is no scheduler. Nothing is created, restored or deleted unless an allowed user does it.
 
 > Backups contain customer personal data (covered by Sri Lanka's Personal Data Protection Act). Backup files are encrypted, but treat every copy as sensitive.
 
@@ -18,18 +18,21 @@ There is no scheduler. Nothing is created, restored or deleted unless a Super Ad
 
 Backups run as background jobs. The API answers immediately (HTTP 202) and the dashboard polls for status. Only one backup, verify, test restore or restore runs at a time. `pg_dump` runs at low priority (`nice`) on Linux and takes only a consistent snapshot, so it does not block the live portal.
 
-### Role model
+### Who can use backups (`BACKUP_ALLOWED_ROLES`)
 
-Access requires `users.role = 'Super Admin'`. It is enforced on the server: every route in `routes/admin/backupRoutes.js` passes through `requireSuperAdmin`, and anyone else gets **403**. Hiding the menu item is only cosmetic.
+Access is decided by one setting in the server's `.env`:
 
-A Super Admin keeps all Admin permissions. The role cannot be assigned or edited from User Management; create one on the server:
-
-```bash
-node scripts/create_super_admin.js someone@slt.lk            # promote an existing staff account
-node scripts/create_super_admin.js someone@slt.lk --revoke   # back to Admin
+```
+BACKUP_ALLOWED_ROLES=Admin            # default
+BACKUP_ALLOWED_ROLES=Admin,Manager    # comma-separated; case and extra spaces are ignored
 ```
 
-The account must have a password (download and restore ask for it again). The person must sign out and in again.
+- A user may use the Backup Dashboard and **every** backup endpoint if their role is in the list and the account is active. Everyone else, and anyone not signed in, is refused: **403** for a signed-in user, 401 without a login. Customers can never use backups, even if "Customer" is listed. A missing or empty value means `Admin`.
+- This is enforced on the server by `requireBackupAccess` on every route in `routes/admin/backupRoutes.js`. The menu item and page are only shown when the server says yes (`GET /api/admin/backups/access` answers `{ "allowed": true | false }`), so the frontend does not hard-code any role name.
+- **In production, restrict access by editing `BACKUP_ALLOWED_ROLES`** (for example to `Admin` only, or to one named custom role) and restarting the backend (`pm2 reload ecosystem.config.cjs --update-env`).
+- The safety checks do not depend on the role: restore still needs the typed word `RESTORE` and the user's password again, and takes the automatic pre-restore backup; download still needs the password and the single-use 60-second link; every action is recorded in the activity log with who, when and IP address; the 30-backup limit and the "latest successful backup cannot be deleted" rule apply to everyone.
+- There is no separate "Super Admin" role. If an older database has users with that role, apply `db/migrations/2026-11-21-remove-super-admin.sql`: it turns them into normal Admins (safe to repeat).
+- The Storage & retention tab shows the roles currently allowed.
 
 ## Server setup
 
@@ -37,7 +40,7 @@ The account must have a password (download and restore ask for it again). The pe
    ```bash
    psql "$DATABASE_URL" -f db/migrations/2026-11-19-backups.sql
    ```
-   (`db/schema.sql` contains the same tables for fresh installs.)
+   (`db/schema.sql` contains the same tables for fresh installs.) If the database ever had a "Super Admin" user, also run `db/migrations/2026-11-21-remove-super-admin.sql`; otherwise it changes nothing.
 2. **Install PostgreSQL client tools** (`pg_dump`, `pg_restore`) with a major version **equal to or newer than** the database server, plus `tar`. Otherwise set `PG_DUMP_PATH` / `PG_RESTORE_PATH`.
 3. **Generate the encryption key** and put it in the server `.env`:
    ```bash
@@ -49,7 +52,7 @@ The account must have a password (download and restore ask for it again). The pe
 6. **Database privileges:** *Test restore* creates a temporary database, so that user needs `CREATEDB` (or set `BACKUP_TEST_RESTORE_URL` to a separate server where it is allowed). *Restore* needs a user that can drop and recreate the portal's tables.
 7. **Behind nginx:** set `TRUST_PROXY=1` so the activity log records real client IP addresses.
 8. **Run the backend as ONE instance** (see [Single instance](#single-instance)).
-9. Restart the backend (`pm2 reload ecosystem.config.cjs --update-env`) and create the first Super Admin.
+9. Set `BACKUP_ALLOWED_ROLES` (default `Admin`) and restart the backend (`pm2 reload ecosystem.config.cjs --update-env`). An Admin can then open **Backups**; no extra account setup is needed.
 
 All settings are documented in `.env.example` under "Backup & Restore". A step-by-step server checklist with a check command for every step is in [BACKUP_DEPLOYMENT_CHECKLIST.md](BACKUP_DEPLOYMENT_CHECKLIST.md).
 
@@ -80,7 +83,7 @@ Each backup records the backend it was stored in. After switching, older backups
 
 ## Creating a backup
 
-1. Sign in as a Super Admin and open **Backups**.
+1. Sign in as a user whose role is allowed (an Admin by default) and open **Backups**.
 2. Click **Create backup**, choose *Full database* or *Database + uploaded files*, and enter a required note (for example "Before release v2.3").
 3. Confirm. The row appears as **In progress** with its current stage, then **Success** or **Failed**. You can keep using the portal.
 
@@ -133,7 +136,7 @@ Restoring **replaces all current data** with the backup. Plan it.
 4. Keep the page open; it shows the stage and the result.
 
 **After**
-1. Staff accounts, passwords and sessions return to the state in the backup, so you may be signed out. If your own account did not exist then, you will need another Super Admin.
+1. Staff accounts, passwords and sessions return to the state in the backup, so you may be signed out. If your own account did not exist then, you will need another allowed user.
 2. Spot-check the portal (sign in, open a recent application).
 3. If the result is wrong, restore the "Auto pre-restore backup" the same way.
 4. The restore, with its safety backup ID, is in the activity log.
@@ -205,10 +208,11 @@ Backups cannot be decrypted without `BACKUP_ENCRYPTION_KEY` (and restored docume
 
 Every action is recorded in `backup_audit_logs`: created, verified, downloaded, test restored, restored, deleted, failed, with who, when, IP address, result and details. It is read-only, filterable by action, result, date and search text, and exportable to CSV from the **Activity log** tab. The table is excluded from backups and restores.
 
-## API (all Super Admin only, under `/api/admin/backups`)
+## API (roles in `BACKUP_ALLOWED_ROLES` only, under `/api/admin/backups`)
 
 | Method and path | Purpose |
 |---|---|
+| `GET /access` | `{ allowed: true | false }` for the signed-in user (any signed-in user may ask) |
 | `GET /summary`, `GET /settings` | Dashboard figures; storage and server readiness |
 | `GET /` | List (page, limit, status, type, search, from, to) |
 | `POST /` | Start a backup `{ type: "database" or "database_files", note }` (202) |
@@ -247,7 +251,7 @@ Put `pg_dump`/`pg_restore` on the PATH or set `PG_DUMP_PATH` / `PG_RESTORE_PATH`
 
 ## Reviewing the UI
 
-`Easy-Apply-Frontend/e2e/backupDashboard.review.mjs` drives the whole Backups page in Chrome with Playwright (75 checks: access control, create, progress, filters and pagination, details, verify, test restore, download, delete, restore, activity log and CSV, warnings, errors, narrow screens) and saves a screenshot of every screen to `docs/screenshots/backup/`. Prepare a disposable database with `scripts/backup_ui_review_setup.js`, start the backend and frontend against it (never against production), then run the script; the header of the script lists the environment variables.
+`Easy-Apply-Frontend/e2e/backupDashboard.review.mjs` drives the whole Backups page in Chrome with Playwright (79 checks: access control, create, progress, filters and pagination, details, verify, test restore, download, delete, restore, activity log and CSV, warnings, errors, narrow screens) and saves a screenshot of every screen to `docs/screenshots/backup/`. Prepare a disposable database with `scripts/backup_ui_review_setup.js`, start the backend and frontend against it (never against production), then run the script; the header of the script lists the environment variables.
 
 ## Troubleshooting
 

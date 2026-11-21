@@ -1,10 +1,10 @@
-# Manual Backup Dashboard (Super Admin only)
+# Manual Backup Dashboard (Admin access, configurable)
 
 **Branch:** `runeth` → `new-flow`, in both `Easy-Apply-Backend` and `Easy-Apply-Frontend`. *Draft: not opened yet.*
 
 ## What this adds
 
-A **Backups** page in the admin portal, for the **Super Admin** role only, to create, check, download, restore and delete encrypted database backups. Backups are **manual only**: there is no scheduler, and nothing is ever deleted automatically.
+A **Backups** page in the admin portal, for the roles listed in `BACKUP_ALLOWED_ROLES` (default: **Admin**), to create, check, download, restore and delete encrypted database backups. Backups are **manual only**: there is no scheduler, and nothing is ever deleted automatically.
 
 **Backend**
 - `backups` and `backup_audit_logs` tables (migration `db/migrations/2026-11-19-backups.sql`, also in `db/schema.sql`). They are excluded from every dump, so a restore never rolls back the backup history or its audit trail.
@@ -16,7 +16,8 @@ A **Backups** page in the admin portal, for the **Super Admin** role only, to cr
 - Supabase compatibility: direct connection only (`BACKUP_DATABASE_URL`, pooler refused), extensions and platform-owned objects left alone, `BACKUP_TEST_RESTORE_URL` when `CREATEDB` is not available.
 - **Optional, off by default:** include the customer-document storage bucket (`BACKUP_INCLUDE_SUPABASE_STORAGE`). Restore never deletes other bucket files unless explicitly asked.
 - Single-instance guard (startup warning; operations refused in cluster mode) and `ecosystem.config.cjs`.
-- Every `/api/admin/backups/*` route is behind `requireSuperAdmin`: anyone else gets **403**. The role is created only by `scripts/create_super_admin.js`, and cannot be assigned or edited in User Management. A Super Admin keeps all Admin permissions.
+- Every `/api/admin/backups/*` route is behind `requireBackupAccess`: only the roles in `BACKUP_ALLOWED_ROLES` (comma-separated, default `Admin`, case-insensitive, active accounts only, never Customers) are let in; anyone else gets **403**. In production the team can restrict access by changing that one setting. There is **no Super Admin role**: it was removed, and `db/migrations/2026-11-21-remove-super-admin.sql` turns any existing "Super Admin" user into an Admin.
+- `GET /api/admin/backups/access` tells the frontend whether to show the menu item, so no role name is hard-coded in the UI.
 
 **Frontend**
 - Backups page: summary tiles and warnings, create dialog (type, required note, confirm), live progress, filterable and paginated table, row actions (details, verify, download, test restore, restore, delete), activity log tab with CSV export, storage and retention tab.
@@ -27,18 +28,18 @@ A **Backups** page in the admin portal, for the **Super Admin** role only, to cr
 ## How it was tested
 
 **Real (no fakes), run on this machine:** native PostgreSQL 17.6 with the real `pg_dump`, `pg_restore` and `tar`, real encryption, real HTTP routes with real JWT auth, and an S3-compatible server (rclone `serve s3`; MinIO's Windows binary is no longer published).
-- `tests/integration/backupE2E.test.js`: **18 tests with local storage, 24 with S3 storage and the document bucket**, against realistic seed data (non-ASCII text, JSONB, 2,800+ rows):
+- `tests/integration/backupE2E.test.js`: **21 tests with local storage, 27 with S3 storage and the document bucket**, against realistic seed data (non-ASCII text, JSONB, 2,800+ rows):
   - full and "Database + files" backups; verify, including tamper detection
   - test restore: correct row counts, temporary database always dropped (also after a failure)
   - full restore: data identical to the backup (per-table fingerprints), uploads folder restored, "Auto pre-restore backup" created, maintenance mode on and off, backup history and audit tables **not** rolled back
   - restore failing midway: database unchanged (single transaction), maintenance mode off
   - download link: works once, expires, rejected without a bearer token and for a normal Admin
-  - 30-backup limit, latest-backup delete rule, 403 for non-Super Admin
+  - 30-backup limit, latest-backup delete rule, 403 for every role that is not allowed, and `BACKUP_ALLOWED_ROLES` with several roles
   - no `CREATEDB`, pooled URL refused, extension in its own schema, document bucket (off by default, restore never deletes extras unless asked)
 - `tests/integration/backupS3Multipart.test.js`: 5 tests with a fake client plus 3 against the real S3 server (including a 70 MiB file with the default threshold).
-- **Browser review:** `Easy-Apply-Frontend/e2e/backupDashboard.review.mjs` (Playwright + Chrome) ran **75 checks** across every screen, as Super Admin, Admin and Staff, with screenshots below. It found and fixed four UI problems.
+- **Browser review:** `Easy-Apply-Frontend/e2e/backupDashboard.review.mjs` (Playwright + Chrome) ran **79 checks** across every screen, as Admin (allowed), Manager and Staff (refused), with screenshots below. It found and fixed four UI problems.
 
-**With fakes / offline:** 63 unit tests (roles on every endpoint, crypto, storage adapters, Supabase rules, single-instance guard, bucket backup against an in-memory S3) and 41 service tests with fake `pg_dump`/`pg_restore`. Frontend: 110 tests (9 new), lint clean, production build OK.
+**With fakes / offline:** 73 unit tests (roles on every endpoint, BACKUP_ALLOWED_ROLES, crypto, storage adapters, Supabase rules, single-instance guard, bucket backup against an in-memory S3) and 41 service tests with fake `pg_dump`/`pg_restore`. Frontend: 112 tests (11 new), lint clean, production build OK.
 
 Bugs found by the real run and fixed (not visible with fakes):
 1. Restore and test restore failed: a dump of the `public` schema lists `CREATE/DROP SCHEMA public` and extensions. Now restored through a filtered `pg_restore --use-list`.
@@ -62,7 +63,7 @@ All in `docs/screenshots/backup/` (taken by the review script):
 | Stale warning, 30-backup limit | `29`–`31` |
 | Errors | `32`, `33` |
 | Narrow screen and tablet | `34`–`37` |
-| Admin without the menu item | `01-admin-has-no-backups-menu.png` |
+| A role that is not allowed (Manager) has no menu item; Admin has it | `01-manager-has-no-backups-menu.png`, `02-admin-menu.png` |
 
 ## Known limits
 
@@ -82,11 +83,12 @@ All in `docs/screenshots/backup/` (taken by the review script):
 2. **Customer-document bucket:** turn on `BACKUP_INCLUDE_SUPABASE_STORAGE`? Backups become larger and contain NIC images (already encrypted by the portal, and encrypted again).
 3. **Encryption keys:** where are `BACKUP_ENCRYPTION_KEY` and `DOCUMENT_ENCRYPTION_KEY` kept outside the server, and who holds them?
 4. **Supabase access:** is the direct connection (port 5432, IPv6 or IPv4 add-on) available from the server, and can the database user have `CREATEDB` (or is a separate test-restore server provided)?
-5. **Who becomes Super Admin** (named people), and who may restore.
+5. **Which roles may use backups in production** (`BACKUP_ALLOWED_ROLES`: all Admins by default, or fewer), and who may restore.
 6. **Backup storage:** local folder or S3 bucket, and the retention policy beyond 30 backups.
 
 ## Merge notes
 
 - Apply `db/migrations/2026-11-19-backups.sql` before using the feature (it is safe to repeat).
 - Follow [BACKUP_DEPLOYMENT_CHECKLIST.md](BACKUP_DEPLOYMENT_CHECKLIST.md). Deploying the branch does not apply the migration or enable anything: with no `BACKUP_ENCRYPTION_KEY` the feature refuses to run.
-- No existing endpoint changes behaviour, except that a Super Admin passes wherever an Admin does and the Super Admin role cannot be edited from User Management.
+- No existing endpoint changes behaviour: the earlier Super Admin special cases were removed again, so User Management and the other admin routes behave exactly as before this feature.
+- Apply `db/migrations/2026-11-21-remove-super-admin.sql` on any database that ran the first version of this branch (it only changes rows if a "Super Admin" user exists).
