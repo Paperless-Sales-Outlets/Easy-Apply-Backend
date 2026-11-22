@@ -25,6 +25,14 @@ if (TEST_URL) {
   }
   process.env.DATABASE_URL = TEST_URL;
   process.env.DATABASE_SSL = 'false';
+  // The project's real .env may define these (dotenv loads it); the backup code would prefer them
+  // over DATABASE_URL and connect to a REAL database. Tests must only ever use the local test server.
+  delete process.env.BACKUP_DATABASE_URL;
+  delete process.env.BACKUP_TEST_RESTORE_URL;
+  delete process.env.BACKUP_ADMIN_DATABASE;
+  // dotenv runs when the backup modules are imported (after the deletes above) and would put those
+  // variables straight back from the real .env. Point it at a file that does not exist.
+  process.env.DOTENV_CONFIG_PATH = path.join(os.tmpdir(), 'slt-no-such.env');
 }
 
 const mod = TEST_URL
@@ -140,6 +148,10 @@ describe('Backup service', { skip: skipReason }, () => {
 
   before(async () => {
     pool = mod.db.pool;
+    // Safety net: every connection the backup code makes (locks, test-restore databases) must be the local test server.
+    for (const [label, host] of [['backup connection', config.getDbConnection().host], ['test-restore connection', config.getTestRestoreConnection().host]]) {
+      assert.ok(['127.0.0.1', 'localhost', '::1'].includes(host), `refusing to run: the ${label} is "${host}", not the local test server`);
+    }
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'slt-backup-svc-'));
     uploadsDir = path.join(root, 'uploads');
     fs.mkdirSync(uploadsDir);
@@ -288,6 +300,56 @@ describe('Backup service', { skip: skipReason }, () => {
       }
       const summary = await service.getSummary();
       assert.equal(summary.activeJob, null);
+    });
+
+    const advisoryLocks = async () => Number((await pool.query(`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory'`)).rows[0].n);
+
+    test('the database lock is held on its own connection while a job runs, and is gone afterwards (no leak)', async () => {
+      assert.equal(await advisoryLocks(), 0);
+      const release = await lock.acquireJobLock({ op: 'backup' });
+      assert.equal(await advisoryLocks(), 1, 'one advisory lock while the job runs');
+      await release();
+      assert.equal(await advisoryLocks(), 0, 'released: nothing is left behind');
+      await release(); // releasing twice is harmless
+      assert.equal(await advisoryLocks(), 0);
+    });
+
+    test('many backups in a row never leave a lock behind, so none is ever refused as "already running"', async () => {
+      for (let i = 0; i < 3; i += 1) {
+        const row = await makeBackup('database', `Back to back ${i + 1}`);
+        assert.equal(row.status, 'success');
+      }
+      assert.equal(await advisoryLocks(), 0);
+    });
+
+    test('a lock held by another session (a second process) still refuses a new job', async () => {
+      const pg = (await import('pg')).default;
+      const c = config.getDbConnection();
+      const other = new pg.Client({ host: c.host, port: Number(c.port), user: c.user, password: c.password, database: c.database });
+      await other.connect();
+      try {
+        await other.query('SELECT pg_advisory_lock(7340212)'); // the backup lock key
+        await assert.rejects(lock.acquireJobLock({ op: 'backup' }), (e) => e.code === 'JOB_IN_PROGRESS' && e.statusCode === 409);
+        assert.equal(lock.getActiveJob(), null, 'a refused attempt does not leave the in-process lock set');
+      } finally {
+        await other.end();
+      }
+      const release = await lock.acquireJobLock({ op: 'backup' }); // free again once the other session is gone
+      await release();
+    });
+
+    test('a stale lock left on the OLD key by the earlier pooled-connection bug does not block anything', async () => {
+      const pg = (await import('pg')).default;
+      const c = config.getDbConnection();
+      const stale = new pg.Client({ host: c.host, port: Number(c.port), user: c.user, password: c.password, database: c.database });
+      await stale.connect();
+      try {
+        await stale.query('SELECT pg_advisory_lock(7340211)'); // the old key
+        const row = await makeBackup('database', 'With a stale old lock around');
+        assert.equal(row.status, 'success');
+      } finally {
+        await stale.end();
+      }
     });
   });
 

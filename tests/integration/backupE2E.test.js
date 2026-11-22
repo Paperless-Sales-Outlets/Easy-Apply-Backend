@@ -89,6 +89,9 @@ if (!skipReason) {
     NODE_ENV: 'test',
   });
   for (const key of ['BACKUP_DATABASE_URL', 'BACKUP_TEST_RESTORE_URL', 'BACKUP_STORAGE']) delete process.env[key];
+  // dotenv runs when the backup modules are imported (after the deletes above) and would put these back
+  // from the project's real .env, pointing the tests at a REAL database. Make it load nothing.
+  process.env.DOTENV_CONFIG_PATH = path.join(root, 'no-such.env');
 
   // The same suite can run against an S3-compatible server (MinIO, rclone serve s3, ...):
   //   BACKUP_TEST_S3_ENDPOINT=http://127.0.0.1:9000 BACKUP_TEST_S3_BUCKET=slt-backup-test
@@ -209,6 +212,9 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
     pool = m.db.pool;
     const who = (await pool.query('SELECT current_database() AS db, inet_server_addr()::text AS addr')).rows[0];
     assert.equal(who.db, DB_NAME);
+    for (const [label, host] of [['backup connection', config.getDbConnection().host], ['test-restore connection', config.getTestRestoreConnection().host]]) {
+      assert.ok(['127.0.0.1', 'localhost', '::1'].includes(host), `refusing to run: the ${label} is "${host}", not the local test server`);
+    }
     assert.ok(!who.addr || who.addr.startsWith('127.') || who.addr === '::1');
     await m.db.default();
 
