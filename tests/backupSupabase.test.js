@@ -35,15 +35,29 @@ describe('direct connection, never the pooler', () => {
 
   test('a pooled BACKUP_DATABASE_URL is refused too', () => {
     process.env.BACKUP_DATABASE_URL = POOLED;
-    assert.throws(() => getDbConnection(), (e) => e.code === 'DB_POOLER_NOT_ALLOWED' && /BACKUP_DATABASE_URL points at a connection pooler/.test(e.message));
+    assert.throws(() => getDbConnection(), (e) => e.code === 'DB_POOLER_NOT_ALLOWED' && /BACKUP_DATABASE_URL points at a transaction-mode pooler/.test(e.message));
   });
 
-  test('recognises the pooler by port, host name or pgbouncer flag', () => {
+  test('refuses a transaction-mode pooler (port 6543 or the pgbouncer flag), whatever the host is called', () => {
     const base = { host: 'db.example.com', port: '5432', pgbouncer: false };
     assert.equal(isPoolerConnection(base), false);
     assert.equal(isPoolerConnection({ ...base, port: '6543' }), true);
-    assert.equal(isPoolerConnection({ ...base, host: 'aws-0-x.pooler.supabase.com' }), true);
+    assert.equal(isPoolerConnection({ ...base, host: 'aws-0-x.pooler.supabase.com', port: '6543' }), true);
     assert.equal(isPoolerConnection({ ...base, pgbouncer: true }), true);
+  });
+
+  test('the Supabase SESSION pooler (same pooler host, port 5432) is accepted — for networks without IPv6', () => {
+    process.env.BACKUP_DATABASE_URL = 'postgresql://postgres.abcdefgh:s3cretPW@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require';
+    const c = getDbConnection();
+    assert.equal(c.host, 'aws-0-ap-southeast-1.pooler.supabase.com');
+    assert.equal(c.port, '5432');
+    assert.equal(c.user, 'postgres.abcdefgh');
+    assert.equal(isPoolerConnection(c), false);
+  });
+
+  test('the same pooler host on port 6543 stays refused', () => {
+    process.env.BACKUP_DATABASE_URL = 'postgresql://postgres.abcdefgh:s3cretPW@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres';
+    assert.throws(() => getDbConnection(), (e) => e.code === 'DB_POOLER_NOT_ALLOWED');
   });
 
   test('a local direct URL is accepted', () => {

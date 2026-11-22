@@ -48,7 +48,7 @@ BACKUP_ALLOWED_ROLES=Admin,Manager    # comma-separated; case and extra spaces a
    ```
    Keep a copy in a password manager or secrets vault, separate from the backups. **Without this key a backup cannot be restored.** There is no fallback key; with no key set, backups are refused.
 4. **Choose storage** (see below) and make the folder or bucket.
-5. **Database connection:** backups use `BACKUP_DATABASE_URL`, the **direct** connection (normally port 5432), never the pooler (port 6543). If only a pooled `DATABASE_URL` exists, backups refuse to start with a clear message. See [Supabase](#supabase) below.
+5. **Database connection:** backups use `BACKUP_DATABASE_URL`: the **direct** connection (port 5432) or the Supabase **session pooler** (same pooler host, port 5432). The transaction pooler (port 6543) is refused. If only a port-6543 `DATABASE_URL` exists, backups refuse to start with a clear message. See [Supabase](#supabase) below.
 6. **Database privileges:** *Test restore* creates a temporary database, so that user needs `CREATEDB` (or set `BACKUP_TEST_RESTORE_URL` to a separate server where it is allowed). *Restore* needs a user that can drop and recreate the portal's tables.
 7. **Behind nginx:** set `TRUST_PROXY=1` so the activity log records real client IP addresses.
 8. **Run the backend as ONE instance** (see [Single instance](#single-instance)).
@@ -160,8 +160,8 @@ The job lock ("one backup or restore at a time"), the maintenance-mode switch du
 
 Backups must talk to PostgreSQL directly:
 
-- Set `BACKUP_DATABASE_URL` to the **direct** connection string (`db.<project-ref>.supabase.co`, port **5432**, `?sslmode=require`). The portal itself can keep using the pooled `DATABASE_URL`. If `DATABASE_URL` is a pooler address (port 6543, host containing `pooler`, or `pgbouncer=true`) and `BACKUP_DATABASE_URL` is not set, backups refuse to start: pg_dump needs a session-level connection and a restore must run as one transaction.
-- The direct Supabase host is **IPv6 only** unless the project has the IPv4 add-on. If the server cannot reach it, either enable the add-on or use the session-mode pooler address on port 5432 *only after confirming* a pg_dump works through it (the check above treats any host containing `pooler` as a pooler and refuses it by design, so this needs a decision).
+- Set `BACKUP_DATABASE_URL` to a **session** connection string: the direct one (`db.<project-ref>.supabase.co`, port **5432**) or the session pooler (the same host as your pooled `DATABASE_URL`, with port **5432** instead of 6543 and the same `postgres.<project-ref>` user). Add `?sslmode=require`. The portal itself can keep using the pooled `DATABASE_URL`. If `DATABASE_URL` uses port 6543 (or `pgbouncer=true`) and `BACKUP_DATABASE_URL` is not set, backups refuse to start: pg_dump needs a session-level connection and a restore must run as one transaction.
+- The direct Supabase host is **IPv6 only** unless the project has the IPv4 add-on. On a network without IPv6, `pg_dump` fails with `could not translate host name`. Use the **session pooler** instead (same pooler host as `DATABASE_URL`, port 5432): a schema-only `pg_dump` through it was verified against a real Supabase project. *Test restore* creates and connects to a temporary database, which may not work through a pooler; if it does not, set `BACKUP_TEST_RESTORE_URL` to a direct connection (this has not been verified).
 - **Extensions** (`uuid-ossp`, `pgcrypto`, ...) are never dumped or dropped. For *Test restore*, the extensions the tables use are detected in the archive and created in the temporary database, in the same schema as in the source (Supabase uses `extensions`). If one is unavailable on the test server, the message says which.
 - **Supabase-owned objects:** the dump leaves out publications (e.g. `supabase_realtime`), subscriptions, security labels, ownership and grants, and the restore never touches the `public` schema object itself.
 - **CREATEDB:** *Test restore* needs it. Without it the result says so and suggests `BACKUP_TEST_RESTORE_URL` (a separate PostgreSQL server where a temporary database may be created). *Verify integrity* works without it.
@@ -264,7 +264,8 @@ Put `pg_dump`/`pg_restore` on the PATH or set `PG_DUMP_PATH` / `PG_RESTORE_PATH`
 | Server version mismatch from `pg_dump` | Install client tools at least as new as the server |
 | Checksum does not match | The file was altered or damaged; use another backup |
 | The backup could not be decrypted | Wrong `BACKUP_ENCRYPTION_KEY` for that file |
-| Backups cannot use the pooled DATABASE_URL (`DB_POOLER_NOT_ALLOWED`) | Set `BACKUP_DATABASE_URL` to the direct connection (port 5432) |
+| Backups cannot use the pooled DATABASE_URL (`DB_POOLER_NOT_ALLOWED`) | Set `BACKUP_DATABASE_URL` to the direct connection or the session pooler (port 5432) |
+| `pg_dump: could not translate host name "db.….supabase.co"` | The direct host is IPv6-only and this network has no IPv6: use the session pooler string (same pooler host, port 5432) |
 | Backups cannot run while the backend has more than one instance (`MULTI_INSTANCE`) | Run the backend in PM2 fork mode, one instance (`ecosystem.config.cjs`) |
 | Test restore needs the CREATEDB privilege | Grant `CREATEDB`, or set `BACKUP_TEST_RESTORE_URL` to another PostgreSQL server |
 | The database uses the "..." extension, which is not available on the test restore server | Install the extension on the server used for test restores |

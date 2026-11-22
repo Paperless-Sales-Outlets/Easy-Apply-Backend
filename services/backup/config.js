@@ -62,9 +62,16 @@ const parseConnection = (raw, { database } = {}) => {
   };
 };
 
-/** True for a connection-pooler address (Supabase pooler / PgBouncer), which pg_dump and pg_restore must not use. */
+/**
+ * True for a TRANSACTION-mode pooler (Supabase port 6543, or PgBouncer flagged in the URL).
+ * pg_dump / pg_restore need a session-level connection, so these are refused.
+ *
+ * A SESSION-mode pooler is fine: on Supabase that is the same "pooler" host on port 5432
+ * (a good choice when the direct host is IPv6-only and the network has no IPv6). So the host
+ * name is deliberately NOT checked, only the port and the pgbouncer flag.
+ */
 export const isPoolerConnection = (connection) =>
-  String(connection.port) === '6543' || /pooler\./i.test(connection.host) || connection.pgbouncer === true;
+  String(connection.port) === '6543' || connection.pgbouncer === true;
 
 /**
  * Connection used by backup and restore. BACKUP_DATABASE_URL (the DIRECT
@@ -83,8 +90,8 @@ export const getDbConnection = () => {
   if (isPoolerConnection(connection)) {
     throw new BackupError(
       explicit
-        ? 'BACKUP_DATABASE_URL points at a connection pooler (port 6543 / "pooler" host). Backups need the direct database connection, normally port 5432.'
-        : 'Backups cannot use the pooled DATABASE_URL (port 6543 / "pooler" host). Set BACKUP_DATABASE_URL to the direct database connection string (port 5432).',
+        ? 'BACKUP_DATABASE_URL points at a transaction-mode pooler (port 6543). Backups need a session connection: the direct database (port 5432) or the session pooler (the same pooler host on port 5432).'
+        : 'Backups cannot use the pooled DATABASE_URL (transaction mode, port 6543). Set BACKUP_DATABASE_URL to the direct database connection string, or to the session pooler string (same host, port 5432).',
       503,
       'DB_POOLER_NOT_ALLOWED'
     );
@@ -103,7 +110,7 @@ export const getTestRestoreConnection = () => {
   const connection = parseConnection(explicit);
   if (isPoolerConnection(connection)) {
     throw new BackupError(
-      'BACKUP_TEST_RESTORE_URL points at a connection pooler. Use a direct connection.',
+      'BACKUP_TEST_RESTORE_URL points at a transaction-mode pooler (port 6543). Use a direct or session connection (port 5432).',
       503,
       'DB_POOLER_NOT_ALLOWED'
     );

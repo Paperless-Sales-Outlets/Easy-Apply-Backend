@@ -57,7 +57,7 @@ TRUST_PROXY=1
 
 - **Encryption key:** generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. **Immediately store a copy outside the server** (company password manager or vault). Without it no backup can be restored.
 - **`BACKUP_ALLOWED_ROLES`:** the roles that may use backups, comma-separated (default `Admin`). In production, restrict access by changing this value and restarting the backend.
-- **Direct database URL:** port **5432**, not 6543, and no `pooler` in the host name.
+- **Database URL for backups:** a session connection on port **5432** (direct host, or the session pooler host), never port 6543.
 - **`TRUST_PROXY=1`** so the activity log records real client IPs behind nginx.
 
 Checks (the key and password are never printed):
@@ -65,7 +65,7 @@ Checks (the key and password are never printed):
 cd <APP>
 node -e "const k=(process.env.BACKUP_ENCRYPTION_KEY||'');console.log('key length',k.length,/^[0-9a-f]{64}\$/i.test(k)?'OK':'INVALID')" 
 set -a; . ./.env; set +a
-node -e "const u=new URL(process.env.BACKUP_DATABASE_URL);console.log(u.hostname,u.port, u.port==='5432'&&!/pooler/.test(u.hostname)?'direct OK':'NOT DIRECT')"
+node -e "const u=new URL(process.env.BACKUP_DATABASE_URL);console.log(u.hostname,u.port, u.port==='5432'?'session connection OK':'NOT port 5432')"
 psql "$BACKUP_DATABASE_URL" -tAc "select current_database(), current_user"
 ```
 
