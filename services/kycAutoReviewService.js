@@ -492,31 +492,40 @@ export async function runKycAutoReview({ limit = 25 } = {}) {
       else summary.skipped += 1;
     };
 
+    // The waiting cases are found by id only. Each full row (with its images,
+    // which the checks need) is loaded just before that case is reviewed.
     const reviewedApps = await KycReview.find({ subjectType: 'application' }).distinct('subjectId');
-    const apps = await Application
+    const appCandidates = await Application
       .find({ status: 'pending', _id: { $nin: reviewedApps } })
+      .select('_id referenceNumber')
       .sort({ createdAt: 1 })
       .limit(limit);
-    for (const app of apps) {
-      try { tally(await reviewApplicationAuto(app)); } catch (err) {
+    for (const { _id, referenceNumber } of appCandidates) {
+      try {
+        const app = await Application.findById(_id);
+        if (app) tally(await reviewApplicationAuto(app));
+      } catch (err) {
         summary.skipped += 1;
-        console.error(`[kyc-auto] ${app.referenceNumber} failed:`, err.message);
+        console.error(`[kyc-auto] ${referenceNumber || _id} failed:`, err.message);
       }
     }
 
     // Registered customers with captured ID images and no application yet.
     const reviewedAccounts = await KycReview.find({ subjectType: 'account' }).distinct('subjectId');
     const appNics = new Set((await Application.distinct('nic')).map((n) => String(n).toUpperCase()));
-    const customers = await Customer.find({
+    const customerCandidates = await Customer.find({
       'identityDocuments.nicFront': { $exists: true },
       _id: { $nin: reviewedAccounts },
       $or: [{ kycStatus: { $exists: false } }, { kycStatus: 'pending' }],
-    }).sort({ 'identityDocuments.capturedAt': 1 }).limit(limit);
+    }).select('_id NIC').sort({ 'identityDocuments.capturedAt': 1 }).limit(limit);
 
-    for (const customer of customers.filter((c) => !appNics.has(String(c.NIC).toUpperCase()))) {
-      try { tally(await reviewAccountAuto(customer)); } catch (err) {
+    for (const { _id } of customerCandidates.filter((c) => !appNics.has(String(c.NIC).toUpperCase()))) {
+      try {
+        const customer = await Customer.findById(_id);
+        if (customer) tally(await reviewAccountAuto(customer));
+      } catch (err) {
         summary.skipped += 1;
-        console.error(`[kyc-auto] account ${customer._id} failed:`, err.message);
+        console.error(`[kyc-auto] account ${_id} failed:`, err.message);
       }
     }
   } finally {
@@ -622,8 +631,17 @@ export async function startRecheckAll({ requestedBy }) {
   return { job, started: true };
 }
 
+// Every sweep makes several database queries, so it runs every 15 minutes
+// rather than every minute to stay within the hosted database's request limits.
+// KYC_AUTO_REVIEW_INTERVAL_MINUTES changes it (minimum 1).
+const DEFAULT_INTERVAL_MINUTES = 15;
+const autoReviewIntervalMs = () => {
+  const minutes = Number(process.env.KYC_AUTO_REVIEW_INTERVAL_MINUTES);
+  return (Number.isFinite(minutes) && minutes >= 1 ? minutes : DEFAULT_INTERVAL_MINUTES) * 60 * 1000;
+};
+
 /** Starts the background sweep. Set KYC_AUTO_REVIEW=off to disable. */
-export function startKycAutoReviewScheduler(intervalMs = 60 * 1000) {
+export function startKycAutoReviewScheduler(intervalMs = autoReviewIntervalMs()) {
   if (String(process.env.KYC_AUTO_REVIEW || '').toLowerCase() === 'off') {
     console.log('[kyc-auto] automatic KYC review is switched off (KYC_AUTO_REVIEW=off)');
     return null;
@@ -632,6 +650,6 @@ export function startKycAutoReviewScheduler(intervalMs = 60 * 1000) {
   setTimeout(tick, 8000).unref?.();
   const timer = setInterval(tick, intervalMs);
   timer.unref?.();
-  console.log(`[kyc-auto] automatic KYC review running every ${Math.round(intervalMs / 1000)}s`);
+  console.log(`[kyc-auto] automatic KYC review running every ${Math.round(intervalMs / 60000)} min`);
   return timer;
 }
