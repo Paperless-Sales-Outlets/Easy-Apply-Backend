@@ -147,6 +147,8 @@ CREATE INDEX IF NOT EXISTS idx_applications_payment_status ON applications(payme
 CREATE INDEX IF NOT EXISTS idx_applications_nic ON applications(nic);
 CREATE INDEX IF NOT EXISTS idx_applications_phone ON applications(phone);
 CREATE INDEX IF NOT EXISTS idx_applications_completed_sale ON applications(completed_sale);
+CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_applications_form_data_gin ON applications USING gin (form_data);
 
 -- -----------------------------------------------------------------------------
 -- 6. New Connection Drafts
@@ -381,6 +383,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_details ON audit_logs USING gin (details);
 
 -- -----------------------------------------------------------------------------
 -- WebAuthn passkeys for admin / staff sign-in

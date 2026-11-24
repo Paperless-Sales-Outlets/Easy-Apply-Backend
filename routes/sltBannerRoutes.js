@@ -45,10 +45,12 @@ router.get('/', async (req, res) => {
         }),
       };
     }
+    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=60');
     res.json({ success: true, data: cache.items });
   } catch (err) {
     console.error('slt-banners:', err.message);
     // serve stale cache rather than an empty carousel
+    res.set('Cache-Control', 'public, max-age=60');
     res.json({ success: true, data: cache.items });
   }
 });

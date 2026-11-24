@@ -38,9 +38,11 @@ if (connectionString.includes('sslmode=')) {
 export const pool = new Pool({
   connectionString,
   ssl: determineSslConfig(),
-  max: parseInt(process.env.DB_POOL_MAX || '20', 10),
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+  // Supabase transaction pooler (port 6543) limits concurrent client connections on free tier.
+  // A max pool of 10 with short 10s idle lifecycle prevents connection starvation.
+  max: parseInt(process.env.DB_POOL_MAX || '10', 10),
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 5000,
 });
 
 let isConnected = false;

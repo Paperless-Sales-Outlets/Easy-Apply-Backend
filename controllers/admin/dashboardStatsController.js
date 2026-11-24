@@ -100,12 +100,20 @@ const latestApplications = async (limit, whereSql = '', values = []) => {
 
 const PENDING_STATUSES = ['pending', 'pending payment'];
 const TREND_DAYS = 7;
-const PENDING_LIST_CAP = 500;
+const PENDING_LIST_CAP = 50;
 const DAY_MS = 86400000;
 const DECIDED_ON = 'COALESCE(actioned_at, updated_at)';
 const slDay = (column) => `to_char(${column} AT TIME ZONE 'Asia/Colombo', 'YYYY-MM-DD')`;
 
+// Short in-memory cache for dashboard aggregations to prevent repeated DB hits
+let cachedFigures = { at: 0, data: null };
+const FIGURES_CACHE_TTL = 45 * 1000;
+
 async function dashboardFigures(statusCounts) {
+  if (Date.now() - cachedFigures.at < FIGURES_CACHE_TTL && cachedFigures.data) {
+    return cachedFigures.data;
+  }
+
   const today = sriLankaDay();
   const days = Array.from({ length: TREND_DAYS }, (_, i) =>
     new Date(Date.parse(today) - (TREND_DAYS - 1 - i) * DAY_MS).toISOString().slice(0, 10));
@@ -155,7 +163,7 @@ async function dashboardFigures(statusCounts) {
     : [];
   const actionerById = new Map(actioners.map((u) => [u.id, { _id: u.id, name: u.name, email: u.email }]));
 
-  return {
+  const result = {
     days,
     trends,
     kpis: {
@@ -172,6 +180,9 @@ async function dashboardFigures(statusCounts) {
     })),
     pendingListCapped: pendingApps.length >= PENDING_LIST_CAP,
   };
+
+  cachedFigures = { at: Date.now(), data: result };
+  return result;
 }
 
 // @desc    Operations dashboard statistics
@@ -190,7 +201,16 @@ export const getDashboardStats = async (req, res, next) => {
     const hasRange = Boolean(rangeMatch);
     const range = hasRange ? { createdAt: rangeMatch } : {};
 
-    const [statusRows, totalsByType, completedByType, recent] = await Promise.all([
+    // Run all aggregation and summary queries concurrently in a single round-trip
+    const [
+      statusRows,
+      totalsByType,
+      completedByType,
+      recent,
+      todaySubmissions,
+      approvedToday,
+      rejectedToday,
+    ] = await Promise.all([
       // Count per status
       Application.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
 
@@ -202,6 +222,21 @@ export const getDashboardStats = async (req, res, next) => {
 
       // Latest applications for the recent history table
       latestApplications(15),
+
+      // Submissions today
+      Application.countDocuments({ createdAt: { $gte: startOfToday } }),
+
+      // Approved today
+      Application.countDocuments({
+        status: { $in: COMPLETED_STATUSES },
+        updatedAt: { $gte: startOfToday },
+      }),
+
+      // Rejected today
+      Application.countDocuments({
+        status: 'rejected',
+        updatedAt: { $gte: startOfToday },
+      }),
     ]);
 
     const statusCounts = { pending: 0, 'pending payment': 0, approved: 0, confirmed: 0, rejected: 0, flagged: 0 };
@@ -210,17 +245,6 @@ export const getDashboardStats = async (req, res, next) => {
     });
 
     const pendingKyc = statusCounts.pending;
-    const todaySubmissions = await Application.countDocuments({ createdAt: { $gte: startOfToday } });
-    const [approvedToday, rejectedToday] = await Promise.all([
-      Application.countDocuments({
-        status: { $in: COMPLETED_STATUSES },
-        updatedAt: { $gte: startOfToday },
-      }),
-      Application.countDocuments({
-        status: 'rejected',
-        updatedAt: { $gte: startOfToday },
-      }),
-    ]);
 
     const totalsByTypeMap = Object.fromEntries(totalsByType.map((row) => [row._id, row.count]));
     const completedByTypeMap = Object.fromEntries(completedByType.map((row) => [row._id, row.count]));
