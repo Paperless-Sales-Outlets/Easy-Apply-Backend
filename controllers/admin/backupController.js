@@ -78,22 +78,40 @@ export const getBackup = wrap(async (req, res) => {
 });
 
 export const createBackup = wrap(async (req, res) => {
-  const backup = await backups.startBackup({
-    type: req.body?.type,
-    note: req.body?.note,
-    actor: actorOf(req),
-  });
-  res.status(202).json({ success: true, message: 'Backup started.', backup });
+  const actor = actorOf(req);
+  try {
+    const backup = await backups.startBackup({
+      type: req.body?.type,
+      note: req.body?.note,
+      actor,
+    });
+    res.status(202).json({ success: true, message: 'Backup started.', backup });
+  } catch (error) {
+    await recordBackupAudit({ action: 'created', actor, result: 'failure', details: { reason: describeFailure(error) } });
+    throw error;
+  }
 });
 
 export const verifyBackup = wrap(async (req, res) => {
-  const backup = await backups.startVerify({ id: req.params.id, actor: actorOf(req) });
-  res.status(202).json({ success: true, message: 'Verification started.', backup });
+  const actor = actorOf(req);
+  try {
+    const backup = await backups.startVerify({ id: req.params.id, actor });
+    res.status(202).json({ success: true, message: 'Verification started.', backup });
+  } catch (error) {
+    await recordBackupAudit({ backup: { id: req.params.id }, action: 'verified', actor, result: 'failure', details: { reason: describeFailure(error) } });
+    throw error;
+  }
 });
 
 export const testRestore = wrap(async (req, res) => {
-  const backup = await backups.startTestRestore({ id: req.params.id, actor: actorOf(req) });
-  res.status(202).json({ success: true, message: 'Test restore started.', backup });
+  const actor = actorOf(req);
+  try {
+    const backup = await backups.startTestRestore({ id: req.params.id, actor });
+    res.status(202).json({ success: true, message: 'Test restore started.', backup });
+  } catch (error) {
+    await recordBackupAudit({ backup: { id: req.params.id }, action: 'test_restored', actor, result: 'failure', details: { reason: describeFailure(error) } });
+    throw error;
+  }
 });
 
 export const RESTORE_PHRASE = 'RESTORE';
@@ -101,36 +119,34 @@ export const RESTORE_PHRASE = 'RESTORE';
 export const restoreBackup = wrap(async (req, res) => {
   const actor = actorOf(req);
   const { confirmation, password } = req.body || {};
-  const target = await backups.getBackupDetail(req.params.id);
-
-  if (confirmation !== RESTORE_PHRASE) {
-    throw new BackupError(`Type ${RESTORE_PHRASE} exactly to confirm the restore.`, 400, 'CONFIRMATION_REQUIRED');
-  }
+  let target;
   try {
-    await verifyActorPassword(req.user, password);
-  } catch (error) {
-    if (error instanceof BackupError) {
-      await recordBackupAudit({
-        backup: target,
-        action: 'restored',
-        actor,
-        result: 'failure',
-        details: { reason: error.code === 'PASSWORD_INCORRECT' || error.code === 'PASSWORD_LOCKED' ? 'password check failed' : error.message },
-      });
+    target = await backups.getBackupDetail(req.params.id);
+    if (confirmation !== RESTORE_PHRASE) {
+      throw new BackupError(`Type ${RESTORE_PHRASE} exactly to confirm the restore.`, 400, 'CONFIRMATION_REQUIRED');
     }
+    await verifyActorPassword(req.user, password);
+    // Deleting bucket files that are not in the backup is opt-in and must be an explicit `true`.
+    const backup = await backups.startRestore({
+      id: req.params.id,
+      actor,
+      deleteExtraDocuments: req.body?.deleteExtraDocuments === true,
+    });
+    res.status(202).json({
+      success: true,
+      message: 'Restore started. A safety backup of the current data is taken first.',
+      backup,
+    });
+  } catch (error) {
+    await recordBackupAudit({
+      backup: target || { id: req.params.id },
+      action: 'restored',
+      actor,
+      result: 'failure',
+      details: { reason: error.code === 'PASSWORD_INCORRECT' || error.code === 'PASSWORD_LOCKED' ? 'password check failed' : describeFailure(error) },
+    });
     throw error;
   }
-  // Deleting bucket files that are not in the backup is opt-in and must be an explicit `true`.
-  const backup = await backups.startRestore({
-    id: req.params.id,
-    actor,
-    deleteExtraDocuments: req.body?.deleteExtraDocuments === true,
-  });
-  res.status(202).json({
-    success: true,
-    message: 'Restore started. A safety backup of the current data is taken first.',
-    backup,
-  });
 });
 
 export const deleteBackup = wrap(async (req, res) => {
@@ -142,30 +158,28 @@ export const deleteBackup = wrap(async (req, res) => {
 
 export const createDownloadLink = wrap(async (req, res) => {
   const actor = actorOf(req);
-  const target = await backups.getBackupDetail(req.params.id);
   try {
+    await backups.getBackupDetail(req.params.id);
     await verifyActorPassword(req.user, req.body?.password);
+    const backup = await backups.assertDownloadable(req.params.id);
+    const { token, expiresInSec } = issueDownloadToken({ userId: actor.id, backupId: backup.id });
+    res.json({
+      success: true,
+      // Relative to the API base URL. Fetch it WITH the Authorization header: the link alone is not enough.
+      path: `/admin/backups/downloads/${token}`,
+      fileName: backup.file_name,
+      expiresInSec,
+    });
   } catch (error) {
-    if (error instanceof BackupError) {
-      await recordBackupAudit({
-        backup: target,
-        action: 'downloaded',
-        actor,
-        result: 'failure',
-        details: { reason: 'password check failed' },
-      });
-    }
+    await recordBackupAudit({
+      backup: { id: req.params.id },
+      action: 'downloaded',
+      actor,
+      result: 'failure',
+      details: { reason: error.code === 'PASSWORD_INCORRECT' || error.code === 'PASSWORD_LOCKED' ? 'password check failed' : describeFailure(error) },
+    });
     throw error;
   }
-  const backup = await backups.assertDownloadable(req.params.id);
-  const { token, expiresInSec } = issueDownloadToken({ userId: actor.id, backupId: backup.id });
-  res.json({
-    success: true,
-    // Relative to the API base URL. Fetch it WITH the Authorization header: the link alone is not enough.
-    path: `/admin/backups/downloads/${token}`,
-    fileName: backup.file_name,
-    expiresInSec,
-  });
 });
 
 export const downloadFile = async (req, res, next) => {

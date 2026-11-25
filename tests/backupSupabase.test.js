@@ -101,16 +101,20 @@ describe('restore list: Supabase- and platform-owned objects are left alone', ()
     '5002; 6106 17001 PUBLICATION TABLE public users postgres',
     '218; 1259 16410 TABLE public applications postgres',
     '4400; 2606 16420 CONSTRAINT public users users_pkey postgres',
+    '4401; 1259 16430 TABLE public audit_logs postgres',
+    '4402; 0 16430 TABLE DATA public audit_logs postgres',
+    '4403; 2606 16430 CONSTRAINT public audit_logs audit_logs_pkey postgres',
+    '4404; 1259 16431 INDEX public idx_audit_logs_created audit_logs postgres',
   ].join('\n');
 
-  test('comments out the schema, extensions and publications, and keeps tables, data and constraints', () => {
+  test('comments out platform and backup-history objects, and keeps application tables, data and constraints', () => {
     const { text, skipped } = buildRestoreList(toc);
-    assert.equal(skipped.length, 6);
+    assert.equal(skipped.length, 10);
     const lines = text.split('\n');
     for (const keep of ['TABLE public users', 'TABLE DATA public users', 'TABLE public applications', 'CONSTRAINT public users users_pkey']) {
       assert.ok(lines.some((l) => !l.startsWith(';') && l.includes(keep)), `${keep} must stay`);
     }
-    for (const drop of ['SCHEMA - public', 'EXTENSION - uuid-ossp', 'PUBLICATION - supabase_realtime', 'PUBLICATION TABLE']) {
+    for (const drop of ['SCHEMA - public', 'EXTENSION - uuid-ossp', 'PUBLICATION - supabase_realtime', 'PUBLICATION TABLE', 'TABLE public audit_logs', 'TABLE DATA public audit_logs', 'CONSTRAINT public audit_logs', 'INDEX public idx_audit_logs_created']) {
       assert.ok(lines.some((l) => l.startsWith(';') && l.includes(drop)), `${drop} must be commented out`);
     }
   });

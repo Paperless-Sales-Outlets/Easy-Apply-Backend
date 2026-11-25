@@ -42,8 +42,8 @@ export const getConfig = () => ({
   adminDatabase: process.env.BACKUP_ADMIN_DATABASE || 'postgres',
 });
 
-/** The tables that hold backup history; never included in a dump or touched by a restore. */
-export const EXCLUDED_TABLES = ['backups', 'backup_audit_logs'];
+/** Backup history and audit trails are never included in a dump or touched by a restore. */
+export const EXCLUDED_TABLES = ['backups', 'backup_audit_logs', 'audit_logs'];
 
 const parseConnection = (raw, { database } = {}) => {
   const url = new URL(raw);

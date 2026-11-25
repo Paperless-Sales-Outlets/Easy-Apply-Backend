@@ -1,3 +1,5 @@
+import { EXCLUDED_TABLES } from './config.js';
+
 // A custom-format dump made with `pg_dump --schema=public` still lists the
 // schema itself and any extension / schema comments. Restoring those breaks:
 //   - into a fresh database: CREATE SCHEMA public  -> "already exists"
@@ -18,6 +20,9 @@ const SKIPPED_ENTRY = [
   // Platform-owned, database-wide objects that older dumps may still list.
   /^\d+;\s+\d+\s+\d+\s+(?:PUBLICATION|PUBLICATION TABLE|PUBLICATION TABLES IN SCHEMA|SUBSCRIPTION|EVENT TRIGGER|SECURITY LABEL)\s/,
 ];
+const excludedTableEntry = new RegExp(
+  `(?:^|\\s)(?:${EXCLUDED_TABLES.map((table) => table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?=\\s|$)`
+);
 
 /**
  * @param {string} toc output of `pg_restore --list`
@@ -29,7 +34,7 @@ export function buildRestoreList(toc) {
     .split(/\r?\n/)
     .map((line) => {
       if (line.startsWith(';') || !line.trim()) return line;
-      if (SKIPPED_ENTRY.some((pattern) => pattern.test(line))) {
+      if (SKIPPED_ENTRY.some((pattern) => pattern.test(line)) || excludedTableEntry.test(line)) {
         skipped.push(line);
         return `;${line}`;
       }

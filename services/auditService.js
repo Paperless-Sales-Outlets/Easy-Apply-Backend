@@ -17,12 +17,13 @@ export const recordAudit = async ({
   metadata,
 }) => {
   const account = actorFrom(req, actor);
-  const actorId = account?._id || null;
+  const actorId = account?._id || account?.id || null;
   return AuditLog.create({
     userId: actorId,
     adminId: account && ['admin', 'staff'].includes(String(account.role).toLowerCase()) ? actorId : null,
     userName: account?.name || null,
     actorRole: account?.role || 'System',
+    ipAddress: String(req?.ip || account?.ip || '').slice(0, 50),
     action,
     module,
     targetId: targetId == null ? null : String(targetId),

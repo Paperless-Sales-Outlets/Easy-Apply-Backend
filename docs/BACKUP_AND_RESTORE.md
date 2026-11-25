@@ -10,7 +10,7 @@ There is no scheduler. Nothing is created, restored or deleted unless an allowed
 
 | Step | What happens |
 |---|---|
-| 1. Dump | `pg_dump` (custom format, compressed) of the `public` schema, without publications, subscriptions or security labels (platform-owned on Supabase). The backup-history tables (`backups`, `backup_audit_logs`) are excluded so a restore can never roll back the backup history or its audit trail. |
+| 1. Dump | `pg_dump` (custom format, compressed) of the `public` schema, without publications, subscriptions or security labels (platform-owned on Supabase). The backup-history and audit tables (`backups`, `backup_audit_logs`, `audit_logs`) are excluded so a restore can never roll back the backup history or its audit trail. |
 | 2. Files (optional) | "Database + uploaded files" also archives the uploads folder (`BACKUP_UPLOADS_PATH`, default `./uploads`). Customer documents in the storage bucket are included only if you turn on [`BACKUP_INCLUDE_SUPABASE_STORAGE`](#customer-documents-in-the-storage-bucket-optional). |
 | 3. Encrypt | Everything is bundled and encrypted with AES-256-GCM using `BACKUP_ENCRYPTION_KEY`. File extension: `.sltbak`. |
 | 4. Checksum | SHA-256 of the stored file is recorded, then the stored copy is re-read and compared. |
@@ -31,6 +31,7 @@ BACKUP_ALLOWED_ROLES=Admin,Manager    # comma-separated; case and extra spaces a
 - This is enforced on the server by `requireBackupAccess` on every route in `routes/admin/backupRoutes.js`. The menu item and page are only shown when the server says yes (`GET /api/admin/backups/access` answers `{ "allowed": true | false }`), so the frontend does not hard-code any role name.
 - **In production, restrict access by editing `BACKUP_ALLOWED_ROLES`** (for example to `Admin` only, or to one named custom role) and restarting the backend (`pm2 reload ecosystem.config.cjs --update-env`).
 - The safety checks do not depend on the role: restore still needs the typed word `RESTORE` and the user's password again, and takes the automatic pre-restore backup; download still needs the password and the single-use 60-second link; every action is recorded in the activity log with who, when and IP address; the 30-backup limit and the "latest successful backup cannot be deleted" rule apply to everyone.
+- New backup activity is stored in the shared `audit_logs` table and appears in **Admin > Audit Log**. The backup activity endpoint remains available for dashboard compatibility.
 - There is no separate "Super Admin" role. If an older database has users with that role, apply `db/migrations/2026-11-21-remove-super-admin.sql`: it turns them into normal Admins (safe to repeat).
 - The Storage & retention tab shows the roles currently allowed.
 
@@ -39,8 +40,9 @@ BACKUP_ALLOWED_ROLES=Admin,Manager    # comma-separated; case and extra spaces a
 1. **Apply the migration** (once per database):
    ```bash
    psql "$DATABASE_URL" -f db/migrations/2026-11-19-backups.sql
+   psql "$DATABASE_URL" -f db/migrations/2026-11-25-centralize-backup-audit.sql
    ```
-   (`db/schema.sql` contains the same tables for fresh installs.) If the database ever had a "Super Admin" user, also run `db/migrations/2026-11-21-remove-super-admin.sql`; otherwise it changes nothing.
+   The second migration copies historical backup activity into the shared audit log without deleting the original records and is safe to repeat. (`db/schema.sql` contains the tables for fresh installs.) If the database ever had a "Super Admin" user, also run `db/migrations/2026-11-21-remove-super-admin.sql`; otherwise it changes nothing.
 2. **Install PostgreSQL client tools** (`pg_dump`, `pg_restore`) with a major version **equal to or newer than** the database server, plus `tar`. Otherwise set `PG_DUMP_PATH` / `PG_RESTORE_PATH`.
 3. **Generate the encryption key** and put it in the server `.env`:
    ```bash
@@ -206,7 +208,7 @@ Backups cannot be decrypted without `BACKUP_ENCRYPTION_KEY` (and restored docume
 
 ## Activity log
 
-Every action is recorded in `backup_audit_logs`: created, verified, downloaded, test restored, restored, deleted, failed, with who, when, IP address, result and details. It is read-only, filterable by action, result, date and search text, and exportable to CSV from the **Activity log** tab. The table is excluded from backups and restores.
+Every action is recorded in the shared `audit_logs` table: created, verified, downloaded, test restored, restored, deleted and failed, with who, when, IP address, result and details. These records appear in the Admin Audit Log. The legacy `backup_audit_logs` table is retained for historical integrity, and its existing activity endpoint/export remains available to the Backup Dashboard; historical rows are copied by the centralization migration without deleting the originals. Both audit tables are excluded from backups and restores.
 
 ## API (roles in `BACKUP_ALLOWED_ROLES` only, under `/api/admin/backups`)
 

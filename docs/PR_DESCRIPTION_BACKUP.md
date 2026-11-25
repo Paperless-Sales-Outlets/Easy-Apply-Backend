@@ -7,7 +7,7 @@
 A **Backups** page in the admin portal, for the roles listed in `BACKUP_ALLOWED_ROLES` (default: **Admin**), to create, check, download, restore and delete encrypted database backups. Backups are **manual only**: there is no scheduler, and nothing is ever deleted automatically.
 
 **Backend**
-- `backups` and `backup_audit_logs` tables (migration `db/migrations/2026-11-19-backups.sql`, also in `db/schema.sql`). They are excluded from every dump, so a restore never rolls back the backup history or its audit trail.
+- `backups` and legacy `backup_audit_logs` tables (migration `db/migrations/2026-11-19-backups.sql`, also in `db/schema.sql`); new backup events use the shared `audit_logs` service/table. The centralization migration copies historical activity without deleting source rows, and all history/audit tables are excluded from dumps.
 - `pg_dump` custom-format backups, AES-256-GCM encryption (`BACKUP_ENCRYPTION_KEY`, no fallback), SHA-256 checksum re-checked after storing.
 - Storage adapters selected by `BACKUP_STORAGE=local|s3` (default local); S3 uses multipart upload, so there is no 5 GB limit.
 - Background jobs, one at a time: backup, verify, test restore (temporary database, always dropped), restore (automatic "Auto pre-restore backup", maintenance mode, single transaction), delete (not the latest successful backup).

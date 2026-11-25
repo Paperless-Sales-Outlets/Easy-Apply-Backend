@@ -123,6 +123,7 @@ const m = skipReason
       config: await import('../../services/backup/config.js'),
       crypto: await import('../../services/backup/crypto.js'),
       router: (await import('../../routes/admin/backupRoutes.js')).default,
+      auditRouter: (await import('../../routes/admin/auditRoutes.js')).default,
       express: (await import('express')).default,
       jwt: (await import('jsonwebtoken')).default,
       bcrypt: (await import('bcryptjs')).default,
@@ -183,7 +184,7 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
     return dest;
   };
 
-  const BACKUP_TABLES = new Set(['backups', 'backup_audit_logs']);
+  const BACKUP_TABLES = new Set(['backups', 'backup_audit_logs', 'audit_logs']);
   const dataTables = async () =>
     (await pool.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY 1`))
       .rows.map((r) => r.table_name)
@@ -229,6 +230,7 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
     const app = m.express();
     app.use(m.express.json());
     app.use('/api/admin/backups', m.router);
+    app.use('/api/admin/audit-logs', m.auditRouter);
     // eslint-disable-next-line no-unused-vars
     app.use((err, req, res, _next) => res.status(res.statusCode >= 400 ? res.statusCode : err.statusCode || 500).json({ message: err.message, code: err.code }));
     server = http.createServer(app);
@@ -267,7 +269,20 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
     assert.ok(!bytes.includes(Buffer.from('Applicant 1')), 'customer data must not be readable in the stored file');
     assert.equal(await m.crypto.sha256File(fetched), row.checksum_sha256);
     assert.equal(row.storage_backend, process.env.BACKUP_STORAGE || 'local');
-    assert.deepEqual((await pool.query(`SELECT action, result FROM backup_audit_logs WHERE backup_id = $1`, [row.id])).rows, [{ action: 'created', result: 'success' }]);
+    assert.deepEqual(
+      (await pool.query(
+        `SELECT action, details #>> '{metadata,result}' AS result FROM audit_logs
+         WHERE details #>> '{metadata,backupId}' = $1`,
+        [row.id]
+      )).rows,
+      [{ action: 'BACKUP_CREATED', result: 'success' }]
+    );
+    const auditResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/audit-logs?module=Backups&search=${encodeURIComponent(row.file_name)}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const auditBody = await auditResponse.json();
+    assert.equal(auditResponse.status, 200);
+    assert.ok(auditBody.logs.some((entry) => entry.action === 'BACKUP_CREATED' && entry.metadata?.result === 'success'));
   });
 
   test('"Database + uploaded files" backup contains the uploads folder', async () => {
@@ -286,6 +301,7 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
     assert.match(toc, /TABLE public applications/);
     assert.ok(!/TABLE public backups\b/.test(toc), 'backup-history tables are excluded from the dump');
     assert.ok(!/TABLE public backup_audit_logs\b/.test(toc));
+    assert.ok(!/TABLE public audit_logs\b/.test(toc));
   });
 
   // ---- verify ---------------------------------------------------------------
@@ -363,7 +379,7 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
     // A later backup and its audit entries must survive the restore.
     const later = await makeBackup('database', 'Made after the state to restore');
     const historyBefore = (await pool.query('SELECT count(*)::int n FROM backups')).rows[0].n;
-    const auditBefore = (await pool.query('SELECT count(*)::int n FROM backup_audit_logs')).rows[0].n;
+    const auditBefore = (await pool.query(`SELECT count(*)::int n FROM audit_logs WHERE details->>'module' = 'Backups'`)).rows[0].n;
 
     // Watch the real restore call: maintenance mode must be on during it.
     const seen = [];
@@ -400,9 +416,13 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
       assert.ok(ids.includes(later.id), 'a backup made after the restored state still exists');
       assert.ok(ids.includes(pre.id));
       assert.equal((await pool.query('SELECT count(*)::int n FROM backups')).rows[0].n, historyBefore + 1); // + pre-restore backup
-      assert.ok((await pool.query('SELECT count(*)::int n FROM backup_audit_logs')).rows[0].n > auditBefore);
+      assert.ok((await pool.query(`SELECT count(*)::int n FROM audit_logs WHERE details->>'module' = 'Backups'`)).rows[0].n > auditBefore);
       assert.deepEqual(
-        (await pool.query(`SELECT result FROM backup_audit_logs WHERE backup_id = $1 AND action = 'restored'`, [target.id])).rows,
+        (await pool.query(
+          `SELECT details #>> '{metadata,result}' AS result FROM audit_logs
+           WHERE details #>> '{metadata,backupId}' = $1 AND details #>> '{metadata,backupAction}' = 'restored'`,
+          [target.id]
+        )).rows,
         [{ result: 'success' }]
       );
     } finally {
@@ -433,7 +453,11 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
       assert.equal((await repo.getBackup(result.preRestoreBackupId)).status, 'success');
       assert.equal((await pool.query('SELECT count(*)::int n FROM backups')).rows[0].n, historyBefore + 1);
       assert.deepEqual(
-        (await pool.query(`SELECT result FROM backup_audit_logs WHERE backup_id = $1 AND action = 'restored'`, [target.id])).rows,
+        (await pool.query(
+          `SELECT details #>> '{metadata,result}' AS result FROM audit_logs
+           WHERE details #>> '{metadata,backupId}' = $1 AND details #>> '{metadata,backupAction}' = 'restored'`,
+          [target.id]
+        )).rows,
         [{ result: 'failure' }]
       );
     } finally {
@@ -468,7 +492,12 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
       const second = await fetch(url, { headers: auth(adminToken) });
       assert.equal(second.status, 410, 'a link works only once');
 
-      const audit = (await pool.query(`SELECT result, ip_address FROM backup_audit_logs WHERE backup_id = $1 AND action = 'downloaded' ORDER BY created_at`, [row.id])).rows;
+      const audit = (await pool.query(
+        `SELECT details #>> '{metadata,result}' AS result, ip_address FROM audit_logs
+         WHERE details #>> '{metadata,backupId}' = $1 AND details #>> '{metadata,backupAction}' = 'downloaded'
+         ORDER BY created_at`,
+        [row.id]
+      )).rows;
       assert.deepEqual(audit.map((a) => a.result), ['failure', 'success'], 'the wrong password and the real download are both recorded');
     });
 
@@ -625,7 +654,12 @@ describe('Backup pipeline, real end to end', { skip: skipReason }, () => {
 
         for (const [key, data] of Object.entries(originals)) assert.ok((await read(key)).equals(data), `${key} restored byte for byte`);
         assert.deepEqual(await listKeys(), [...Object.keys(originals), 'documents/new-upload-1.png', 'documents/new-upload-2.png'].sort(), 'newer files were left alone');
-        const audit = (await pool.query(`SELECT details FROM backup_audit_logs WHERE backup_id = $1 AND action = 'restored'`, [target.id])).rows.at(-1).details;
+        const audit = (await pool.query(
+          `SELECT details #> '{metadata,details}' AS details FROM audit_logs
+           WHERE details #>> '{metadata,backupId}' = $1 AND details #>> '{metadata,backupAction}' = 'restored'
+           ORDER BY created_at`,
+          [target.id]
+        )).rows.at(-1).details;
         assert.equal(audit.documentsDeleted, 0);
         assert.equal(audit.deleteExtraDocuments, false);
       });

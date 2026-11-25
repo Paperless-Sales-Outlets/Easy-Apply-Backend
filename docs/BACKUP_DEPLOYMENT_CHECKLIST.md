@@ -94,18 +94,19 @@ pm2 logs easy-apply-backend-backup --lines 50 --nostream | grep -i "SINGLE backe
 
 ## 6. Apply the database migration
 
-Back up first if you can (Supabase dashboard backup). The first migration only creates two new tables; the second turns any old "Super Admin" user into a normal Admin (it changes nothing if there is none). Both are safe to repeat.
+Back up first if you can (Supabase dashboard backup). The backup migration creates the backup tables, the audit migration copies historical backup activity into `audit_logs` without deleting the originals, and the role migration turns any old "Super Admin" user into a normal Admin. These migrations are safe to repeat.
 
 ```bash
 cd <APP>
 set -a; . ./.env; set +a
 psql "$BACKUP_DATABASE_URL" -f db/migrations/2026-11-19-backups.sql
+psql "$BACKUP_DATABASE_URL" -f db/migrations/2026-11-25-centralize-backup-audit.sql
 psql "$BACKUP_DATABASE_URL" -f db/migrations/2026-11-21-remove-super-admin.sql
 ```
 Check:
 ```bash
-psql "$BACKUP_DATABASE_URL" -tAc "select to_regclass('public.backups'), to_regclass('public.backup_audit_logs')"
-# both names must be printed (not empty)
+psql "$BACKUP_DATABASE_URL" -tAc "select to_regclass('public.backups'), to_regclass('public.backup_audit_logs'), to_regclass('public.audit_logs')"
+# all three names must be printed (not empty)
 psql "$BACKUP_DATABASE_URL" -tAc "select count(*) from users where role ilike 'super admin'"
 # must print 0
 ```

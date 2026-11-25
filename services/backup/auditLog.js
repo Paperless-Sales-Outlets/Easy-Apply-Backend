@@ -1,52 +1,60 @@
 import { query } from '../../config/db.js';
+import { recordAudit } from '../auditService.js';
 
-// Every backup action is written here: who, what, when, from which IP, and the
-// result. The table is append-only from the application's point of view (there
-// is no update or delete), and it is excluded from backups/restores so a restore
-// can never erase its own trail.
+// The legacy table remains readable for historical compatibility. New activity
+// is written to the shared audit_logs table.
 
 export const AUDIT_ACTIONS = ['created', 'verified', 'downloaded', 'test_restored', 'restored', 'deleted', 'failed'];
 
 export const actorOf = (req) => ({
   id: req?.user?._id || req?.user?.id || null,
   name: req?.user?.name || req?.user?.email || null,
+  role: req?.user?.role || null,
   ip: req?.ip || req?.socket?.remoteAddress || null,
 });
 
 /** Never throws: a failure to write the audit row must not hide the real outcome, but it is logged. */
 export async function recordBackupAudit({ backup, action, actor, result = 'success', details = {} }) {
   try {
-    await query(
-      `INSERT INTO backup_audit_logs (backup_id, backup_name, action, actor_id, actor_name, ip_address, result, details)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        backup?.id || null,
-        backup?.file_name || backup?.fileName || null,
-        action,
-        actor?.id || null,
-        actor?.name || null,
-        actor?.ip ? String(actor.ip).slice(0, 64) : null,
+    const backupId = backup?.id || backup?.backup_id || null;
+    const backupName = backup?.file_name || backup?.fileName || backup?.backup_name || null;
+    const normalizedAction = AUDIT_ACTIONS.includes(action) ? action : 'failed';
+    const actionLabel = normalizedAction.replace(/_/g, ' ');
+    await recordAudit({
+      actor,
+      action: `BACKUP_${normalizedAction.toUpperCase()}`,
+      module: 'Backups',
+      targetId: backupId,
+      description: `${actionLabel[0].toUpperCase()}${actionLabel.slice(1)} backup${backupName ? ` ${backupName}` : ''}${result === 'failure' ? ' failed' : ''}`,
+      metadata: {
+        backupId,
+        backupName,
+        backupAction: normalizedAction,
         result,
-        JSON.stringify(details || {}),
-      ]
-    );
+        ipAddress: actor?.ip ? String(actor.ip).slice(0, 64) : null,
+        details: details || {},
+      },
+    });
   } catch (error) {
     console.error('[backup] FAILED TO WRITE AUDIT ENTRY:', error.message);
   }
 }
 
-const presentAudit = (row) => ({
-  id: row.id,
-  backupId: row.backup_id,
-  backupName: row.backup_name,
-  action: row.action,
-  actorId: row.actor_id,
-  actorName: row.actor_name,
-  ipAddress: row.ip_address,
-  result: row.result,
-  details: row.details || {},
-  createdAt: row.created_at,
-});
+const presentAudit = (row) => {
+  const metadata = row.details?.metadata || {};
+  return {
+    id: row.id,
+    backupId: metadata.backupId || row.details?.targetId || null,
+    backupName: metadata.backupName || null,
+    action: metadata.backupAction || String(row.action).replace(/^BACKUP_/, '').toLowerCase(),
+    actorId: row.actor_id,
+    actorName: row.details?.userName || null,
+    ipAddress: row.ip_address,
+    result: metadata.result || 'success',
+    details: metadata.details || {},
+    createdAt: row.created_at,
+  };
+};
 
 function buildWhere({ action, result, from, to, search, backupId }) {
   const where = [];
@@ -55,24 +63,25 @@ function buildWhere({ action, result, from, to, search, backupId }) {
     values.push(value);
     where.push(sql.replace('?', `$${values.length}`));
   };
-  if (action) add('action = ?', action);
-  if (result) add('result = ?', result);
-  if (backupId) add('backup_id = ?', backupId);
+  where.push(`details->>'module' = 'Backups'`);
+  if (action) add(`details #>> '{metadata,backupAction}' = ?`, action);
+  if (result) add(`details #>> '{metadata,result}' = ?`, result);
+  if (backupId) add(`COALESCE(details #>> '{metadata,backupId}', details->>'targetId') = ?`, backupId);
   if (from) add('created_at >= ?', from);
   if (to) add('created_at <= ?', to);
   if (search) {
     values.push(`%${String(search).replace(/[\\%_]/g, '\\$&')}%`);
     const n = values.length;
-    where.push(`(actor_name ILIKE $${n} OR backup_name ILIKE $${n} OR ip_address ILIKE $${n} OR details::text ILIKE $${n})`);
+    where.push(`(details->>'userName' ILIKE $${n} OR ip_address ILIKE $${n} OR details::text ILIKE $${n})`);
   }
-  return { clause: where.length ? `WHERE ${where.join(' AND ')}` : '', values };
+  return { clause: `WHERE ${where.join(' AND ')}`, values };
 }
 
 export async function listAudit({ page = 1, limit = 25, ...filters }) {
   const { clause, values } = buildWhere(filters);
-  const total = (await query(`SELECT COUNT(*)::int AS n FROM backup_audit_logs ${clause}`, values)).rows[0].n;
+  const total = (await query(`SELECT COUNT(*)::int AS n FROM audit_logs ${clause}`, values)).rows[0].n;
   const { rows } = await query(
-    `SELECT * FROM backup_audit_logs ${clause} ORDER BY created_at DESC LIMIT ${Number(limit)} OFFSET ${(Number(page) - 1) * Number(limit)}`,
+    `SELECT * FROM audit_logs ${clause} ORDER BY created_at DESC LIMIT ${Number(limit)} OFFSET ${(Number(page) - 1) * Number(limit)}`,
     values
   );
   return { rows: rows.map(presentAudit), total };
@@ -90,7 +99,7 @@ const csvCell = (value) => {
 export async function exportAuditCsv(filters, maxRows = 10000) {
   const { clause, values } = buildWhere(filters);
   const { rows } = await query(
-    `SELECT * FROM backup_audit_logs ${clause} ORDER BY created_at DESC LIMIT ${Number(maxRows)}`,
+    `SELECT * FROM audit_logs ${clause} ORDER BY created_at DESC LIMIT ${Number(maxRows)}`,
     values
   );
   const lines = [CSV_COLUMNS.map(csvCell).join(',')];

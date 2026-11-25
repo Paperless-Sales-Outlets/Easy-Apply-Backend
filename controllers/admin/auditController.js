@@ -59,6 +59,7 @@ export const getAuditLogs = async (req, res, next) => {
         { 'details.targetId': expression },
         { 'details.description': expression },
         { 'details.userName': expression },
+        { 'details.metadata': expression },
       ];
     }
 

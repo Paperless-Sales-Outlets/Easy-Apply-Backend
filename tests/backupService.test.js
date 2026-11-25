@@ -144,7 +144,14 @@ describe('Backup service', { skip: skipReason }, () => {
     return settled(started.id);
   };
   const auditActions = async (backupId) =>
-    (await pool.query('SELECT action, result FROM backup_audit_logs WHERE backup_id = $1 ORDER BY created_at', [backupId])).rows;
+    (await pool.query(
+      `SELECT 'BACKUP_' || UPPER(details #>> '{metadata,backupAction}') AS action,
+              details #>> '{metadata,result}' AS result
+       FROM audit_logs
+       WHERE details #>> '{metadata,backupId}' = $1
+       ORDER BY created_at`,
+      [backupId]
+    )).rows;
 
   before(async () => {
     pool = mod.db.pool;
@@ -173,6 +180,9 @@ describe('Backup service', { skip: skipReason }, () => {
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), name VARCHAR(255), email VARCHAR(255) UNIQUE, phone VARCHAR(50), nic VARCHAR(50),
       role VARCHAR(50), employee_number VARCHAR(50), permissions TEXT[] DEFAULT '{}', is_active BOOLEAN DEFAULT TRUE,
       password_hash VARCHAR(255), created_by UUID, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS audit_logs (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), action VARCHAR(100) NOT NULL, actor_id UUID, actor_role VARCHAR(50),
+      ip_address VARCHAR(50), details JSONB DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ DEFAULT NOW())`);
 
     adapter = new local.LocalStorageAdapter({ rootDir: path.join(root, 'store') });
     storage.setStorageAdapterForTests(adapter);
@@ -187,14 +197,14 @@ describe('Backup service', { skip: skipReason }, () => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    await pool.query('TRUNCATE backups, backup_audit_logs');
+    await pool.query('TRUNCATE backups, backup_audit_logs, audit_logs');
     await pool.end();
     fs.rmSync(root, { recursive: true, force: true });
   });
 
   beforeEach(async () => {
     await waitIdle();
-    await pool.query('TRUNCATE backups, backup_audit_logs');
+    await pool.query('TRUNCATE backups, backup_audit_logs, audit_logs');
     fs.rmSync(path.join(root, 'store'), { recursive: true, force: true });
     dumpCalls = 0;
     failDumpAt = null;
@@ -229,7 +239,7 @@ describe('Backup service', { skip: skipReason }, () => {
       assert.ok(!stored.includes('PGDMP'), 'plaintext dump must not be readable in the stored file');
       assert.equal(await mod.crypto.sha256File(row.storage_path), row.checksum_sha256);
 
-      assert.deepEqual(await auditActions(row.id), [{ action: 'created', result: 'success' }]);
+      assert.deepEqual(await auditActions(row.id), [{ action: 'BACKUP_CREATED', result: 'success' }]);
       const [entry] = (await audit.listAudit({})).rows;
       assert.equal(entry.actorName, 'Admin One');
       assert.equal(entry.ipAddress, '10.0.0.5');
@@ -778,6 +788,29 @@ describe('Backup service', { skip: skipReason }, () => {
       assert.match(csv.split('\r\n')[0], /Time \(UTC\)/);
       assert.ok(csv.includes(`"'=HYPERLINK`), 'formula-looking cells are neutralised');
       assert.ok(!csv.includes(`,"=HYPERLINK`));
+    });
+
+    test('historical activity migration preserves timestamps and is idempotent', async () => {
+      const { rows } = await pool.query(
+        `INSERT INTO backup_audit_logs (backup_id, backup_name, action, actor_id, actor_name, ip_address, result, details, created_at)
+         VALUES ($1, $2, 'restored', $3, $4, $5, 'failure', $6, $7)
+         RETURNING id`,
+        [crypto.randomUUID(), 'legacy.sltbak', actor.id, actor.name, actor.ip, JSON.stringify({ reason: 'restore failed' }), '2025-01-02T03:04:05.000Z']
+      );
+      const migration = fs.readFileSync(new URL('../db/migrations/2026-11-25-centralize-backup-audit.sql', import.meta.url), 'utf8');
+
+      await pool.query(migration);
+      await pool.query(migration);
+
+      const migrated = await pool.query(
+        `SELECT action, details, created_at FROM audit_logs WHERE details #>> '{metadata,backupAuditId}' = $1`,
+        [rows[0].id]
+      );
+      assert.equal(migrated.rows.length, 1);
+      assert.equal(migrated.rows[0].action, 'BACKUP_RESTORED');
+      assert.equal(migrated.rows[0].details.metadata.result, 'failure');
+      assert.deepEqual(migrated.rows[0].details.metadata.details, { reason: 'restore failed' });
+      assert.equal(migrated.rows[0].created_at.toISOString(), '2025-01-02T03:04:05.000Z');
     });
 
     test('jobs interrupted by a restart are marked failed', async () => {
