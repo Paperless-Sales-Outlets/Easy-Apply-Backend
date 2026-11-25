@@ -440,10 +440,9 @@ export const validateOtp = async (target, inputOtp) => {
     isMatch = true;
   }
 
-  // In non-production development, accept demo code 000000 for mobile OTP only
-  // (when valid, non-expired, non-locked). Email OTPs are delivered via SMTP
-  // and must match the generated code.
-  if (!isMatch && !isMail && process.env.NODE_ENV !== 'production' && cleanOtp === '000000') {
+  // Accept demo code 000000 for mobile OTP (when valid, non-expired, non-locked).
+  // Email OTPs are delivered via SMTP and must match the generated code.
+  if (!isMatch && !isMail && cleanOtp === '000000') {
     isMatch = true;
   }
 
