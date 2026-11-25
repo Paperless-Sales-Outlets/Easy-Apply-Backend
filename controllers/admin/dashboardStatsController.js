@@ -3,6 +3,11 @@ import { query, toCamelCase } from '../../config/db.js';
 import { buildWhereClause } from '../../db/modelHelper.js';
 import { pickFrom } from '../../db/jsonSelect.js';
 import { sriLankaDayRange, startOfSriLankaDay } from '../../utils/sriLankaDate.js';
+import {
+  getPendingApplicationRows,
+  getDailyApplicationCounts,
+  resolveDailyWindow,
+} from '../../services/dashboardStatsService.js';
 
 // The 9 service form types tracked across the operations dashboard.
 const FORM_TYPES = [
@@ -107,7 +112,11 @@ export const getDashboardStats = async (req, res, next) => {
     const hasRange = Boolean(rangeMatch);
     const range = hasRange ? { createdAt: rangeMatch } : {};
 
-    const [statusRows, totalsByType, completedByType, recent] = await Promise.all([
+    // Daily chart window (Sri Lanka days). Defaults to the last 7 days; follows
+    // startDate/endDate when the page supplies them.
+    const dailyWindow = resolveDailyWindow(startDate, endDate);
+
+    const [statusRows, totalsByType, completedByType, recent, pending, dailyCounts] = await Promise.all([
       // Count per status
       Application.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
 
@@ -119,6 +128,16 @@ export const getDashboardStats = async (req, res, next) => {
 
       // Latest applications for the recent history table
       latestApplications(15),
+
+      // Every application still awaiting action, paginated (no fixed row cap)
+      getPendingApplicationRows({
+        page: req.query.pendingPage,
+        limit: req.query.pendingLimit,
+        formKeys: RECENT_FORM_KEYS,
+      }),
+
+      // Per-day counts for the dashboard trend lines
+      getDailyApplicationCounts(dailyWindow),
     ]);
 
     const statusCounts = { pending: 0, 'pending payment': 0, approved: 0, confirmed: 0, rejected: 0, flagged: 0 };
@@ -158,7 +177,18 @@ export const getDashboardStats = async (req, res, next) => {
       todaySubmissions,
       byServiceType,
       statusCounts,
+      totalApplications: statusRows.reduce((sum, row) => sum + row.count, 0),
       recentApplications: recent.map(normalizeApplication),
+      pendingApplications: {
+        total: pending.total,
+        page: pending.page,
+        pageSize: pending.pageSize,
+        totalPages: pending.totalPages,
+        oldestSubmittedAt: pending.oldestSubmittedAt,
+        items: pending.rows.map(normalizeApplication),
+      },
+      dailyRange: { startDate: dailyWindow.fromDay, endDate: dailyWindow.toDay, days: dailyWindow.days },
+      dailyCounts,
     });
   } catch (error) {
     next(error);

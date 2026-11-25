@@ -7,9 +7,13 @@ import {
 } from '../../controllers/admin/applicationController.js';
 import { protect, requirePrivilege } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
+import { validateAdminId } from '../../middleware/adminValidation.js';
 import { validateUpdateApplicationStatus, validateOfficeFields } from '../../middleware/validationMiddleware.js';
 
 const router = express.Router();
+
+// Malformed ids answer 404 before any controller or database query runs.
+router.param('id', validateAdminId);
 
 // Get paginated, filterable application list
 router.use(requireDb);

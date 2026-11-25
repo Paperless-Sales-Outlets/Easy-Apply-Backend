@@ -7,8 +7,12 @@ import {
 } from '../../controllers/admin/usersController.js';
 import { protect, authorize } from '../../middleware/authMiddleware.js';
 import { requireDb } from '../../middleware/dbMiddleware.js';
+import { validateAdminId } from '../../middleware/adminValidation.js';
 
 const router = express.Router();
+
+// Malformed ids answer 404 before any controller or database query runs.
+router.param('id', validateAdminId);
 
 // User Management (Admin only)
 router.use(requireDb);
