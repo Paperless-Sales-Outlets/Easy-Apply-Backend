@@ -38,18 +38,27 @@ export const getExpectedOrigins = (req) => {
   const custom = process.env.WEBAUTHN_ORIGIN;
   const origins = [];
 
+  const addOrigin = (o) => {
+    if (!o || typeof o !== 'string') return;
+    const trimmed = o.trim();
+    if (!trimmed) return;
+    if (!origins.includes(trimmed)) origins.push(trimmed);
+    const noTrailing = trimmed.replace(/\/+$/, '');
+    if (!origins.includes(noTrailing)) origins.push(noTrailing);
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.origin && !origins.includes(parsed.origin)) {
+        origins.push(parsed.origin);
+      }
+    } catch {}
+  };
+
   if (custom) {
-    custom.split(',').forEach((o) => {
-      const trimmed = o.trim();
-      if (trimmed && !origins.includes(trimmed)) origins.push(trimmed);
-    });
+    custom.split(',').forEach(addOrigin);
   }
 
   const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
-  frontend.split(',').forEach((o) => {
-    const trimmed = o.trim();
-    if (trimmed && !origins.includes(trimmed)) origins.push(trimmed);
-  });
+  frontend.split(',').forEach(addOrigin);
 
   if (process.env.NODE_ENV !== 'production') {
     ['http://localhost:5173', 'http://localhost:3000'].forEach((dev) => {
