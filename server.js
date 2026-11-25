@@ -78,12 +78,33 @@ app.use(
   })
 );
 
+// Helper to extract protocol://host[:port] origin from any valid URL or string
+function normalizeOrigin(val) {
+  if (!val || typeof val !== 'string') return [];
+  const trimmed = val.trim();
+  if (!trimmed) return [];
+  const results = [trimmed, trimmed.replace(/\/+$/, '')];
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.origin && parsed.origin !== 'null') {
+      results.push(parsed.origin);
+    }
+  } catch {
+    // Not a standard URL
+  }
+  return results;
+}
+
 // Build an allowlist from FRONTEND_URL plus local dev origins.
-// FRONTEND_URL may contain multiple comma-separated values.
-const rawAllowedOrigins = (process.env.FRONTEND_URL || '')
-  .split(',')
-  .map((u) => u.trim())
-  .filter(Boolean);
+// FRONTEND_URL may contain multiple comma-separated values, paths (e.g. /Paperlessbackup/), or trailing slashes.
+const rawAllowedOrigins = [
+  ...new Set(
+    (process.env.FRONTEND_URL || '')
+      .split(',')
+      .flatMap((u) => normalizeOrigin(u))
+      .filter(Boolean)
+  ),
+];
 
 // Always permit localhost Vite dev servers in non-production
 if (process.env.NODE_ENV !== 'production') {
@@ -101,8 +122,13 @@ if (process.env.NODE_ENV !== 'production') {
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow non-browser requests and explicitly allowed origins
-      if (!origin || rawAllowedOrigins.includes(origin)) {
+      // Allow non-browser requests, exact matches, or normalized origin matches
+      if (!origin) return callback(null, true);
+      const normalizedIncoming = origin.replace(/\/+$/, '');
+      if (
+        rawAllowedOrigins.includes(origin) ||
+        rawAllowedOrigins.includes(normalizedIncoming)
+      ) {
         callback(null, true);
       } else {
         callback(
