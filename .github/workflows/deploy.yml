@@ -24,26 +24,35 @@ jobs:
           script: |
             set -e
 
-            # 1. Target directory and PM2 process name
-            TARGET_DIR="$HOME/paperless_project/Easy-Apply-Backend"
-            PM2_NAME="easy-apply-backend-backup"
+            echo "=== Starting deployment for branch: ${{ github.ref_name }} ==="
 
-            echo "Starting deployment for branch: ${{ github.ref_name }} to directory: $TARGET_DIR using PM2: $PM2_NAME"
+            # 1. Update repository in all known target paths
+            TARGET_DIRS=("$HOME/paperless_project/Easy-Apply-Backend" "$HOME/Easy-Apply-Backend")
+            FOUND_DIR=""
 
-            # 2. Navigate to project folder
-            cd "$TARGET_DIR" || { echo "Directory $TARGET_DIR not found"; exit 1; }
+            for DIR in "${TARGET_DIRS[@]}"; do
+              if [ -d "$DIR" ]; then
+                echo "Found project directory: $DIR"
+                cd "$DIR"
+                echo "Pulling latest code for ${{ github.ref_name }} in $DIR..."
+                git fetch origin
+                git reset --hard origin/${{ github.ref_name }}
+                echo "Installing dependencies..."
+                npm install --omit=dev --legacy-peer-deps
+                FOUND_DIR="$DIR"
+              fi
+            done
 
-            # 3. Pull latest code from GitHub (force reset to avoid diverged branch issues)
-            git fetch origin
-            git reset --hard origin/${{ github.ref_name }}
+            if [ -z "$FOUND_DIR" ]; then
+              echo "Error: Neither $HOME/paperless_project/Easy-Apply-Backend nor $HOME/Easy-Apply-Backend was found."
+              exit 1
+            fi
 
-            # 4. (Removed) We no longer overwrite the .env file so manual server edits are preserved
+            # 2. Restart PM2 processes safely (both main and backup instances if present)
+            echo "Restarting PM2 backend services..."
+            pm2 restart easy-apply-backend --update-env || true
+            pm2 restart easy-apply-backend-backup --update-env || true
 
-            # 5. Install production dependencies
-            npm install --omit=dev --legacy-peer-deps
-
-            # 6. Restart or start the PM2 service
-            pm2 restart $PM2_NAME --update-env || pm2 start server.js --name "$PM2_NAME"
-
-            # 7. Save PM2 configuration to survive reboots
+            # 3. Save PM2 configuration to survive reboots
             pm2 save
+            echo "=== Deployment completed successfully ==="
